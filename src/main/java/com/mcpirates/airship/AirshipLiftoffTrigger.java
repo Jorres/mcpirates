@@ -85,11 +85,45 @@ public final class AirshipLiftoffTrigger {
     private static Field cachedStateField;
     private static Method cachedCannonAssembleMethod;
 
+    /**
+     * Pending deferred-assembly tasks. Queued in {@link #activateLever} after the honey-glue
+     * spawn, processed in {@link #onServerTick} once the target tick has been reached. We
+     * defer to <em>after</em> the next tick's {@code tickChildren} (i.e. processed during
+     * that tick's POST event) so the spawned glue has been through one full entity-tick
+     * cycle and is visible to spatial queries.
+     */
+    private record DeferredAssembly(
+            long targetTick,
+            ServerLevel level,
+            BlockPos leverPos,
+            BlockPos seed,
+            BlockPos cannonMountPos,
+            BlockPos leftClutchPos,
+            BlockPos rightClutchPos,
+            Rotation rotation) {}
+
+    private static final java.util.List<DeferredAssembly> PENDING_ASSEMBLIES =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
     private AirshipLiftoffTrigger() {}
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
-        if (event.getServer().getTickCount() % TICK_INTERVAL != 0) {
+        long now = event.getServer().getTickCount();
+
+        // Run any deferred assemblies whose target tick has arrived. We process before
+        // the regular trigger scan so a freshly-deferred ship lifts off this tick.
+        var iter = PENDING_ASSEMBLIES.iterator();
+        while (iter.hasNext()) {
+            DeferredAssembly d = iter.next();
+            if (now >= d.targetTick()) {
+                PENDING_ASSEMBLIES.remove(d);
+                finishAssembly(d.level(), d.leverPos(), d.seed(), d.cannonMountPos(),
+                        d.leftClutchPos(), d.rightClutchPos(), d.rotation());
+            }
+        }
+
+        if (now % TICK_INTERVAL != 0) {
             return;
         }
         for (ServerLevel level : event.getServer().getAllLevels()) {
@@ -194,32 +228,28 @@ public final class AirshipLiftoffTrigger {
         MCPirates.LOGGER.info("activated airship lever at {} (state -> {})", pos, TARGET_STATE);
 
         // Step 3: spawn the runtime honey-glue (this tick), then defer the rest of the
-        // pipeline by one tick so the entity is actually queryable.
+        // pipeline so the entity is actually queryable when assembly runs.
         //
         // Why deferred? `level.addFreshEntity` returns true synchronously, but the entity
         // isn't yet visible to spatial queries via `level.getEntitiesOfClass(...)`. Section
-        // visibility / entity-tick wiring catches up on the next tick boundary. If we run
-        // SimAssemblyHelper synchronously here, its `addInitialHoneyGlue` query returns
-        // empty, the BFS finds no glue connections, and the contraption ends up containing
-        // only the burner (the seed) and the lever (pulled along by brittle-attachment).
-        // Confirmed empirically: the diagnostic log "post-spawn glue query: 0 entities"
-        // proved the entity is invisible to spatial queries on the same tick it's spawned.
+        // visibility / entity-tick wiring catches up only after the entity has been ticked
+        // at least once. If we run SimAssemblyHelper before that, its addInitialHoneyGlue
+        // query returns empty, the BFS finds no glue connections, and the contraption ends
+        // up containing only the burner (the seed) and the lever (pulled along by
+        // brittle-attachment).
         //
-        // `MinecraftServer.execute(Runnable)` queues a TickTask that runs at the start of
-        // the next tick, in `runAllTasks()` before `tickChildren`. By then the spawn has
-        // been through the entity-section update cycle and the spatial query works.
+        // We queue the work in PENDING_ASSEMBLIES with target tick = now + 1, processed in
+        // the next ServerTickEvent.Post handler. POST fires AFTER tickChildren has ticked
+        // entities, so by then the spawn has been through one full entity-tick cycle and
+        // the spatial query works. (`MinecraftServer.execute` queues for runAllTasks,
+        // which fires BEFORE tickChildren — empirically too early.)
         spawnAirshipHoneyGlue(level, pos);
 
         BlockPos assemblySeed = pos.relative(connected.getOpposite());
-        // Capture-by-final for the lambda. Rotation handling happened above; the deferred
-        // call only runs the world-mutating assembly + brain registration.
-        final BlockPos finalCannonMountPos = cannonMountPos;
-        final BlockPos finalLeftClutchPos = leftClutchPos;
-        final BlockPos finalRightClutchPos = rightClutchPos;
-        final Rotation finalRotation = rotation;
-        level.getServer().execute(() -> finishAssembly(
-                level, pos, assemblySeed, finalCannonMountPos,
-                finalLeftClutchPos, finalRightClutchPos, finalRotation));
+        long now = level.getServer().getTickCount();
+        PENDING_ASSEMBLIES.add(new DeferredAssembly(
+                now + 1, level, pos, assemblySeed,
+                cannonMountPos, leftClutchPos, rightClutchPos, rotation));
     }
 
     /** Deferred-by-one-tick continuation of activateLever — see comment there for why. */
@@ -227,6 +257,17 @@ public final class AirshipLiftoffTrigger {
             ServerLevel level, BlockPos leverPos, BlockPos seed,
             BlockPos cannonMountPos, BlockPos leftClutchPos, BlockPos rightClutchPos,
             Rotation rotation) {
+        // Diagnostic: did the spatial index catch up?
+        AABB queryArea = new AABB(leverPos).inflate(20);
+        java.util.List<HoneyGlueEntity> visible = level.getEntitiesOfClass(
+                HoneyGlueEntity.class, queryArea);
+        MCPirates.LOGGER.info(
+                "finishAssembly: glue query at start of next-tick runAllTasks → {} entities",
+                visible.size());
+        for (HoneyGlueEntity g : visible) {
+            MCPirates.LOGGER.info("  - bounds={}, contains(seed)={}",
+                    g.getBoundingBox(), g.contains(seed));
+        }
         AssemblyResult result = AirshipAssembler.assemble(level, seed);
         if (result == null) {
             MCPirates.LOGGER.warn("ship assembly failed; aborting startup at {}", leverPos);
