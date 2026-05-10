@@ -192,12 +192,41 @@ public final class AirshipLiftoffTrigger {
         level.sendBlockUpdated(pos, bs, bs, Block.UPDATE_ALL);
         MCPirates.LOGGER.info("activated airship lever at {} (state -> {})", pos, TARGET_STATE);
 
-        // Step 3: assemble ship. The structure-baked honey-glue rides along with the
-        // structure NBT — HoneyGlueEntity overrides setPos (preserves bounds across the
-        // structure-loader's translation) and rotate (swaps X/Z extents on 90° rotations),
-        // so it lands in the world with bounds correctly aligned to the rotated body and
-        // is fully indexed in the spatial structure by the time the trigger fires.
+        // Diagnostic: query for HoneyGlueEntity around the lever, then again with a much
+        // wider radius. If both are 0, the entity simply doesn't exist as far as the
+        // server's spatial index is concerned — the user-visible glue is then a client-
+        // side artifact or a stale rendering.
         BlockPos assemblySeed = pos.relative(connected.getOpposite());
+        AABB queryArea = new AABB(pos).inflate(20);
+        java.util.List<dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueEntity> visible =
+                level.getEntitiesOfClass(
+                        dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueEntity.class,
+                        queryArea);
+        MCPirates.LOGGER.info(
+                "pre-assembly glue query (20-block): {} entities in {}",
+                visible.size(), queryArea);
+        for (var g : visible) {
+            MCPirates.LOGGER.info(
+                    "  - id={} bounds={} pos={} contains(seed)={} contains(mount)={}",
+                    g.getUUID(), g.getBoundingBox(), g.position(),
+                    g.contains(assemblySeed), g.contains(cannonMountPos));
+        }
+        if (visible.isEmpty()) {
+            AABB widerArea = new AABB(pos).inflate(200);
+            java.util.List<dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueEntity> wider =
+                    level.getEntitiesOfClass(
+                            dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueEntity.class,
+                            widerArea);
+            MCPirates.LOGGER.info(
+                    "pre-assembly glue query (200-block fallback): {} entities", wider.size());
+            for (var g : wider) {
+                MCPirates.LOGGER.info(
+                        "  - id={} bounds={} pos={}",
+                        g.getUUID(), g.getBoundingBox(), g.position());
+            }
+        }
+
+        // Step 3: assemble ship.
         AssemblyResult result = AirshipAssembler.assemble(level, assemblySeed);
         if (result == null) {
             MCPirates.LOGGER.warn("ship assembly failed; aborting startup at {}", pos);
