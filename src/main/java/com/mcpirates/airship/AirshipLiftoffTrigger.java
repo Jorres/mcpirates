@@ -218,6 +218,11 @@ public final class AirshipLiftoffTrigger {
         SubLevel subLevel = result.subLevel();
         BlockPos offset = result.offset();
 
+        // Diagnostic: enumerate every non-air block that ended up in the SubLevel. If the
+        // assembly only pulled a subset (e.g. burner + lever), this tells us exactly what
+        // got moved vs what stayed in the world.
+        scanAssembledSubLevel(subLevel, offset);
+
         // Step 4: locate + assemble cannon (search ±8 in case of small drift).
         BlockPos slCannonMount = triggerCannonAssembly(
                 subLevel.getLevel(), cannonMountPos.offset(offset));
@@ -269,6 +274,43 @@ public final class AirshipLiftoffTrigger {
         }
         lever.setChanged();
         return true;
+    }
+
+    /**
+     * Walk every loaded chunk in the SubLevel's plot and log the non-air blocks. Used to
+     * diagnose partial-assembly bugs where the BFS picks up only a few blocks instead of
+     * the full ship body. The output answers the question "what actually got moved?".
+     */
+    private static void scanAssembledSubLevel(SubLevel subLevel, BlockPos offset) {
+        Level slLevel = subLevel.getLevel();
+        if (slLevel == null) return;
+        java.util.Map<String, Integer> counts = new java.util.LinkedHashMap<>();
+        java.util.List<String> samples = new java.util.ArrayList<>();
+        int total = 0;
+        for (var chunk : subLevel.getPlot().getLoadedChunks()) {
+            var bounds = chunk.getBoundingBox();
+            if (bounds == null) continue;
+            int chunkMinX = chunk.getPos().getMinBlockX();
+            int chunkMinZ = chunk.getPos().getMinBlockZ();
+            for (int x = bounds.minX(); x <= bounds.maxX(); x++) {
+                for (int y = bounds.minY(); y <= bounds.maxY(); y++) {
+                    for (int z = bounds.minZ(); z <= bounds.maxZ(); z++) {
+                        BlockPos p = new BlockPos(chunkMinX + x, y, chunkMinZ + z);
+                        BlockState s = slLevel.getBlockState(p);
+                        if (s.isAir()) continue;
+                        total++;
+                        String name = s.getBlock().toString();
+                        counts.merge(name, 1, Integer::sum);
+                        if (samples.size() < 6) {
+                            samples.add(p + " " + name);
+                        }
+                    }
+                }
+            }
+        }
+        MCPirates.LOGGER.info(
+                "SubLevel post-assembly scan: {} non-air blocks, types={}, samples={}",
+                total, counts, samples);
     }
 
     private static void spawnAirshipHoneyGlue(ServerLevel level, BlockPos leverPos) {
