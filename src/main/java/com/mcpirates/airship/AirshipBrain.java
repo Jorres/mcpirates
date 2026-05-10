@@ -6,9 +6,12 @@ import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
 import com.simibubi.create.foundation.blockEntity.behaviour.BehaviourType;
 import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
 import dev.ryanhcode.sable.sublevel.SubLevel;
+import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -82,6 +85,15 @@ public final class AirshipBrain {
     private static final int DECISION_INTERVAL = 10;
     /** Ticks of "no target" before dropping out of PURSUE. */
     private static final int LOST_TARGET_DEBOUNCE = 60;
+
+    /** Show particles + actionbar overlay for active pirate ships. */
+    private static final boolean DEBUG_OVERLAY = true;
+    /** Paint particles every N ticks. */
+    private static final int OVERLAY_PARTICLE_INTERVAL = 5;
+    /** Push actionbar text every N ticks. */
+    private static final int OVERLAY_ACTIONBAR_INTERVAL = 10;
+    /** Don't bother drawing for players further than this from the airship (blocks). */
+    private static final double OVERLAY_RENDER_RADIUS = 200.0;
 
     private static final ResourceLocation POWDER_CHARGE_ID =
             ResourceLocation.fromNamespaceAndPath("createbigcannons", "powder_charge");
@@ -171,6 +183,15 @@ public final class AirshipBrain {
                 }
             }
         }
+
+        if (DEBUG_OVERLAY) {
+            if (now % OVERLAY_PARTICLE_INTERVAL == 0) {
+                drawDebugParticles(p, target, shipPos);
+            }
+            if (now % OVERLAY_ACTIONBAR_INTERVAL == 0) {
+                writeDebugActionbar(p, target, shipPos);
+            }
+        }
         return true;
     }
 
@@ -226,6 +247,7 @@ public final class AirshipBrain {
         }
 
         boolean leftEngaged = false, rightEngaged = false;
+        double headingErrDeg = 0;
         if (!Double.isNaN(goalX)) {
             double dx = goalX - shipPos.x;
             double dz = goalZ - shipPos.z;
@@ -234,7 +256,8 @@ public final class AirshipBrain {
                 double targetYaw = Math.atan2(-dx, dz);
                 double currentYaw = currentYawRadians(p);
                 double err = normalizeRadians(targetYaw - currentYaw);
-                double absErrDeg = Math.abs(Math.toDegrees(err));
+                headingErrDeg = Math.toDegrees(err);
+                double absErrDeg = Math.abs(headingErrDeg);
 
                 if (absErrDeg < HEADING_TOLERANCE_DEG) {
                     leftEngaged = true;
@@ -258,6 +281,14 @@ public final class AirshipBrain {
         // Throttle: bang-bang on altitude error.
         int throttle = chooseThrottle(p.state, shipPos.y);
         setAnalogLeverState(subLevelLevel, p.slAnalogLever, throttle);
+
+        // Record for the debug overlay.
+        p.lastLeftEngaged = leftEngaged;
+        p.lastRightEngaged = rightEngaged;
+        p.lastThrottle = throttle;
+        p.lastGoalX = goalX;
+        p.lastGoalZ = goalZ;
+        p.lastHeadingErrDeg = headingErrDeg;
     }
 
     private static int chooseThrottle(State state, double currentY) {
@@ -422,6 +453,119 @@ public final class AirshipBrain {
         };
     }
 
+    // ───────────────────────────── Debug overlay ─────────────────────────────
+
+    /**
+     * Server-side particle painting. We draw three lines/columns:
+     * <ul>
+     *     <li><b>Goal column</b> — a vertical stack of {@code happy_villager} (green sparkle)
+     *         at the AI's current goal XZ. Tells you where it's trying to fly to.</li>
+     *     <li><b>Heading arrow</b> — {@code flame} stepping forward from the ship along its
+     *         current world-frame forward vector. Tells you which way the ship thinks it's
+     *         pointing.</li>
+     *     <li><b>Target line</b> — {@code smoke} from ship to target's eye, only in PURSUE.
+     *         Tells you who the AI thinks it's chasing.</li>
+     * </ul>
+     */
+    private static void drawDebugParticles(Pirate p, ServerPlayer target, Vector3d shipPos) {
+        ServerLevel level = p.parentLevel;
+
+        // Skip if no player is in a reasonable render distance.
+        boolean anyClose = false;
+        for (ServerPlayer sp : level.players()) {
+            double pdx = sp.getX() - shipPos.x;
+            double pdz = sp.getZ() - shipPos.z;
+            if (pdx * pdx + pdz * pdz < OVERLAY_RENDER_RADIUS * OVERLAY_RENDER_RADIUS) {
+                anyClose = true;
+                break;
+            }
+        }
+        if (!anyClose) return;
+
+        // Goal column.
+        if (!Double.isNaN(p.lastGoalX)) {
+            for (int i = -8; i <= 8; i++) {
+                level.sendParticles(
+                        ParticleTypes.HAPPY_VILLAGER,
+                        p.lastGoalX, shipPos.y + i, p.lastGoalZ,
+                        1, 0, 0, 0, 0);
+            }
+        }
+
+        // Heading arrow.
+        Quaterniond orient = p.subLevel.logicalPose().orientation();
+        Vector3d worldFwd = orient.transform(new Vector3d(p.shipLocalForward), new Vector3d());
+        for (int i = 1; i <= 6; i++) {
+            double x = shipPos.x + worldFwd.x * i * 1.5;
+            double y = shipPos.y;
+            double z = shipPos.z + worldFwd.z * i * 1.5;
+            level.sendParticles(ParticleTypes.FLAME, x, y, z, 1, 0, 0, 0, 0);
+        }
+
+        // Target line, only in PURSUE.
+        if (p.state == State.PURSUE && target != null) {
+            for (int i = 1; i <= 12; i++) {
+                double t = i / 13.0;
+                double x = shipPos.x + (target.getX() - shipPos.x) * t;
+                double y = shipPos.y + (target.getEyeY() - shipPos.y) * t;
+                double z = shipPos.z + (target.getZ() - shipPos.z) * t;
+                level.sendParticles(ParticleTypes.SMOKE, x, y, z, 1, 0, 0, 0, 0);
+            }
+        }
+    }
+
+    /**
+     * Pushes a one-line state readout to the actionbar of the player nearest this airship.
+     * Multiple airships → each player only sees the closest pirate's state.
+     */
+    private static void writeDebugActionbar(Pirate p, ServerPlayer target, Vector3d shipPos) {
+        ServerPlayer closest = null;
+        double bestSq = OVERLAY_RENDER_RADIUS * OVERLAY_RENDER_RADIUS;
+        for (ServerPlayer sp : p.parentLevel.players()) {
+            double pdx = sp.getX() - shipPos.x;
+            double pdz = sp.getZ() - shipPos.z;
+            double d2 = pdx * pdx + pdz * pdz;
+            if (d2 < bestSq) {
+                bestSq = d2;
+                closest = sp;
+            }
+        }
+        if (closest == null) return;
+
+        double altErr = CRUISE_ALTITUDE - shipPos.y;
+        String engines =
+                (p.lastLeftEngaged ? "L" : "_") + (p.lastRightEngaged ? "R" : "_");
+        String goalStr = Double.isNaN(p.lastGoalX)
+                ? "—"
+                : String.format("(%.0f,%.0f)", p.lastGoalX, p.lastGoalZ);
+        String targetStr = target == null
+                ? "no target"
+                : String.format("→%s d=%.0f",
+                        target.getName().getString(),
+                        Math.sqrt(horizDistSq(shipPos, target.getX(), target.getZ())));
+
+        ChatFormatting stateColor = switch (p.state) {
+            case LIFTOFF -> ChatFormatting.YELLOW;
+            case PURSUE  -> ChatFormatting.RED;
+            case RETURN  -> ChatFormatting.AQUA;
+            case HOVER   -> ChatFormatting.GREEN;
+        };
+
+        Component msg = Component.empty()
+                .append(Component.literal("[" + p.state.name() + "] ").withStyle(stateColor))
+                .append(Component.literal(String.format(
+                        "pos=(%.0f,%.0f,%.0f) alt_err=%.1f thr=%d %s goal=%s yaw_err=%.0f° %s",
+                        shipPos.x, shipPos.y, shipPos.z,
+                        altErr,
+                        p.lastThrottle,
+                        engines,
+                        goalStr,
+                        p.lastHeadingErrDeg,
+                        targetStr
+                )));
+        closest.displayClientMessage(msg, /*actionBar=*/true);
+    }
+
     // ───────────────────────────── Targeting ─────────────────────────────
 
     /**
@@ -486,6 +630,14 @@ public final class AirshipBrain {
         long lastDecisionTick = Long.MIN_VALUE / 2;
         long lastFireTick = Long.MIN_VALUE / 2;
         long lastTargetSeenTick = Long.MIN_VALUE / 2;
+
+        // Last actuator commands — pure debug, doesn't drive anything else.
+        boolean lastLeftEngaged = false;
+        boolean lastRightEngaged = false;
+        int lastThrottle = 0;
+        double lastGoalX = Double.NaN;
+        double lastGoalZ = Double.NaN;
+        double lastHeadingErrDeg = 0;
 
         Pirate(ServerLevel parentLevel, SubLevel subLevel, BlockPos airpadAnchor,
                BlockPos slAnalogLever, BlockPos slLeftClutchLever, BlockPos slRightClutchLever,
