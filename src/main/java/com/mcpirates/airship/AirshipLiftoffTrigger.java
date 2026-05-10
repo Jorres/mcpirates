@@ -208,11 +208,17 @@ public final class AirshipLiftoffTrigger {
                         continue;
                     }
                     // Two-phase: spawn glue first pass, wait 1s, then assemble.
+                    // spawnHoneyGlue returns false if the airship's chunk section is
+                    // HIDDEN (chunk not yet at ENTITY_TICKING — entity would be added
+                    // but invisible to spatial queries). We retry next pass; the player
+                    // will eventually get close enough that the chunk gets promoted.
                     long now = level.getServer().getTickCount();
                     Long spawnedAt = GLUE_PRESPAWNED.get(pos);
                     if (spawnedAt == null) {
                         Rotation rotation = detectRotation(level.getBlockState(pos));
-                        spawnHoneyGlue(level, pos, rotation);
+                        if (!spawnHoneyGlue(level, pos, rotation)) {
+                            continue;
+                        }
                         GLUE_PRESPAWNED.put(pos, now);
                         continue;
                     }
@@ -390,7 +396,10 @@ public final class AirshipLiftoffTrigger {
      * the spatial-index iterator filters by section visibility, and freshly spawned
      * entities aren't yet visible to AABB queries until the next tick.
      */
-    private static void spawnHoneyGlue(ServerLevel level, BlockPos leverPos, Rotation rotation) {
+    /** @return true if the glue was spawned into a TICKING/TRACKED section (i.e., is
+     *  queryable by spatial lookups). False if the entity section was HIDDEN — the
+     *  caller should retry next pass once the chunk has been promoted to ENTITY_TICKING. */
+    private static boolean spawnHoneyGlue(ServerLevel level, BlockPos leverPos, Rotation rotation) {
         BlockPos a = leverPos.offset(GLUE_MIN_DELTA.rotate(rotation));
         BlockPos b = leverPos.offset(GLUE_MAX_DELTA.rotate(rotation));
         // Build the AABB by min/maxing rotated corners and adding +1 to the max
@@ -405,47 +414,32 @@ public final class AirshipLiftoffTrigger {
         AABB aabb = new AABB(minX, minY, minZ, maxX, maxY, maxZ);
         HoneyGlueEntity glue = new HoneyGlueEntity(level, aabb);
         boolean added = level.addFreshEntity(glue);
-        GLUE_UUIDS.put(leverPos, glue.getUUID());
-        // Diagnostic: read the entity's section visibility via reflection. If HIDDEN,
-        // the section storage rejects spatial queries even though addFreshEntity says
-        // success — and visibleEntities never gets the entity, so getEntity(uuid) is
-        // also null. That's our "added=true but invisible" failure mode.
+        // Read section visibility. If the chunk hasn't reached ENTITY_TICKING yet,
+        // chunkVisibility[chunkKey] is unset (defaults to HIDDEN) so the freshly
+        // created section is HIDDEN. addFreshEntity reports success but the entity
+        // is invisible to spatial queries and getEntity(uuid) — BFS would never
+        // find the glue, so we abort and retry once the chunk gets promoted.
         String visibilityStr = readSectionVisibility(level, glue);
         net.minecraft.server.level.FullChunkStatus chunkStatus =
                 level.getChunkSource().getChunkNow(
                         glue.chunkPosition().x, glue.chunkPosition().z) instanceof
                         net.minecraft.world.level.chunk.LevelChunk lc
                         ? lc.getFullStatus() : null;
+        if ("HIDDEN".equals(visibilityStr)) {
+            glue.discard();
+            MCPirates.LOGGER.info(
+                    "deferred honey glue spawn for lever {} (chunk=({}, {}) at status {}, section HIDDEN) — will retry next pass",
+                    leverPos, glue.chunkPosition().x, glue.chunkPosition().z, chunkStatus);
+            return false;
+        }
+        GLUE_UUIDS.put(leverPos, glue.getUUID());
         MCPirates.LOGGER.info(
                 "spawned runtime honey glue {} (uuid={}) for lever {} (added={}, removed={}, pos={}, chunk=({}, {}), sectionVisibility={}, chunkStatus={})",
                 aabb, glue.getUUID(), leverPos, added, glue.isRemoved(),
                 glue.position(),
                 glue.chunkPosition().x, glue.chunkPosition().z,
                 visibilityStr, chunkStatus);
-
-        // Inventory of blocks/entities in the glue volume — diagnostic for the
-        // "glue silently disappears within 1 tick" failure mode.
-        java.util.Map<String, Integer> blockCounts = new java.util.LinkedHashMap<>();
-        java.util.List<String> samples = new java.util.ArrayList<>();
-        for (int x = (int) Math.floor(aabb.minX); x < aabb.maxX; x++) {
-            for (int y = (int) Math.floor(aabb.minY); y < aabb.maxY; y++) {
-                for (int z = (int) Math.floor(aabb.minZ); z < aabb.maxZ; z++) {
-                    BlockState s = level.getBlockState(new BlockPos(x, y, z));
-                    if (s.isAir()) continue;
-                    String key = s.getBlock().toString();
-                    blockCounts.merge(key, 1, Integer::sum);
-                    if (samples.size() < 3) {
-                        samples.add(new BlockPos(x, y, z) + "=" + key);
-                    }
-                }
-            }
-        }
-        MCPirates.LOGGER.info("glue volume blocks: {} (samples {})", blockCounts, samples);
-        MCPirates.LOGGER.info("glue volume entities: {}",
-                level.getEntitiesOfClass(net.minecraft.world.entity.Entity.class, aabb)
-                        .stream()
-                        .map(e -> e.getType().toString() + "@" + e.position())
-                        .toList());
+        return true;
     }
 
     private static void insertCoalIntoEngine(ServerLevel level, BlockPos enginePos) {
