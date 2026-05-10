@@ -65,14 +65,19 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @EventBusSubscriber(modid = MCPirates.MOD_ID)
 public final class AirshipBrain {
 
-    /** Cruise altitude. Above any vanilla mountain; player has to climb to engage. */
-    private static final double CRUISE_ALTITUDE = 200.0;
     /** Disengage if target leaves this radius (horizontal, from airpad anchor). */
     private static final double DISENGAGE_RANGE_SQ = (12 * 16) * (12 * 16);
     /** Considered "at airpad" (HOVER) when within this horizontal range. */
     private static final double HOVER_RADIUS_SQ = 16 * 16;
-    /** Considered "at cruise" when within this much of {@link #CRUISE_ALTITUDE}. */
-    private static final double CRUISE_TOLERANCE = 3.0;
+    /** Per-tick altitude delta below which we count the ship as "not climbing". The
+     *  chosen value (0.05 blocks/tick) ignores Sable's small physics jitter while still
+     *  catching real ascent. */
+    private static final double LIFTOFF_STEADY_DELTA = 0.05;
+    /** Consecutive steady ticks before LIFTOFF concludes. ~2 s at 20 tps = 40 ticks. */
+    private static final int LIFTOFF_STEADY_TICKS = 40;
+    /** Hard floor on LIFTOFF duration so we don't bail out before the ship's even moved
+     *  (at t=0 ship is stationary so steady-tick count is technically high immediately). */
+    private static final int LIFTOFF_MIN_TICKS = 60;
     /** Move within this distance of horizontal goal → drift, no thrust. */
     private static final double ARRIVAL_RADIUS_SQ = 12 * 12;
     /** Heading error band where we go straight; outside: pivot. */
@@ -154,6 +159,22 @@ public final class AirshipBrain {
             p.lastTargetSeenTick = now;
         }
 
+        // Track altitude steadiness during LIFTOFF so we know when the ship has
+        // reached the physical ceiling for its envelope size.
+        if (p.state == State.LIFTOFF) {
+            if (!Double.isNaN(p.lastSampledY)) {
+                if (Math.abs(shipPos.y - p.lastSampledY) < LIFTOFF_STEADY_DELTA) {
+                    p.steadyTicks++;
+                } else {
+                    p.steadyTicks = 0;
+                }
+            }
+            p.lastSampledY = shipPos.y;
+        } else {
+            p.steadyTicks = 0;
+            p.lastSampledY = Double.NaN;
+        }
+
         // State transitions
         State desired = decideNextState(p, target, shipPos, now);
         if (desired != p.state) {
@@ -198,7 +219,11 @@ public final class AirshipBrain {
     // ───────────────────────────── State machine ─────────────────────────────
 
     private static State decideNextState(Pirate p, ServerPlayer target, Vector3d shipPos, long now) {
-        boolean atCruise = Math.abs(shipPos.y - CRUISE_ALTITUDE) < CRUISE_TOLERANCE;
+        long ticksInState = now - p.stateEnteredTick;
+        // LIFTOFF ends when altitude has been steady (not climbing) for a sustained
+        // window — i.e., the ship has hit its physical ceiling for the envelope size.
+        boolean liftoffDone = p.steadyTicks >= LIFTOFF_STEADY_TICKS
+                && ticksInState >= LIFTOFF_MIN_TICKS;
         boolean atAirpad = horizDistSq(shipPos, p.airpadAnchor) < HOVER_RADIUS_SQ;
         boolean targetLost = (now - p.lastTargetSeenTick) > LOST_TARGET_DEBOUNCE;
         boolean targetTooFar = target != null
@@ -206,7 +231,7 @@ public final class AirshipBrain {
 
         return switch (p.state) {
             case LIFTOFF -> {
-                if (!atCruise) yield State.LIFTOFF;
+                if (!liftoffDone) yield State.LIFTOFF;
                 yield (target != null && !targetTooFar) ? State.PURSUE : State.RETURN;
             }
             case PURSUE -> {
@@ -291,16 +316,16 @@ public final class AirshipBrain {
         p.lastHeadingErrDeg = headingErrDeg;
     }
 
+    /**
+     * Throttle policy for the burner's analog lever (0..15). We intentionally don't aim
+     * for a specific altitude — the airship's envelope size sets a physical ceiling that
+     * varies per ship design, so we just run the burner flat-out. PURSUE/RETURN/HOVER
+     * also stay at 15 because anything less and the ship sinks below the ceiling.
+     * A future iteration could lower throttle for graceful descent on landing, but v1
+     * skips landing entirely.
+     */
     private static int chooseThrottle(State state, double currentY) {
-        if (state == State.LIFTOFF) {
-            return 15;  // climb hard
-        }
-        double err = CRUISE_ALTITUDE - currentY;
-        if (err > 5) return 14;
-        if (err > 1) return 11;
-        if (err < -5) return 0;
-        if (err < -1) return 4;
-        return 8;  // hover band
+        return 15;
     }
 
     /**
@@ -532,7 +557,6 @@ public final class AirshipBrain {
         }
         if (closest == null) return;
 
-        double altErr = CRUISE_ALTITUDE - shipPos.y;
         String engines =
                 (p.lastLeftEngaged ? "L" : "_") + (p.lastRightEngaged ? "R" : "_");
         String goalStr = Double.isNaN(p.lastGoalX)
@@ -543,6 +567,9 @@ public final class AirshipBrain {
                 : String.format("→%s d=%.0f",
                         target.getName().getString(),
                         Math.sqrt(horizDistSq(shipPos, target.getX(), target.getZ())));
+        String liftoffStr = p.state == State.LIFTOFF
+                ? String.format(" steady=%d/%d", p.steadyTicks, LIFTOFF_STEADY_TICKS)
+                : "";
 
         ChatFormatting stateColor = switch (p.state) {
             case LIFTOFF -> ChatFormatting.YELLOW;
@@ -554,14 +581,14 @@ public final class AirshipBrain {
         Component msg = Component.empty()
                 .append(Component.literal("[" + p.state.name() + "] ").withStyle(stateColor))
                 .append(Component.literal(String.format(
-                        "pos=(%.0f,%.0f,%.0f) alt_err=%.1f thr=%d %s goal=%s yaw_err=%.0f° %s",
+                        "pos=(%.0f,%.1f,%.0f) thr=%d %s goal=%s yaw_err=%.0f° %s%s",
                         shipPos.x, shipPos.y, shipPos.z,
-                        altErr,
                         p.lastThrottle,
                         engines,
                         goalStr,
                         p.lastHeadingErrDeg,
-                        targetStr
+                        targetStr,
+                        liftoffStr
                 )));
         closest.displayClientMessage(msg, /*actionBar=*/true);
     }
@@ -638,6 +665,12 @@ public final class AirshipBrain {
         double lastGoalX = Double.NaN;
         double lastGoalZ = Double.NaN;
         double lastHeadingErrDeg = 0;
+
+        // Altitude steady-state tracking for LIFTOFF: the brain doesn't aim for a fixed
+        // altitude; instead it watches for the ship's y to stop increasing, which is
+        // when it's hit the physical ceiling for its envelope size.
+        double lastSampledY = Double.NaN;
+        int steadyTicks = 0;
 
         Pirate(ServerLevel parentLevel, SubLevel subLevel, BlockPos airpadAnchor,
                BlockPos slAnalogLever, BlockPos slLeftClutchLever, BlockPos slRightClutchLever,
