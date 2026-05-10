@@ -1,0 +1,49 @@
+{
+  "type": "lithostitched:add_template_pool_elements",
+  "neoforge:conditions": [
+    { "type": "neoforge:mod_loaded", "modid": "ctov" }
+  ],
+  "fabric:load_conditions": {
+    "condition": "fabric:all_mods_loaded",
+    "values": ["ctov"]
+  },
+  "template_pools": [
+    "ctov:village/beach/house",
+    "ctov:village/christmas/house",
+    "ctov:village/dark_forest/house",
+    "ctov:village/desert/house",
+    "ctov:village/desert_oasis/house",
+    "ctov:village/jungle/house",
+    "ctov:village/jungle_tree/house",
+    "ctov:village/mesa/house",
+    "ctov:village/mesa_fortified/house",
+    "ctov:village/mountain/house",
+    "ctov:village/mountain_alpine/house",
+    "ctov:village/mushroom/house",
+    "ctov:village/plains/house",
+    "ctov:village/plains_fortified/house",
+    "ctov:village/savanna/house",
+    "ctov:village/savanna_na/house",
+    "ctov:village/snowy/house",
+    "ctov:village/swamp/house",
+    "ctov:village/swamp_fortified/house",
+    "ctov:village/taiga/house",
+    "ctov:village/taiga_fortified/house"
+  ],
+  "elements": [
+    {
+      "weight": 5,
+      "element": {
+        "element_type": "lithostitched:guaranteed",
+        "delegate": {
+          "element_type": "minecraft:single_pool_element",
+          "projection": "rigid",
+          "processors": { "processors": [] },
+          "location": "mcpirates:village/common/pirate_bounty_board"
+        },
+        "count": 1,
+        "min_depth": 3
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "type": "lithostitched:add_template_pool_elements",
+  "template_pools": "minecraft:pillager_outpost/base_plates",
+  "elements": [
+    {
+      "weight": 99,
+      "element": {
+        "element_type": "minecraft:legacy_single_pool_element",
+        "location": "mcpirates:base_plate_with_airship",
+        "processors": {
+          "processors": []
+        },
+        "projection": "rigid"
+      }
+    }
+  ]
+}

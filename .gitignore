@@ -1,0 +1,29 @@
+# Build outputs
+build/
+out/
+bin/
+.gradle/
+runs/
+src/generated/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.project
+.classpath
+.settings/
+.metadata/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local libs (Aeronautics jar etc.) — keep folder, ignore jars
+libs/*.jar
+!libs/.gitkeep
+
+# Cloned upstream sources, kept local for reference only
+sources/
