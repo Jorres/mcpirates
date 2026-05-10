@@ -269,32 +269,45 @@ public final class AirshipLiftoffTrigger {
         MCPirates.LOGGER.info("fuelled engine at {} with {} coal", enginePos, inserted);
     }
 
+    /**
+     * Look up the cannon mount BE at the precisely-computed SubLevel position. The expected
+     * position is derived from the analog lever's world position + the structure-local
+     * cannon-mount delta, rotated by the jigsaw rotation we detected from the lever's
+     * facing. With the math right, this should always match exactly. We retain a tiny ±1
+     * fallback as a sanity net for off-by-one issues — a hit at non-zero delta logs at WARN
+     * so we'll notice if the rotation math regresses.
+     */
     private static BlockPos locateCannonMount(Level level, BlockPos expected) {
         BlockEntity direct = level.getBlockEntity(expected);
         if (direct instanceof CannonMountBlockEntity) {
             return expected;
         }
         BlockState directState = level.getBlockState(expected);
-        MCPirates.LOGGER.info(
-                "cannon mount NOT at expected {} (state={} BE={}); scanning ±8",
+        MCPirates.LOGGER.warn(
+                "cannon mount NOT at expected {} (state={} BE={}); scanning ±1 — "
+                + "if this hits, rotation math is off by one",
                 expected, directState.getBlock(),
                 direct == null ? "null" : direct.getClass().getSimpleName());
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
-        for (int dx = -8; dx <= 8; dx++) {
-            for (int dy = -8; dy <= 8; dy++) {
-                for (int dz = -8; dz <= 8; dz++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    if (dx == 0 && dy == 0 && dz == 0) continue;
                     cursor.set(expected.getX() + dx, expected.getY() + dy, expected.getZ() + dz);
                     if (level.getBlockEntity(cursor) instanceof CannonMountBlockEntity) {
                         BlockPos found = cursor.immutable();
-                        MCPirates.LOGGER.info(
-                                "cannon mount found at {} (delta from expected: {},{},{})",
+                        MCPirates.LOGGER.warn(
+                                "cannon mount found at {} (delta from expected: {},{},{}) — "
+                                + "fix this in the rotation math",
                                 found, dx, dy, dz);
                         return found;
                     }
                 }
             }
         }
-        MCPirates.LOGGER.warn("cannon mount not found within ±8 of {}", expected);
+        MCPirates.LOGGER.error(
+                "cannon mount not found within ±1 of {} — assembly probably broke "
+                + "(check honey-glue AABB / structure rotation handling)", expected);
         return null;
     }
 
