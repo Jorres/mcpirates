@@ -193,53 +193,64 @@ public final class AirshipLiftoffTrigger {
         level.sendBlockUpdated(pos, bs, bs, Block.UPDATE_ALL);
         MCPirates.LOGGER.info("activated airship lever at {} (state -> {})", pos, TARGET_STATE);
 
-        // Step 3a: spawn the runtime honey-glue.
+        // Step 3: spawn the runtime honey-glue (this tick), then defer the rest of the
+        // pipeline by one tick so the entity is actually queryable.
         //
-        // Why not the NBT-baked one? Vanilla's structure-block entity loader calls
-        // entity.moveTo(...) AFTER readAdditionalSaveData, which calls setPos →
-        // makeBoundingBox(...) using the entity's default EntityDimensions (small).
-        // That overwrites our custom From/To bounds with a tiny default box. On the very
-        // next server tick, HoneyGlueEntity.tick() sees getBoundingBox().getXsize() < 0.9
-        // and discards the entity. The assembly BFS then has no glue to follow.
+        // Why deferred? `level.addFreshEntity` returns true synchronously, but the entity
+        // isn't yet visible to spatial queries via `level.getEntitiesOfClass(...)`. Section
+        // visibility / entity-tick wiring catches up on the next tick boundary. If we run
+        // SimAssemblyHelper synchronously here, its `addInitialHoneyGlue` query returns
+        // empty, the BFS finds no glue connections, and the contraption ends up containing
+        // only the burner (the seed) and the lever (pulled along by brittle-attachment).
+        // Confirmed empirically: the diagnostic log "post-spawn glue query: 0 entities"
+        // proved the entity is invisible to spatial queries on the same tick it's spawned.
         //
-        // A programmatic spawn via the (Level, AABB) constructor calls setBoundsAndSync()
-        // directly and never goes through moveTo, so the bounds stick. We size the AABB
-        // ±7 X / ±7 Z (rotation-invariant on the 10x10 ship footprint) and Y = lever-3 to
-        // lever+7 (covers ship body y=3..12 in NBT-local while excluding the y=2 pad).
+        // `MinecraftServer.execute(Runnable)` queues a TickTask that runs at the start of
+        // the next tick, in `runAllTasks()` before `tickChildren`. By then the spawn has
+        // been through the entity-section update cycle and the spatial query works.
         spawnAirshipHoneyGlue(level, pos);
 
-        // Step 3b: assemble ship (seed from support block — analog_lever is brittle).
         BlockPos assemblySeed = pos.relative(connected.getOpposite());
-        AssemblyResult result = AirshipAssembler.assemble(level, assemblySeed);
+        // Capture-by-final for the lambda. Rotation handling happened above; the deferred
+        // call only runs the world-mutating assembly + brain registration.
+        final BlockPos finalCannonMountPos = cannonMountPos;
+        final BlockPos finalLeftClutchPos = leftClutchPos;
+        final BlockPos finalRightClutchPos = rightClutchPos;
+        final Rotation finalRotation = rotation;
+        level.getServer().execute(() -> finishAssembly(
+                level, pos, assemblySeed, finalCannonMountPos,
+                finalLeftClutchPos, finalRightClutchPos, finalRotation));
+    }
+
+    /** Deferred-by-one-tick continuation of activateLever — see comment there for why. */
+    private static void finishAssembly(
+            ServerLevel level, BlockPos leverPos, BlockPos seed,
+            BlockPos cannonMountPos, BlockPos leftClutchPos, BlockPos rightClutchPos,
+            Rotation rotation) {
+        AssemblyResult result = AirshipAssembler.assemble(level, seed);
         if (result == null) {
-            MCPirates.LOGGER.warn("ship assembly failed; aborting startup at {}", pos);
+            MCPirates.LOGGER.warn("ship assembly failed; aborting startup at {}", leverPos);
             return;
         }
         SubLevel subLevel = result.subLevel();
         BlockPos offset = result.offset();
 
-        // Diagnostic: enumerate every non-air block that ended up in the SubLevel. If the
-        // assembly only pulled a subset (e.g. burner + lever), this tells us exactly what
-        // got moved vs what stayed in the world.
         scanAssembledSubLevel(subLevel, offset);
 
-        // Step 4: locate + assemble cannon (search ±8 in case of small drift).
         BlockPos slCannonMount = triggerCannonAssembly(
                 subLevel.getLevel(), cannonMountPos.offset(offset));
         if (slCannonMount == null) {
             slCannonMount = cannonMountPos.offset(offset);
         }
 
-        // Step 5: hand off to brain. Forward direction in SubLevel-local space: NBT cannon
-        // faces SOUTH, and the structure rotation gets applied to that just like to deltas.
         Direction shipForwardDir = rotation.rotate(Direction.SOUTH);
         Vector3d shipLocalForward = new Vector3d(
                 shipForwardDir.getStepX(), shipForwardDir.getStepY(), shipForwardDir.getStepZ());
         AirshipBrain.register(
                 level,
                 subLevel,
-                pos,                                          // airpad anchor (world XZ)
-                pos.offset(offset),                           // analog lever in SubLevel
+                leverPos,
+                leverPos.offset(offset),
                 leftClutchPos.offset(offset),
                 rightClutchPos.offset(offset),
                 slCannonMount,
@@ -320,7 +331,21 @@ public final class AirshipLiftoffTrigger {
         HoneyGlueEntity glue = new HoneyGlueEntity(level, bb);
         boolean added = level.addFreshEntity(glue);
         MCPirates.LOGGER.info(
-                "spawned runtime honey-glue (added={}) covering {}", added, bb);
+                "spawned runtime honey-glue (added={}) covering {} actualBounds={} pos={}",
+                added, bb, glue.getBoundingBox(), glue.position());
+        // Diagnose: does Aeronautics' assembly query path actually find this entity?
+        // SimAssemblyContraption.addInitialHoneyGlue uses
+        // level.getEntitiesOfClass(HoneyGlueEntity.class, span(seed, seed).inflate(range)).
+        // Mimic that here so we know if the entity is queryable + contains the seed.
+        java.util.List<HoneyGlueEntity> nearby = level.getEntitiesOfClass(
+                HoneyGlueEntity.class, bb.inflate(2));
+        MCPirates.LOGGER.info("post-spawn glue query: {} entities found near seed", nearby.size());
+        BlockPos seed = leverPos.above(); // ceiling lever's support = burner = assembly seed
+        for (HoneyGlueEntity e : nearby) {
+            MCPirates.LOGGER.info(
+                    "  - bounds={}, contains(burner)={}, contains(lever)={}",
+                    e.getBoundingBox(), e.contains(seed), e.contains(leverPos));
+        }
     }
 
     private static void insertCoalIntoEngine(ServerLevel level, BlockPos enginePos) {
