@@ -5,7 +5,6 @@ import com.simibubi.create.content.redstone.analogLever.AnalogLeverBlockEntity;
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.simulated_team.simulated.content.blocks.portable_engine.PortableEngineBlockEntity;
-import dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueEntity;
 import dev.simulated_team.simulated.multiloader.inventory.ItemInfoWrapper;
 import dev.simulated_team.simulated.util.SimAssemblyHelper.AssemblyResult;
 import net.minecraft.core.BlockPos;
@@ -85,45 +84,11 @@ public final class AirshipLiftoffTrigger {
     private static Field cachedStateField;
     private static Method cachedCannonAssembleMethod;
 
-    /**
-     * Pending deferred-assembly tasks. Queued in {@link #activateLever} after the honey-glue
-     * spawn, processed in {@link #onServerTick} once the target tick has been reached. We
-     * defer to <em>after</em> the next tick's {@code tickChildren} (i.e. processed during
-     * that tick's POST event) so the spawned glue has been through one full entity-tick
-     * cycle and is visible to spatial queries.
-     */
-    private record DeferredAssembly(
-            long targetTick,
-            ServerLevel level,
-            BlockPos leverPos,
-            BlockPos seed,
-            BlockPos cannonMountPos,
-            BlockPos leftClutchPos,
-            BlockPos rightClutchPos,
-            Rotation rotation) {}
-
-    private static final java.util.List<DeferredAssembly> PENDING_ASSEMBLIES =
-            new java.util.concurrent.CopyOnWriteArrayList<>();
-
     private AirshipLiftoffTrigger() {}
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
-        long now = event.getServer().getTickCount();
-
-        // Run any deferred assemblies whose target tick has arrived. We process before
-        // the regular trigger scan so a freshly-deferred ship lifts off this tick.
-        var iter = PENDING_ASSEMBLIES.iterator();
-        while (iter.hasNext()) {
-            DeferredAssembly d = iter.next();
-            if (now >= d.targetTick()) {
-                PENDING_ASSEMBLIES.remove(d);
-                finishAssembly(d.level(), d.leverPos(), d.seed(), d.cannonMountPos(),
-                        d.leftClutchPos(), d.rightClutchPos(), d.rotation());
-            }
-        }
-
-        if (now % TICK_INTERVAL != 0) {
+        if (event.getServer().getTickCount() % TICK_INTERVAL != 0) {
             return;
         }
         for (ServerLevel level : event.getServer().getAllLevels()) {
@@ -227,50 +192,15 @@ public final class AirshipLiftoffTrigger {
         level.sendBlockUpdated(pos, bs, bs, Block.UPDATE_ALL);
         MCPirates.LOGGER.info("activated airship lever at {} (state -> {})", pos, TARGET_STATE);
 
-        // Step 3: spawn the runtime honey-glue (this tick), then defer the rest of the
-        // pipeline so the entity is actually queryable when assembly runs.
-        //
-        // Why deferred? `level.addFreshEntity` returns true synchronously, but the entity
-        // isn't yet visible to spatial queries via `level.getEntitiesOfClass(...)`. Section
-        // visibility / entity-tick wiring catches up only after the entity has been ticked
-        // at least once. If we run SimAssemblyHelper before that, its addInitialHoneyGlue
-        // query returns empty, the BFS finds no glue connections, and the contraption ends
-        // up containing only the burner (the seed) and the lever (pulled along by
-        // brittle-attachment).
-        //
-        // We queue the work in PENDING_ASSEMBLIES with target tick = now + 1, processed in
-        // the next ServerTickEvent.Post handler. POST fires AFTER tickChildren has ticked
-        // entities, so by then the spawn has been through one full entity-tick cycle and
-        // the spatial query works. (`MinecraftServer.execute` queues for runAllTasks,
-        // which fires BEFORE tickChildren — empirically too early.)
-        spawnAirshipHoneyGlue(level, pos);
-
+        // Step 3: assemble ship. The structure-baked honey-glue rides along with the
+        // structure NBT — HoneyGlueEntity overrides setPos (preserves bounds across the
+        // structure-loader's translation) and rotate (swaps X/Z extents on 90° rotations),
+        // so it lands in the world with bounds correctly aligned to the rotated body and
+        // is fully indexed in the spatial structure by the time the trigger fires.
         BlockPos assemblySeed = pos.relative(connected.getOpposite());
-        long now = level.getServer().getTickCount();
-        PENDING_ASSEMBLIES.add(new DeferredAssembly(
-                now + 1, level, pos, assemblySeed,
-                cannonMountPos, leftClutchPos, rightClutchPos, rotation));
-    }
-
-    /** Deferred-by-one-tick continuation of activateLever — see comment there for why. */
-    private static void finishAssembly(
-            ServerLevel level, BlockPos leverPos, BlockPos seed,
-            BlockPos cannonMountPos, BlockPos leftClutchPos, BlockPos rightClutchPos,
-            Rotation rotation) {
-        // Diagnostic: did the spatial index catch up?
-        AABB queryArea = new AABB(leverPos).inflate(20);
-        java.util.List<HoneyGlueEntity> visible = level.getEntitiesOfClass(
-                HoneyGlueEntity.class, queryArea);
-        MCPirates.LOGGER.info(
-                "finishAssembly: glue query at start of next-tick runAllTasks → {} entities",
-                visible.size());
-        for (HoneyGlueEntity g : visible) {
-            MCPirates.LOGGER.info("  - bounds={}, contains(seed)={}",
-                    g.getBoundingBox(), g.contains(seed));
-        }
-        AssemblyResult result = AirshipAssembler.assemble(level, seed);
+        AssemblyResult result = AirshipAssembler.assemble(level, assemblySeed);
         if (result == null) {
-            MCPirates.LOGGER.warn("ship assembly failed; aborting startup at {}", leverPos);
+            MCPirates.LOGGER.warn("ship assembly failed; aborting startup at {}", pos);
             return;
         }
         SubLevel subLevel = result.subLevel();
@@ -278,20 +208,23 @@ public final class AirshipLiftoffTrigger {
 
         scanAssembledSubLevel(subLevel, offset);
 
+        // Step 4: locate + assemble cannon.
         BlockPos slCannonMount = triggerCannonAssembly(
                 subLevel.getLevel(), cannonMountPos.offset(offset));
         if (slCannonMount == null) {
             slCannonMount = cannonMountPos.offset(offset);
         }
 
+        // Step 5: hand off to brain. Forward in SubLevel-local space follows from the
+        // structure rotation applied to NBT cannon facing (SOUTH).
         Direction shipForwardDir = rotation.rotate(Direction.SOUTH);
         Vector3d shipLocalForward = new Vector3d(
                 shipForwardDir.getStepX(), shipForwardDir.getStepY(), shipForwardDir.getStepZ());
         AirshipBrain.register(
                 level,
                 subLevel,
-                leverPos,
-                leverPos.offset(offset),
+                pos,
+                pos.offset(offset),
                 leftClutchPos.offset(offset),
                 rightClutchPos.offset(offset),
                 slCannonMount,
@@ -363,30 +296,6 @@ public final class AirshipLiftoffTrigger {
         MCPirates.LOGGER.info(
                 "SubLevel post-assembly scan: {} non-air blocks, types={}, samples={}",
                 total, counts, samples);
-    }
-
-    private static void spawnAirshipHoneyGlue(ServerLevel level, BlockPos leverPos) {
-        AABB bb = new AABB(
-                leverPos.getX() - 7.0, leverPos.getY() - 3.0, leverPos.getZ() - 7.0,
-                leverPos.getX() + 8.0, leverPos.getY() + 8.0, leverPos.getZ() + 8.0);
-        HoneyGlueEntity glue = new HoneyGlueEntity(level, bb);
-        boolean added = level.addFreshEntity(glue);
-        MCPirates.LOGGER.info(
-                "spawned runtime honey-glue (added={}) covering {} actualBounds={} pos={}",
-                added, bb, glue.getBoundingBox(), glue.position());
-        // Diagnose: does Aeronautics' assembly query path actually find this entity?
-        // SimAssemblyContraption.addInitialHoneyGlue uses
-        // level.getEntitiesOfClass(HoneyGlueEntity.class, span(seed, seed).inflate(range)).
-        // Mimic that here so we know if the entity is queryable + contains the seed.
-        java.util.List<HoneyGlueEntity> nearby = level.getEntitiesOfClass(
-                HoneyGlueEntity.class, bb.inflate(2));
-        MCPirates.LOGGER.info("post-spawn glue query: {} entities found near seed", nearby.size());
-        BlockPos seed = leverPos.above(); // ceiling lever's support = burner = assembly seed
-        for (HoneyGlueEntity e : nearby) {
-            MCPirates.LOGGER.info(
-                    "  - bounds={}, contains(burner)={}, contains(lever)={}",
-                    e.getBoundingBox(), e.contains(seed), e.contains(leverPos));
-        }
     }
 
     private static void insertCoalIntoEngine(ServerLevel level, BlockPos enginePos) {
