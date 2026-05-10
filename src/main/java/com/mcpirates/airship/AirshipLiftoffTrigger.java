@@ -5,6 +5,7 @@ import com.simibubi.create.content.redstone.analogLever.AnalogLeverBlockEntity;
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.simulated_team.simulated.content.blocks.portable_engine.PortableEngineBlockEntity;
+import dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueEntity;
 import dev.simulated_team.simulated.multiloader.inventory.ItemInfoWrapper;
 import dev.simulated_team.simulated.util.SimAssemblyHelper.AssemblyResult;
 import net.minecraft.core.BlockPos;
@@ -24,6 +25,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.AttachFace;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.phys.AABB;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
@@ -191,7 +193,22 @@ public final class AirshipLiftoffTrigger {
         level.sendBlockUpdated(pos, bs, bs, Block.UPDATE_ALL);
         MCPirates.LOGGER.info("activated airship lever at {} (state -> {})", pos, TARGET_STATE);
 
-        // Step 3: assemble ship (seed from support block — analog_lever is brittle).
+        // Step 3a: spawn the runtime honey-glue.
+        //
+        // Why not the NBT-baked one? Vanilla's structure-block entity loader calls
+        // entity.moveTo(...) AFTER readAdditionalSaveData, which calls setPos →
+        // makeBoundingBox(...) using the entity's default EntityDimensions (small).
+        // That overwrites our custom From/To bounds with a tiny default box. On the very
+        // next server tick, HoneyGlueEntity.tick() sees getBoundingBox().getXsize() < 0.9
+        // and discards the entity. The assembly BFS then has no glue to follow.
+        //
+        // A programmatic spawn via the (Level, AABB) constructor calls setBoundsAndSync()
+        // directly and never goes through moveTo, so the bounds stick. We size the AABB
+        // ±7 X / ±7 Z (rotation-invariant on the 10x10 ship footprint) and Y = lever-3 to
+        // lever+7 (covers ship body y=3..12 in NBT-local while excluding the y=2 pad).
+        spawnAirshipHoneyGlue(level, pos);
+
+        // Step 3b: assemble ship (seed from support block — analog_lever is brittle).
         BlockPos assemblySeed = pos.relative(connected.getOpposite());
         AssemblyResult result = AirshipAssembler.assemble(level, assemblySeed);
         if (result == null) {
@@ -252,6 +269,16 @@ public final class AirshipLiftoffTrigger {
         }
         lever.setChanged();
         return true;
+    }
+
+    private static void spawnAirshipHoneyGlue(ServerLevel level, BlockPos leverPos) {
+        AABB bb = new AABB(
+                leverPos.getX() - 7.0, leverPos.getY() - 3.0, leverPos.getZ() - 7.0,
+                leverPos.getX() + 8.0, leverPos.getY() + 8.0, leverPos.getZ() + 8.0);
+        HoneyGlueEntity glue = new HoneyGlueEntity(level, bb);
+        boolean added = level.addFreshEntity(glue);
+        MCPirates.LOGGER.info(
+                "spawned runtime honey-glue (added={}) covering {}", added, bb);
     }
 
     private static void insertCoalIntoEngine(ServerLevel level, BlockPos enginePos) {
