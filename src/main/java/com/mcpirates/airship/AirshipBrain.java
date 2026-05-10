@@ -433,8 +433,10 @@ public final class AirshipBrain {
         ServerPlayer best = null;
         double bestSq = DISENGAGE_RANGE_SQ;
         for (ServerPlayer player : p.parentLevel.players()) {
-            SubLevel containing = dev.ryanhcode.sable.Sable.HELPER.getContaining(player);
-            if (containing == null || containing == p.subLevel) continue;
+            // TEMP: SubLevel filter disabled for creative-mode testing — any player in
+            // range becomes a PURSUE target. Re-enable before ship.
+            // SubLevel containing = dev.ryanhcode.sable.Sable.HELPER.getContaining(player);
+            // if (containing == null || containing == p.subLevel) continue;
             double d2 = horizDistSq(shipPos, player.getX(), player.getZ());
             if (d2 < bestSq) {
                 bestSq = d2;

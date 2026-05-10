@@ -220,28 +220,51 @@ def build_airship(input_path: Path) -> None:
         "joint": String("rollable"),
     }))
 
-    # Carry over entities from the source (honey-glue, super-glue, hangings, etc.) and
-    # translate them by the same (east_offset, pad_y+1, 0) shift we applied to blocks.
+    # Carry over entities from the source (honey-glue, super-glue, hangings, etc.).
+    #
     # Vanilla's StructureTemplate uses the top-level `blockPos` + `pos` for placement and
-    # rewrites the entity's nbt.Pos / nbt.UUID, so we only touch those two fields.
-    # HoneyGlueEntity stores its bounds as From/To relative to Pos, so they need no fixup.
+    # rewrites the entity's nbt.Pos / nbt.UUID, so for most entities we only touch those.
+    #
+    # **Honey-glue special case.** Honey-glue's `From`/`To` bounds are stored relative to
+    # the entity Pos, but vanilla's structure-rotation transform does NOT rotate those
+    # offsets — only the entity's position. As a result, an asymmetric AABB (say ±3 X / ±5
+    # Z) ends up covering different blocks depending on the random rotation jigsaw picked,
+    # and the assembly BFS misses pieces of the ship body. To survive any 90° rotation we
+    # re-place the honey-glue at the wrapped structure's XZ centre (5, 3, 5) and force
+    # square ±5 bounds in X and Z. The 10×9×10 AABB then always covers the full structure
+    # footprint (which itself stays a 10x10 square under rotation).
+    GLUE_CENTER_X = (out_size_x - 1) / 2.0  # 4.5 for a 10-wide wrap → use 5 to keep ints
+    GLUE_CENTER_Z = (out_size_z - 1) / 2.0
     out_entities = List[Compound]()
     src_entities = src.get("entities", List[Compound]())
+    glue_count = 0
     for ent in src_entities:
-        new_ent = Compound(dict(ent))  # shallow copy of the top-level fields
-        bp = list(ent["blockPos"])
-        new_ent["blockPos"] = List[Int]([
-            Int(int(bp[0]) + east_offset),
-            Int(int(bp[1]) + pad_y + 1),
-            Int(int(bp[2])),
-        ])
-        ep = list(ent["pos"])
-        new_ent["pos"] = List[Double]([
-            Double(float(ep[0]) + east_offset),
-            Double(float(ep[1]) + pad_y + 1),
-            Double(float(ep[2])),
-        ])
+        new_ent = Compound(dict(ent))
+        nid = str(ent.get("nbt", {}).get("id", ""))
+        if nid == "simulated:honey_glue":
+            glue_count += 1
+            new_ent["blockPos"] = List[Int]([Int(5), Int(pad_y + 1), Int(5)])
+            new_ent["pos"] = List[Double]([Double(5.0), Double(float(pad_y + 1)), Double(5.0)])
+            new_nbt = Compound(dict(ent["nbt"]))
+            new_nbt["From"] = List[Double]([Double(-5.0), Double(0.0), Double(-5.0)])
+            new_nbt["To"] = List[Double]([Double(5.0), Double(9.0), Double(5.0)])
+            new_ent["nbt"] = new_nbt
+        else:
+            bp = list(ent["blockPos"])
+            new_ent["blockPos"] = List[Int]([
+                Int(int(bp[0]) + east_offset),
+                Int(int(bp[1]) + pad_y + 1),
+                Int(int(bp[2])),
+            ])
+            ep = list(ent["pos"])
+            new_ent["pos"] = List[Double]([
+                Double(float(ep[0]) + east_offset),
+                Double(float(ep[1]) + pad_y + 1),
+                Double(float(ep[2])),
+            ])
         out_entities.append(new_ent)
+    if glue_count == 0:
+        print("WARN: no honey-glue entity found in source — assembly will likely fail")
 
     out_nbt = Compound({
         "DataVersion": src.get("DataVersion", Int(3953)),
