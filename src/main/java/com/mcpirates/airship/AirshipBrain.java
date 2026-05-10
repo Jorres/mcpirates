@@ -9,7 +9,6 @@ import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -17,6 +16,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.level.block.FaceAttachedHorizontalDirectionalBlock;
 import net.minecraft.world.level.block.LeverBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -91,13 +91,21 @@ public final class AirshipBrain {
     /** Ticks of "no target" before dropping out of PURSUE. */
     private static final int LOST_TARGET_DEBOUNCE = 60;
 
-    /** Show particles + actionbar overlay for active pirate ships. */
+    /** PURSUE strafing radius — ship orbits the target at this XZ distance. */
+    private static final double ORBIT_RADIUS = 25.0;
+    /** How far ahead along the tangent we aim the ship's heading. Larger = wider
+     *  orbits, smoother turns. Smaller = tighter, more aggressive turning. */
+    private static final double ORBIT_LOOK_AHEAD = 18.0;
+    /** Strength of radial correction (fraction of look-ahead borrowed from tangent
+     *  to pull the ship back to the orbit radius). 1.0 = fully radial when one
+     *  radius off. */
+    private static final double ORBIT_RADIAL_GAIN = 0.8;
+
+    /** Show actionbar overlay for active pirate ships. */
     private static final boolean DEBUG_OVERLAY = true;
-    /** Paint particles every N ticks. */
-    private static final int OVERLAY_PARTICLE_INTERVAL = 5;
     /** Push actionbar text every N ticks. */
     private static final int OVERLAY_ACTIONBAR_INTERVAL = 10;
-    /** Don't bother drawing for players further than this from the airship (blocks). */
+    /** Don't bother sending actionbar to players further than this (blocks). */
     private static final double OVERLAY_RENDER_RADIUS = 200.0;
 
     private static final ResourceLocation POWDER_CHARGE_ID =
@@ -111,6 +119,8 @@ public final class AirshipBrain {
 
     private static Field cachedAnalogStateField;
     private static Field cachedMountedContraptionField;
+    private static Field cachedCannonYawField;
+    private static Field cachedCannonPitchField;
 
     private AirshipBrain() {}
 
@@ -186,10 +196,10 @@ public final class AirshipBrain {
                     String.format("%.1f", Math.sqrt(horizDistSq(shipPos, p.airpadAnchor))));
             p.state = desired;
             p.stateEnteredTick = now;
-            applyMovement(p, target, shipPos);
+            applyMovement(p, target, shipPos, now);
             p.lastDecisionTick = now;
         } else if (now - p.lastDecisionTick >= DECISION_INTERVAL) {
-            applyMovement(p, target, shipPos);
+            applyMovement(p, target, shipPos, now);
             p.lastDecisionTick = now;
         }
 
@@ -205,13 +215,8 @@ public final class AirshipBrain {
             }
         }
 
-        if (DEBUG_OVERLAY) {
-            if (now % OVERLAY_PARTICLE_INTERVAL == 0) {
-                drawDebugParticles(p, target, shipPos);
-            }
-            if (now % OVERLAY_ACTIONBAR_INTERVAL == 0) {
-                writeDebugActionbar(p, target, shipPos);
-            }
+        if (DEBUG_OVERLAY && now % OVERLAY_ACTIONBAR_INTERVAL == 0) {
+            writeDebugActionbar(p, target, shipPos);
         }
         return true;
     }
@@ -252,7 +257,7 @@ public final class AirshipBrain {
 
     // ───────────────────────────── Movement ─────────────────────────────
 
-    private static void applyMovement(Pirate p, ServerPlayer target, Vector3d shipPos) {
+    private static void applyMovement(Pirate p, ServerPlayer target, Vector3d shipPos, long now) {
         Level subLevelLevel = p.subLevel.getLevel();
 
         // Pick a horizontal goal, or null if we're stationary (LIFTOFF, HOVER).
@@ -260,8 +265,35 @@ public final class AirshipBrain {
         switch (p.state) {
             case PURSUE -> {
                 if (target != null) {
-                    goalX = target.getX();
-                    goalZ = target.getZ();
+                    // Strafe in a circle around the target instead of flying straight
+                    // at it. The cannon (which aims independently) can keep firing
+                    // while the ship's hull stays tangent to the orbit. Avoids the
+                    // "hover-and-oscillate" failure mode of point-and-stop pursuit.
+                    double ftx = shipPos.x - target.getX();
+                    double ftz = shipPos.z - target.getZ();
+                    double r = Math.sqrt(ftx * ftx + ftz * ftz);
+                    if (r < 0.01) {
+                        // Degenerate: ship on top of target. Pick an arbitrary direction.
+                        ftx = 1.0; ftz = 0.0; r = 1.0;
+                    }
+                    // CCW tangent unit vector at the ship's current angle around target.
+                    double tanX = -ftz / r;
+                    double tanZ = ftx / r;
+                    // Radial unit pointing inward (toward target).
+                    double radInX = -ftx / r;
+                    double radInZ = -ftz / r;
+                    // Blend tangent + radial correction. radialErr > 0: outside orbit,
+                    // pull inward; < 0: inside orbit, push outward.
+                    double radialErr = (r - ORBIT_RADIUS) / ORBIT_RADIUS;
+                    double radialBlend = Math.max(-1.0, Math.min(1.0, radialErr)) * ORBIT_RADIAL_GAIN;
+                    double dirX = tanX + radInX * radialBlend;
+                    double dirZ = tanZ + radInZ * radialBlend;
+                    double dirLen = Math.sqrt(dirX * dirX + dirZ * dirZ);
+                    if (dirLen > 0.001) {
+                        dirX /= dirLen; dirZ /= dirLen;
+                    }
+                    goalX = shipPos.x + dirX * ORBIT_LOOK_AHEAD;
+                    goalZ = shipPos.z + dirZ * ORBIT_LOOK_AHEAD;
                 }
             }
             case RETURN -> {
@@ -303,9 +335,31 @@ public final class AirshipBrain {
         setLeverPowered(subLevelLevel, p.slLeftClutchLever, !leftEngaged);
         setLeverPowered(subLevelLevel, p.slRightClutchLever, !rightEngaged);
 
-        // Throttle: bang-bang on altitude error.
-        int throttle = chooseThrottle(p.state, shipPos.y);
+        // Throttle: bang-bang on altitude error relative to target/airpad,
+        // with floor protection + stuck-on-terrain override.
+        int throttle = chooseThrottle(p, p.state, shipPos, target, p.parentLevel, now);
         setAnalogLeverState(subLevelLevel, p.slAnalogLever, throttle);
+        // Diagnostic: log throttle decisions every ~2s so we can verify the floor
+        // protection / soft descent logic actually fires when expected.
+        long bucket = System.currentTimeMillis() / 2000;
+        if (bucket != p.lastThrottleLogBucket) {
+            p.lastThrottleLogBucket = bucket;
+            int groundY = p.parentLevel.getHeight(
+                    net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,
+                    (int) Math.floor(shipPos.x),
+                    (int) Math.floor(shipPos.z));
+            double targetY = (p.state == State.PURSUE && target != null)
+                    ? target.getEyeY() + PURSUE_ALT_OFFSET : Double.NaN;
+            MCPirates.LOGGER.info(
+                    "pirate {} throttle: state={} thr={} shipY={} groundY={} altAboveGround={} targetY={} dy={} stuckTicks={}",
+                    p.subLevel.getUniqueId(), p.state, throttle,
+                    String.format("%.1f", shipPos.y),
+                    groundY,
+                    String.format("%.1f", shipPos.y - groundY),
+                    Double.isNaN(targetY) ? "—" : String.format("%.1f", targetY),
+                    Double.isNaN(targetY) ? "—" : String.format("%.1f", shipPos.y - targetY),
+                    p.stuckTicks);
+        }
 
         // Record for the debug overlay.
         p.lastLeftEngaged = leftEngaged;
@@ -317,15 +371,96 @@ public final class AirshipBrain {
     }
 
     /**
-     * Throttle policy for the burner's analog lever (0..15). We intentionally don't aim
-     * for a specific altitude — the airship's envelope size sets a physical ceiling that
-     * varies per ship design, so we just run the burner flat-out. PURSUE/RETURN/HOVER
-     * also stay at 15 because anything less and the ship sinks below the ceiling.
-     * A future iteration could lower throttle for graceful descent on landing, but v1
-     * skips landing entirely.
+     * Throttle policy for the burner's analog lever (0..15). LIFTOFF runs flat out so
+     * the ship reaches its envelope ceiling. In PURSUE we aim {@link #PURSUE_ALT_OFFSET}
+     * blocks above the target so the cannon has firing arc. RETURN/HOVER hover at the
+     * current altitude.
+     *
+     * <p>Two safety layers:
+     * <ul>
+     *     <li><b>Floor protection</b>: ground proximity checked via the world's
+     *         {@code MOTION_BLOCKING} heightmap. If the ship is within
+     *         {@link #MIN_ALT_ABOVE_GROUND} blocks of the highest solid block below it,
+     *         throttle is forced to 15 regardless of state. This prevents both the
+     *         "thr=0 slams into the ground" and the "lands on grass and can't take off
+     *         again" cases.</li>
+     *     <li><b>Soft descent</b>: when above target altitude we set throttle to a
+     *         small-but-nonzero value so the ship sinks gradually instead of dropping
+     *         like a stone.</li>
+     * </ul>
      */
-    private static int chooseThrottle(State state, double currentY) {
-        return 15;
+    private static final double PURSUE_ALT_OFFSET = 12.0;
+    private static final double ALT_HYSTERESIS = 2.0;
+    private static final double MIN_ALT_ABOVE_GROUND = 6.0;
+    private static final int THROTTLE_HOVER = 9;
+    /** Within this Y delta two samples count as "no movement" for stuck detection. */
+    private static final double STUCK_Y_EPSILON = 0.05;
+    /** Stuck if shipY hasn't budged for this many ticks while we're trying to descend. */
+    private static final int STUCK_TICKS_THRESHOLD = 30;
+
+    /**
+     * Throttle scales with altitude error so we descend faster when we're way above
+     * target. Two safety overrides:
+     *
+     * <ul>
+     *     <li><b>Heightmap floor protection</b> — if the world heightmap thinks we're
+     *         within {@link #MIN_ALT_ABOVE_GROUND} blocks of terrain, force throttle 15.</li>
+     *     <li><b>Stuck override</b> — if shipY hasn't moved for {@link #STUCK_TICKS_THRESHOLD}
+     *         ticks while we're commanding descent, the ship is resting on something the
+     *         heightmap can't see (mountain, tree, SubLevel-pose offset). Force throttle 15
+     *         so the ship lifts off and can navigate horizontally to the target instead of
+     *         being permanently grounded.</li>
+     * </ul>
+     */
+    private static int chooseThrottle(
+            Pirate p, State state, Vector3d shipPos, ServerPlayer target, ServerLevel level, long now) {
+        int groundY = level.getHeight(
+                net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,
+                (int) Math.floor(shipPos.x),
+                (int) Math.floor(shipPos.z));
+        if (shipPos.y - groundY < MIN_ALT_ABOVE_GROUND) {
+            return 15; // heightmap-based floor protection
+        }
+
+        double targetY;
+        switch (state) {
+            case LIFTOFF -> { return 15; }
+            case PURSUE -> {
+                if (target == null) return 15;
+                targetY = target.getEyeY() + PURSUE_ALT_OFFSET;
+            }
+            case RETURN, HOVER -> targetY = shipPos.y; // hold altitude
+            default -> { return 15; }
+        }
+        double dy = shipPos.y - targetY;
+
+        // Update stuck detector. We only count ticks where the ship is supposed to
+        // be moving (dy outside hysteresis); a hovering ship is intentionally still.
+        if (Math.abs(dy) > ALT_HYSTERESIS) {
+            if (!Double.isNaN(p.stuckCheckLastY)
+                    && Math.abs(shipPos.y - p.stuckCheckLastY) < STUCK_Y_EPSILON) {
+                p.stuckTicks += (int) Math.max(1, now - p.stuckCheckLastTick);
+            } else {
+                p.stuckTicks = 0;
+            }
+            p.stuckCheckLastY = shipPos.y;
+            p.stuckCheckLastTick = now;
+        } else {
+            p.stuckTicks = 0;
+        }
+
+        if (dy > ALT_HYSTERESIS && p.stuckTicks > STUCK_TICKS_THRESHOLD) {
+            // Ship wants to descend but is wedged on terrain the heightmap missed.
+            // Override with full burn — the only way out is up.
+            return 15;
+        }
+
+        if (dy < -ALT_HYSTERESIS) return 15;              // below → full burn, climb
+        if (dy <= ALT_HYSTERESIS) return THROTTLE_HOVER;   // hysteresis band
+        // Above target — descend with throttle proportional to how far off we are.
+        if (dy > 20.0) return 0;
+        if (dy > 8.0) return 2;
+        return 5;
     }
 
     /**
@@ -359,12 +494,43 @@ public final class AirshipBrain {
         double dz = playerLocal.z - cannonLocal.z;
         double horiz = Math.sqrt(dx * dx + dz * dz);
         float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
-        float pitch = (float) Math.toDegrees(-Math.atan2(dy, horiz));
+        // Create Big Cannons treats positive pitch as "barrel up" (opposite of vanilla),
+        // so we don't negate atan2 here.
+        float pitch = (float) Math.toDegrees(Math.atan2(dy, horiz));
         mount.setYaw(yaw);
         mount.setPitch(pitch);
-        if (AIMED_ONCE.add(p.subLevel.getUniqueId())) {
-            MCPirates.LOGGER.info("pirate {} first aim: yaw={} pitch={}",
-                    p.subLevel.getUniqueId(), yaw, pitch);
+
+        // Diagnostic: log aim state every ~2s so we can see whether the cannon
+        // tracks correctly across PURSUE → RETURN → PURSUE state cycles.
+        long bucket = System.currentTimeMillis() / 2000;
+        boolean firstAim = AIMED_ONCE.add(p.subLevel.getUniqueId());
+        if (firstAim || bucket != p.lastAimLogBucket) {
+            p.lastAimLogBucket = bucket;
+            // Compare: SubLevel-local yaw (what we sent), CBC's stored yaw (after setYaw),
+            // ship's pose yaw, and the WORLD-frame target yaw the cannon should have if
+            // setYaw is interpreted as world yaw. If our hypothesis is right,
+            // worldYawExpected ≈ SL_yaw + ship_pose_yaw, and the cannon offset == ship_pose_yaw.
+            float storedYaw = readCannonYaw(mount);
+            float storedPitch = readCannonPitch(mount);
+            double shipPoseYawDeg = Math.toDegrees(currentYawRadians(p));
+            // Target's world-frame yaw from cannon's WORLD position:
+            Vec3 cannonWorld = p.subLevel.logicalPose().transformPosition(
+                    new Vec3(cannonLocal.x, cannonLocal.y, cannonLocal.z));
+            double worldDx = target.getX() - cannonWorld.x;
+            double worldDz = target.getZ() - cannonWorld.z;
+            double worldYawTargetDeg = Math.toDegrees(Math.atan2(-worldDx, worldDz));
+            MCPirates.LOGGER.info(
+                    "pirate {} {} aim: setYaw={} setPitch={} storedYaw={} storedPitch={} | shipPoseYaw={} | worldYawTarget={} | SL+poseYaw={} | offsetGuess={}",
+                    p.subLevel.getUniqueId(),
+                    firstAim ? "first" : "tick",
+                    String.format("%.1f", yaw),
+                    String.format("%.1f", pitch),
+                    String.format("%.1f", storedYaw),
+                    String.format("%.1f", storedPitch),
+                    String.format("%.1f", shipPoseYawDeg),
+                    String.format("%.1f", worldYawTargetDeg),
+                    String.format("%.1f", yaw + shipPoseYawDeg),
+                    String.format("%.1f", normalizeDeg(yaw - worldYawTargetDeg)));
         }
     }
 
@@ -414,6 +580,38 @@ public final class AirshipBrain {
     private static BigCannonBehavior bigCannonBehavior(SmartBlockEntity sbe) {
         BlockEntityBehaviour b = sbe.getBehaviour((BehaviourType) BigCannonBehavior.TYPE);
         return (b instanceof BigCannonBehavior bcb) ? bcb : null;
+    }
+
+    /** Diagnostic: read CBC's stored cannonYaw via reflection so we can compare to what
+     *  we passed to {@link CannonMountBlockEntity#setYaw(float)}. Returns NaN if reflect fails. */
+    private static float readCannonYaw(CannonMountBlockEntity mount) {
+        try {
+            if (cachedCannonYawField == null) {
+                cachedCannonYawField = CannonMountBlockEntity.class.getDeclaredField("cannonYaw");
+                cachedCannonYawField.setAccessible(true);
+            }
+            return cachedCannonYawField.getFloat(mount);
+        } catch (ReflectiveOperationException e) {
+            return Float.NaN;
+        }
+    }
+
+    private static float readCannonPitch(CannonMountBlockEntity mount) {
+        try {
+            if (cachedCannonPitchField == null) {
+                cachedCannonPitchField = CannonMountBlockEntity.class.getDeclaredField("cannonPitch");
+                cachedCannonPitchField.setAccessible(true);
+            }
+            return cachedCannonPitchField.getFloat(mount);
+        } catch (ReflectiveOperationException e) {
+            return Float.NaN;
+        }
+    }
+
+    /** Wraps degrees into (-180, 180] for cleaner offset display. */
+    private static double normalizeDeg(double d) {
+        d = ((d + 180.0) % 360.0 + 360.0) % 360.0 - 180.0;
+        return d;
     }
 
     private static PitchOrientedContraptionEntity getMountedContraption(CannonMountBlockEntity mount) {
@@ -479,65 +677,6 @@ public final class AirshipBrain {
     }
 
     // ───────────────────────────── Debug overlay ─────────────────────────────
-
-    /**
-     * Server-side particle painting. We draw three lines/columns:
-     * <ul>
-     *     <li><b>Goal column</b> — a vertical stack of {@code happy_villager} (green sparkle)
-     *         at the AI's current goal XZ. Tells you where it's trying to fly to.</li>
-     *     <li><b>Heading arrow</b> — {@code flame} stepping forward from the ship along its
-     *         current world-frame forward vector. Tells you which way the ship thinks it's
-     *         pointing.</li>
-     *     <li><b>Target line</b> — {@code smoke} from ship to target's eye, only in PURSUE.
-     *         Tells you who the AI thinks it's chasing.</li>
-     * </ul>
-     */
-    private static void drawDebugParticles(Pirate p, ServerPlayer target, Vector3d shipPos) {
-        ServerLevel level = p.parentLevel;
-
-        // Skip if no player is in a reasonable render distance.
-        boolean anyClose = false;
-        for (ServerPlayer sp : level.players()) {
-            double pdx = sp.getX() - shipPos.x;
-            double pdz = sp.getZ() - shipPos.z;
-            if (pdx * pdx + pdz * pdz < OVERLAY_RENDER_RADIUS * OVERLAY_RENDER_RADIUS) {
-                anyClose = true;
-                break;
-            }
-        }
-        if (!anyClose) return;
-
-        // Goal column.
-        if (!Double.isNaN(p.lastGoalX)) {
-            for (int i = -8; i <= 8; i++) {
-                level.sendParticles(
-                        ParticleTypes.HAPPY_VILLAGER,
-                        p.lastGoalX, shipPos.y + i, p.lastGoalZ,
-                        1, 0, 0, 0, 0);
-            }
-        }
-
-        // Heading arrow.
-        Quaterniond orient = p.subLevel.logicalPose().orientation();
-        Vector3d worldFwd = orient.transform(new Vector3d(p.shipLocalForward), new Vector3d());
-        for (int i = 1; i <= 6; i++) {
-            double x = shipPos.x + worldFwd.x * i * 1.5;
-            double y = shipPos.y;
-            double z = shipPos.z + worldFwd.z * i * 1.5;
-            level.sendParticles(ParticleTypes.FLAME, x, y, z, 1, 0, 0, 0, 0);
-        }
-
-        // Target line, only in PURSUE.
-        if (p.state == State.PURSUE && target != null) {
-            for (int i = 1; i <= 12; i++) {
-                double t = i / 13.0;
-                double x = shipPos.x + (target.getX() - shipPos.x) * t;
-                double y = shipPos.y + (target.getEyeY() - shipPos.y) * t;
-                double z = shipPos.z + (target.getZ() - shipPos.z) * t;
-                level.sendParticles(ParticleTypes.SMOKE, x, y, z, 1, 0, 0, 0, 0);
-            }
-        }
-    }
 
     /**
      * Pushes a one-line state readout to the actionbar of the player nearest this airship.
@@ -671,6 +810,19 @@ public final class AirshipBrain {
         // when it's hit the physical ceiling for its envelope size.
         double lastSampledY = Double.NaN;
         int steadyTicks = 0;
+
+        // Stuck-on-ground detection: tracks how long shipY has remained ~unchanged.
+        // The world heightmap doesn't always agree with where the SubLevel actually
+        // sits (mountains, trees, off-by-one XZ between SubLevel pose and rendered
+        // blocks), so we fall back on "shipY hasn't moved" as ground evidence.
+        double stuckCheckLastY = Double.NaN;
+        long stuckCheckLastTick = Long.MIN_VALUE;
+        int stuckTicks = 0;
+
+        // Diagnostic: rate-limit aim and throttle logs to one per ~2s wall-clock so
+        // we can correlate state-cycle behavior without spamming the log.
+        long lastAimLogBucket = -1;
+        long lastThrottleLogBucket = -1;
 
         Pirate(ServerLevel parentLevel, SubLevel subLevel, BlockPos airpadAnchor,
                BlockPos slAnalogLever, BlockPos slLeftClutchLever, BlockPos slRightClutchLever,

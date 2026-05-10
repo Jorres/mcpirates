@@ -217,19 +217,20 @@ def build_airship(input_path: Path) -> None:
         "target": String("mcpirates:airship_anchor"),
         "pool": String("minecraft:empty"),
         "final_state": String("minecraft:air"),
-        "joint": String("rollable"),
+        # "aligned" locks the airship to a single rotation per parent jigsaw —
+        # without it, vanilla picks a random rotation each placement.
+        "joint": String("aligned"),
     }))
 
-    # Carry over entities from the source (honey-glue, super-glue, hangings, etc.) and
-    # translate them by the same (east_offset, pad_y+1, 0) shift we applied to blocks.
-    # Vanilla's StructureTemplate uses the top-level `blockPos` + `pos` for placement and
-    # rewrites the entity's nbt.Pos / nbt.UUID, so we only touch those two fields.
-    # HoneyGlueEntity overrides setPos and rotate to preserve and rotate its bounds across
-    # structure placement, so we don't need to touch From/To here — let the user's saved
-    # bounds ride through unchanged.
+    # Carry over non-glue entities (super-glue, hangings, etc.), translated by the same
+    # (east_offset, pad_y+1, 0) shift we applied to blocks. Honey-glue is dropped: it
+    # doesn't reliably survive jigsaw worldgen entity placement, so the runtime trigger
+    # in AirshipLiftoffTrigger.spawnHoneyGlue materializes it from the lever's world pos
+    # and detected rotation instead.
     out_entities = List[Compound]()
-    src_entities = src.get("entities", List[Compound]())
-    for ent in src_entities:
+    for ent in src.get("entities", List[Compound]()):
+        if str(ent.get("nbt", {}).get("id", "")) == "simulated:honey_glue":
+            continue
         new_ent = Compound(dict(ent))
         bp = list(ent["blockPos"])
         new_ent["blockPos"] = List[Int]([

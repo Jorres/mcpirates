@@ -5,6 +5,7 @@ import com.simibubi.create.content.redstone.analogLever.AnalogLeverBlockEntity;
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.simulated_team.simulated.content.blocks.portable_engine.PortableEngineBlockEntity;
+import dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueEntity;
 import dev.simulated_team.simulated.multiloader.inventory.ItemInfoWrapper;
 import dev.simulated_team.simulated.util.SimAssemblyHelper.AssemblyResult;
 import net.minecraft.core.BlockPos;
@@ -25,6 +26,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.AttachFace;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
@@ -81,10 +83,83 @@ public final class AirshipLiftoffTrigger {
     private static final BlockPos LEFT_CLUTCH_DELTA  = new BlockPos(-2, -1, 2);
     private static final BlockPos RIGHT_CLUTCH_DELTA = new BlockPos(2, -1, 2);
 
+    // Honey-glue body bounds in NBT space — *inclusive* block coords of the actual
+    // ship body (no pad, no surrounding air). Body spans NBT x=5..9, y=3..10, z=0..9.
+    // Deltas from the lever at NBT (7, 6, 5):
+    private static final BlockPos GLUE_MIN_DELTA = new BlockPos(-2, -3, -5);
+    private static final BlockPos GLUE_MAX_DELTA = new BlockPos(2, 4, 4);
+
     private static Field cachedStateField;
     private static Method cachedCannonAssembleMethod;
+    private static Field cachedEntityManagerField;
+    private static Field cachedSectionStorageField;
+    private static Method cachedGetSectionMethod;
+    private static Method cachedSectionGetStatusMethod;
+
+    /**
+     * Reads the EntitySection visibility for the section the entity sits in, via
+     * reflection through {@code ServerLevel.entityManager.sectionStorage.getSection(...)}.
+     * If the section is HIDDEN, addFreshEntity stores the entity in section storage but
+     * never calls {@code startTracking}, so subsequent {@code getEntity(uuid)} returns
+     * null and {@code getEntitiesOfClass} skips the section.
+     */
+    private static String readSectionVisibility(ServerLevel level,
+                                                net.minecraft.world.entity.Entity entity) {
+        try {
+            if (cachedEntityManagerField == null) {
+                cachedEntityManagerField = ServerLevel.class.getDeclaredField("entityManager");
+                cachedEntityManagerField.setAccessible(true);
+            }
+            Object entityManager = cachedEntityManagerField.get(level);
+            if (cachedSectionStorageField == null) {
+                cachedSectionStorageField = entityManager.getClass().getDeclaredField("sectionStorage");
+                cachedSectionStorageField.setAccessible(true);
+            }
+            Object sectionStorage = cachedSectionStorageField.get(entityManager);
+            long sectionKey = net.minecraft.core.SectionPos.asLong(entity.blockPosition());
+            if (cachedGetSectionMethod == null) {
+                cachedGetSectionMethod = sectionStorage.getClass().getDeclaredMethod("getSection", long.class);
+                cachedGetSectionMethod.setAccessible(true);
+            }
+            Object section = cachedGetSectionMethod.invoke(sectionStorage, sectionKey);
+            if (section == null) return "(no section)";
+            if (cachedSectionGetStatusMethod == null) {
+                cachedSectionGetStatusMethod = section.getClass().getDeclaredMethod("getStatus");
+                cachedSectionGetStatusMethod.setAccessible(true);
+            }
+            return String.valueOf(cachedSectionGetStatusMethod.invoke(section));
+        } catch (ReflectiveOperationException e) {
+            return "(reflect-failed: " + e.getClass().getSimpleName() + ")";
+        }
+    }
+
+    // Two-phase activation: glue can't be queried by AABB on the same tick it was
+    // added — the entity-section visibility filter doesn't see freshly added entities
+    // until later. Map records the tick when glue was spawned per lever; assembly
+    // waits {@link #GLUE_SETTLE_TICKS} ticks (1 second) before proceeding.
+    private static final long GLUE_SETTLE_TICKS = 20L;
+    private static final java.util.Map<BlockPos, Long> GLUE_PRESPAWNED =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    /** Tracks the spawned glue UUID per lever so we can verify it didn't get removed
+     *  during the settling window. */
+    private static final java.util.Map<BlockPos, java.util.UUID> GLUE_UUIDS =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     private AirshipLiftoffTrigger() {}
+
+    /** Diagnostic: capture the exact moment any HoneyGlueEntity is removed from a server
+     *  level, with stack trace and reason. Helps identify what's killing the runtime
+     *  glue we spawn. Trigger fires for ALL HoneyGlueEntity removals, not just ours. */
+    @SubscribeEvent
+    public static void onEntityLeave(net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent event) {
+        if (!(event.getEntity() instanceof HoneyGlueEntity glue)) return;
+        if (event.getLevel().isClientSide()) return;
+        Throwable trace = new Throwable("removal trace");
+        MCPirates.LOGGER.warn(
+                "HoneyGlueEntity {} LEFT level: removed={} reason={} pos={} BB={}",
+                glue.getUUID(), glue.isRemoved(), glue.getRemovalReason(),
+                glue.position(), glue.getBoundingBox(), trace);
+    }
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
@@ -130,6 +205,34 @@ public final class AirshipLiftoffTrigger {
                         continue;
                     }
                     if (!isAirshipLever(level, pos)) {
+                        continue;
+                    }
+                    // Two-phase: spawn glue first pass, wait 1s, then assemble.
+                    long now = level.getServer().getTickCount();
+                    Long spawnedAt = GLUE_PRESPAWNED.get(pos);
+                    if (spawnedAt == null) {
+                        Rotation rotation = detectRotation(level.getBlockState(pos));
+                        spawnHoneyGlue(level, pos, rotation);
+                        GLUE_PRESPAWNED.put(pos, now);
+                        continue;
+                    }
+                    // Track the glue's fate while we wait — if it gets removed
+                    // mid-settling we want to know which tick.
+                    java.util.UUID glueId = GLUE_UUIDS.get(pos);
+                    if (glueId != null) {
+                        net.minecraft.world.entity.Entity glue = level.getEntity(glueId);
+                        if (glue == null) {
+                            MCPirates.LOGGER.warn(
+                                    "glue at {} ({}) DISAPPEARED during settling at tick {}",
+                                    pos, glueId, now);
+                        } else if (glue.isRemoved()) {
+                            MCPirates.LOGGER.warn(
+                                    "glue at {} ({}) marked removed (reason={}) at tick {}",
+                                    pos, glueId, glue.getRemovalReason(), now);
+                        }
+                    }
+                    long waited = now - spawnedAt;
+                    if (waited < GLUE_SETTLE_TICKS) {
                         continue;
                     }
                     activateLever(level, pos, lever);
@@ -192,41 +295,23 @@ public final class AirshipLiftoffTrigger {
         level.sendBlockUpdated(pos, bs, bs, Block.UPDATE_ALL);
         MCPirates.LOGGER.info("activated airship lever at {} (state -> {})", pos, TARGET_STATE);
 
-        // Diagnostic: query for HoneyGlueEntity around the lever, then again with a much
-        // wider radius. If both are 0, the entity simply doesn't exist as far as the
-        // server's spatial index is concerned — the user-visible glue is then a client-
-        // side artifact or a stale rendering.
+        // Step 3: assemble — honey glue was pre-spawned on the previous trigger pass
+        // (see GLUE_PRESPAWNED two-phase activation in checkAroundPlayer).
         BlockPos assemblySeed = pos.relative(connected.getOpposite());
-        AABB queryArea = new AABB(pos).inflate(20);
-        java.util.List<dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueEntity> visible =
-                level.getEntitiesOfClass(
-                        dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueEntity.class,
-                        queryArea);
-        MCPirates.LOGGER.info(
-                "pre-assembly glue query (20-block): {} entities in {}",
-                visible.size(), queryArea);
-        for (var g : visible) {
-            MCPirates.LOGGER.info(
-                    "  - id={} bounds={} pos={} contains(seed)={} contains(mount)={}",
-                    g.getUUID(), g.getBoundingBox(), g.position(),
-                    g.contains(assemblySeed), g.contains(cannonMountPos));
-        }
-        if (visible.isEmpty()) {
-            AABB widerArea = new AABB(pos).inflate(200);
-            java.util.List<dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueEntity> wider =
-                    level.getEntitiesOfClass(
-                            dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueEntity.class,
-                            widerArea);
-            MCPirates.LOGGER.info(
-                    "pre-assembly glue query (200-block fallback): {} entities", wider.size());
-            for (var g : wider) {
-                MCPirates.LOGGER.info(
-                        "  - id={} bounds={} pos={}",
-                        g.getUUID(), g.getBoundingBox(), g.position());
+        AABB probeBox = new AABB(pos).inflate(20);
+        int aabbHits = level.getEntitiesOfClass(HoneyGlueEntity.class, probeBox).size();
+        int allHits = 0;
+        HoneyGlueEntity nearest = null;
+        for (var e : level.getEntities().getAll()) {
+            if (e instanceof HoneyGlueEntity g) {
+                allHits++;
+                if (nearest == null) nearest = g;
             }
         }
-
-        // Step 3: assemble ship.
+        MCPirates.LOGGER.info(
+                "pre-assembly glue: AABB probe={} hits, full iter={} hits, nearest={}",
+                aabbHits, allHits,
+                nearest == null ? "(none)" : (nearest.getId() + " BB=" + nearest.getBoundingBox()));
         AssemblyResult result = AirshipAssembler.assemble(level, assemblySeed);
         if (result == null) {
             MCPirates.LOGGER.warn("ship assembly failed; aborting startup at {}", pos);
@@ -235,18 +320,18 @@ public final class AirshipLiftoffTrigger {
         SubLevel subLevel = result.subLevel();
         BlockPos offset = result.offset();
 
-        scanAssembledSubLevel(subLevel, offset);
-
         // Step 4: locate + assemble cannon.
         BlockPos slCannonMount = triggerCannonAssembly(
                 subLevel.getLevel(), cannonMountPos.offset(offset));
         if (slCannonMount == null) {
-            slCannonMount = cannonMountPos.offset(offset);
+            return;
         }
 
         // Step 5: hand off to brain. Forward in SubLevel-local space follows from the
-        // structure rotation applied to NBT cannon facing (SOUTH).
-        Direction shipForwardDir = rotation.rotate(Direction.SOUTH);
+        // structure rotation applied to NBT cannon facing. Cannon mount sits at NBT z=1
+        // with the body at z=1..9, so the cannon points toward NORTH (-Z) — the ship's
+        // "forward" is the cannon-pointing direction.
+        Direction shipForwardDir = rotation.rotate(Direction.NORTH);
         Vector3d shipLocalForward = new Vector3d(
                 shipForwardDir.getStepX(), shipForwardDir.getStepY(), shipForwardDir.getStepZ());
         AirshipBrain.register(
@@ -291,40 +376,76 @@ public final class AirshipLiftoffTrigger {
     }
 
     /**
-     * Walk every loaded chunk in the SubLevel's plot and log the non-air blocks. Used to
-     * diagnose partial-assembly bugs where the BFS picks up only a few blocks instead of
-     * the full ship body. The output answers the question "what actually got moved?".
+     * Spawn a {@link HoneyGlueEntity} covering the airship body. NBT-baked entities are
+     * unreliable through jigsaw worldgen — entities placed via {@code addEntitiesToWorld}
+     * during structure-step generation don't consistently end up in the server's spatial
+     * index by the time the trigger fires. Spawning at trigger time is deterministic.
      */
-    private static void scanAssembledSubLevel(SubLevel subLevel, BlockPos offset) {
-        Level slLevel = subLevel.getLevel();
-        if (slLevel == null) return;
-        java.util.Map<String, Integer> counts = new java.util.LinkedHashMap<>();
+    /**
+     * Spawn a {@link HoneyGlueEntity} covering the airship body, generously inflated so
+     * that 90°/180° rotation never clips the front of the ship by an off-by-one block.
+     * Falls back to mutating the assembler's honeyGlueCache reflectively because
+     * {@code level.getEntitiesOfClass} doesn't see entities added in the same server
+     * tick — the entity manager inserts them into the section storage immediately, but
+     * the spatial-index iterator filters by section visibility, and freshly spawned
+     * entities aren't yet visible to AABB queries until the next tick.
+     */
+    private static void spawnHoneyGlue(ServerLevel level, BlockPos leverPos, Rotation rotation) {
+        BlockPos a = leverPos.offset(GLUE_MIN_DELTA.rotate(rotation));
+        BlockPos b = leverPos.offset(GLUE_MAX_DELTA.rotate(rotation));
+        // Build the AABB by min/maxing rotated corners and adding +1 to the max
+        // so the half-open AABB covers the inclusive block coords (block at world
+        // pos N has center N.5, AABB.contains needs maxN > N.5 → maxN ≥ N+1).
+        double minX = Math.min(a.getX(), b.getX());
+        double minY = Math.min(a.getY(), b.getY());
+        double minZ = Math.min(a.getZ(), b.getZ());
+        double maxX = Math.max(a.getX(), b.getX()) + 1.0;
+        double maxY = Math.max(a.getY(), b.getY()) + 1.0;
+        double maxZ = Math.max(a.getZ(), b.getZ()) + 1.0;
+        AABB aabb = new AABB(minX, minY, minZ, maxX, maxY, maxZ);
+        HoneyGlueEntity glue = new HoneyGlueEntity(level, aabb);
+        boolean added = level.addFreshEntity(glue);
+        GLUE_UUIDS.put(leverPos, glue.getUUID());
+        // Diagnostic: read the entity's section visibility via reflection. If HIDDEN,
+        // the section storage rejects spatial queries even though addFreshEntity says
+        // success — and visibleEntities never gets the entity, so getEntity(uuid) is
+        // also null. That's our "added=true but invisible" failure mode.
+        String visibilityStr = readSectionVisibility(level, glue);
+        net.minecraft.server.level.FullChunkStatus chunkStatus =
+                level.getChunkSource().getChunkNow(
+                        glue.chunkPosition().x, glue.chunkPosition().z) instanceof
+                        net.minecraft.world.level.chunk.LevelChunk lc
+                        ? lc.getFullStatus() : null;
+        MCPirates.LOGGER.info(
+                "spawned runtime honey glue {} (uuid={}) for lever {} (added={}, removed={}, pos={}, chunk=({}, {}), sectionVisibility={}, chunkStatus={})",
+                aabb, glue.getUUID(), leverPos, added, glue.isRemoved(),
+                glue.position(),
+                glue.chunkPosition().x, glue.chunkPosition().z,
+                visibilityStr, chunkStatus);
+
+        // Inventory of blocks/entities in the glue volume — diagnostic for the
+        // "glue silently disappears within 1 tick" failure mode.
+        java.util.Map<String, Integer> blockCounts = new java.util.LinkedHashMap<>();
         java.util.List<String> samples = new java.util.ArrayList<>();
-        int total = 0;
-        for (var chunk : subLevel.getPlot().getLoadedChunks()) {
-            var bounds = chunk.getBoundingBox();
-            if (bounds == null) continue;
-            int chunkMinX = chunk.getPos().getMinBlockX();
-            int chunkMinZ = chunk.getPos().getMinBlockZ();
-            for (int x = bounds.minX(); x <= bounds.maxX(); x++) {
-                for (int y = bounds.minY(); y <= bounds.maxY(); y++) {
-                    for (int z = bounds.minZ(); z <= bounds.maxZ(); z++) {
-                        BlockPos p = new BlockPos(chunkMinX + x, y, chunkMinZ + z);
-                        BlockState s = slLevel.getBlockState(p);
-                        if (s.isAir()) continue;
-                        total++;
-                        String name = s.getBlock().toString();
-                        counts.merge(name, 1, Integer::sum);
-                        if (samples.size() < 6) {
-                            samples.add(p + " " + name);
-                        }
+        for (int x = (int) Math.floor(aabb.minX); x < aabb.maxX; x++) {
+            for (int y = (int) Math.floor(aabb.minY); y < aabb.maxY; y++) {
+                for (int z = (int) Math.floor(aabb.minZ); z < aabb.maxZ; z++) {
+                    BlockState s = level.getBlockState(new BlockPos(x, y, z));
+                    if (s.isAir()) continue;
+                    String key = s.getBlock().toString();
+                    blockCounts.merge(key, 1, Integer::sum);
+                    if (samples.size() < 3) {
+                        samples.add(new BlockPos(x, y, z) + "=" + key);
                     }
                 }
             }
         }
-        MCPirates.LOGGER.info(
-                "SubLevel post-assembly scan: {} non-air blocks, types={}, samples={}",
-                total, counts, samples);
+        MCPirates.LOGGER.info("glue volume blocks: {} (samples {})", blockCounts, samples);
+        MCPirates.LOGGER.info("glue volume entities: {}",
+                level.getEntitiesOfClass(net.minecraft.world.entity.Entity.class, aabb)
+                        .stream()
+                        .map(e -> e.getType().toString() + "@" + e.position())
+                        .toList());
     }
 
     private static void insertCoalIntoEngine(ServerLevel level, BlockPos enginePos) {
@@ -343,53 +464,19 @@ public final class AirshipLiftoffTrigger {
     }
 
     /**
-     * Look up the cannon mount BE at the precisely-computed SubLevel position. The expected
-     * position is derived from the analog lever's world position + the structure-local
-     * cannon-mount delta, rotated by the jigsaw rotation we detected from the lever's
-     * facing. With the math right, this should always match exactly. We retain a tiny ±1
-     * fallback as a sanity net for off-by-one issues — a hit at non-zero delta logs at WARN
-     * so we'll notice if the rotation math regresses.
+     * Reflectively call {@link CannonMountBlockEntity#assemble()} at the SubLevel position
+     * derived from the lever's world pos + cannon-mount delta rotated by the detected
+     * jigsaw rotation. Returns the position if the mount was found and assembly succeeded,
+     * otherwise null.
      */
-    private static BlockPos locateCannonMount(Level level, BlockPos expected) {
-        BlockEntity direct = level.getBlockEntity(expected);
-        if (direct instanceof CannonMountBlockEntity) {
-            return expected;
-        }
-        BlockState directState = level.getBlockState(expected);
-        MCPirates.LOGGER.warn(
-                "cannon mount NOT at expected {} (state={} BE={}); scanning ±1 — "
-                + "if this hits, rotation math is off by one",
-                expected, directState.getBlock(),
-                direct == null ? "null" : direct.getClass().getSimpleName());
-        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dy = -1; dy <= 1; dy++) {
-                for (int dz = -1; dz <= 1; dz++) {
-                    if (dx == 0 && dy == 0 && dz == 0) continue;
-                    cursor.set(expected.getX() + dx, expected.getY() + dy, expected.getZ() + dz);
-                    if (level.getBlockEntity(cursor) instanceof CannonMountBlockEntity) {
-                        BlockPos found = cursor.immutable();
-                        MCPirates.LOGGER.warn(
-                                "cannon mount found at {} (delta from expected: {},{},{}) — "
-                                + "fix this in the rotation math",
-                                found, dx, dy, dz);
-                        return found;
-                    }
-                }
-            }
-        }
-        MCPirates.LOGGER.error(
-                "cannon mount not found within ±1 of {} — assembly probably broke "
-                + "(check honey-glue AABB / structure rotation handling)", expected);
-        return null;
-    }
-
     private static BlockPos triggerCannonAssembly(Level level, BlockPos expectedMountPos) {
-        BlockPos actualPos = locateCannonMount(level, expectedMountPos);
-        if (actualPos == null) {
-            return null;
-        }
-        if (!(level.getBlockEntity(actualPos) instanceof CannonMountBlockEntity mount)) {
+        if (!(level.getBlockEntity(expectedMountPos) instanceof CannonMountBlockEntity mount)) {
+            BlockState s = level.getBlockState(expectedMountPos);
+            BlockEntity be = level.getBlockEntity(expectedMountPos);
+            MCPirates.LOGGER.error(
+                    "cannon mount not at expected {} (state={} BE={})",
+                    expectedMountPos, s.getBlock(),
+                    be == null ? "null" : be.getClass().getSimpleName());
             return null;
         }
         try {
@@ -399,13 +486,13 @@ public final class AirshipLiftoffTrigger {
                 cachedCannonAssembleMethod.setAccessible(true);
             }
             cachedCannonAssembleMethod.invoke(mount);
-            MCPirates.LOGGER.info("cannon assembled at SubLevel {}", actualPos);
-            return actualPos;
+            MCPirates.LOGGER.info("cannon assembled at SubLevel {}", expectedMountPos);
+            return expectedMountPos;
         } catch (ReflectiveOperationException e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             MCPirates.LOGGER.error(
                     "CannonMountBlockEntity.assemble() failed at {}: {}",
-                    actualPos, cause.toString());
+                    expectedMountPos, cause.toString());
             return null;
         }
     }
