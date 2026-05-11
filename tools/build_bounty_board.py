@@ -7,8 +7,10 @@ Output:
 The piece is a 5x6x6 oak-framed gazebo modeled after Bountiful's bounty_gazebo.nbt:
     y=0     : 5x5 oak-plank floor                                  (decorative footprint)
     y=1..3  : 4 spruce-fence corner posts; otherwise open-air walls (the "gazebo")
-    y=2     : minecraft:cobblestone trophy block in the dead center (PoC placeholder
-              — to be replaced with a real pirate-bounty quest block later)
+    y=2     : mcpirates:bounty_board trophy block in the dead center — the POI anchor
+              for the mcpirates:sheriff villager profession. A sheriff villager that
+              spawns inside the gazebo (or has line-of-sight + walk-path to it) will
+              claim this block as their workstation and start offering bounty trades.
     y=3     : 2 hanging lanterns at the north-mid ends (x=0 z=2 and x=4 z=2)
     y=4     : oak-slab roof ring + oak-plank ceiling (3x3 in center)
     jigsaw  : single south-up jigsaw at (2, 1, 5), name=target=minecraft:building_entrance,
@@ -68,11 +70,11 @@ def main() -> None:
                   "Properties": Compound({"type": String("bottom"), "waterlogged": String("false")})}),
         Compound({"Name": String("minecraft:jigsaw"),                                               # 9
                   "Properties": Compound({"orientation": String("south_up")})}),
-        Compound({"Name": String("minecraft:cobblestone")}),                                        # 10 trophy block (placeholder)
+        Compound({"Name": String("mcpirates:bounty_board")}),                                       # 10 sheriff POI anchor (was placeholder cobblestone)
     ])
     OAK_PLANKS, AIR = 0, 1
     FENCE_SE_BTM, FENCE_NE, FENCE_SW_BTM, FENCE_NW, FENCE_POST = 2, 3, 4, 5, 6
-    LANTERN, OAK_SLAB, JIGSAW, COBBLE = 7, 8, 9, 10
+    LANTERN, OAK_SLAB, JIGSAW, BOUNTY_BOARD = 7, 8, 9, 10
 
     blocks: list[Compound] = []
 
@@ -122,7 +124,7 @@ def main() -> None:
             if (x, z) in fence_states_y1:
                 put(FENCE_POST, x, 2, z)
             elif x == 2 and z == 2:
-                put(COBBLE, 2, 2, 2)
+                put(BOUNTY_BOARD, 2, 2, 2)
             else:
                 put(AIR, x, 2, z)
 

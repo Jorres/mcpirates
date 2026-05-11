@@ -1,10 +1,13 @@
 package com.mcpirates.airship;
 
 import com.mcpirates.MCPirates;
+import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
 import com.simibubi.create.content.redstone.analogLever.AnalogLeverBlockEntity;
 import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
 import com.simibubi.create.foundation.blockEntity.behaviour.BehaviourType;
 import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
+import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
+import dev.ryanhcode.sable.mixinterface.entity.entities_stick_sublevels.EntityStickExtension;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
@@ -154,16 +157,18 @@ public final class AirshipBrain {
             BlockPos slLeftClutchLever,
             BlockPos slRightClutchLever,
             BlockPos slCannonMount,
-            Vector3d shipLocalForward) {
+            Vector3d shipLocalForward,
+            List<AnchoredEntity> anchoredEntities) {
         Pirate p = new Pirate(parentLevel, subLevel, airpadAnchor,
                 slAnalogLever, slLeftClutchLever, slRightClutchLever, slCannonMount,
-                shipLocalForward);
+                shipLocalForward, anchoredEntities);
         SHIPS.add(p);
         MCPirates.LOGGER.info(
-                "registered pirate airship: subLevel={} anchor={} mount={} leftClutch={} rightClutch={} fwd=({},{},{})",
+                "registered pirate airship: subLevel={} anchor={} mount={} leftClutch={} rightClutch={} fwd=({},{},{}) anchored={}",
                 subLevel.getUniqueId(), airpadAnchor, slCannonMount,
                 slLeftClutchLever, slRightClutchLever,
-                shipLocalForward.x, shipLocalForward.y, shipLocalForward.z);
+                shipLocalForward.x, shipLocalForward.y, shipLocalForward.z,
+                anchoredEntities.size());
     }
 
     @SubscribeEvent
@@ -178,10 +183,40 @@ public final class AirshipBrain {
 
     /** @return false if this pirate should be deregistered. */
     private static boolean tickPirate(Pirate p, long now) {
+        // Re-acquire the live SubLevel by UUID. Sable's PhysicsChunkTicketManager will
+        // moveToUnloaded() the SubLevel when its chunks leave the player's ticking
+        // range, which removes the SubLevel from the container and marks it removed.
+        // A cached SubLevel reference becomes a frozen snapshot — logicalPose() keeps
+        // returning the last-known position forever and the ship appears stuck. When
+        // the chunks reload, a *fresh* SubLevel object is constructed under the same
+        // UUID, so we look it up each tick and adopt the live one.
+        SubLevelContainer container = SubLevelContainer.getContainer(p.parentLevel);
+        if (container == null) {
+            return false; // dimension is being torn down
+        }
+        SubLevel live = container.getSubLevel(p.subLevelId);
+        if (live == null) {
+            // Holding-chunk state: SubLevel persisted to disk but not yet rehydrated.
+            // Stay registered, do nothing this tick — once a player re-enters range
+            // the SubLevel will be reloaded with the same UUID and we'll resume.
+            return true;
+        }
+        if (live != p.subLevel) {
+            p.subLevel = live;
+        }
         Level subLevelLevel = p.subLevel.getLevel();
         if (subLevelLevel == null) {
-            return false;
+            return true;
         }
+        // Re-assert plot-position anchoring on any pillagers (captain, crewmate) that
+        // have lost it. Sable's plot anchor lives in a @Unique mixin field that is NOT
+        // serialised to entity NBT — so the moment our captain's chunk unloads and
+        // reloads, the pillager comes back with plotPosition == null and Sable's per-
+        // tick rebind silently stops. Visually, the captain freezes in mid-air at the
+        // spot it happened to occupy when the chunk last saved. We re-apply lazily:
+        // only when plotPosition is observed null, so this is a no-op during steady
+        // flight (the field stays populated between reloads).
+        reanchorEntities(p);
         Vector3d shipPos = p.subLevel.logicalPose().position();
 
         ServerPlayer target = findEnemyPlayerOnAirship(p, shipPos);
@@ -256,6 +291,31 @@ public final class AirshipBrain {
             writeDebugActionbar(p, target, shipPos);
         }
         return true;
+    }
+
+    /**
+     * For each entity in {@code p.anchoredEntities}, ensure its Sable plot-position is
+     * set. If the entity is missing (not yet loaded after chunk reload, or properly
+     * dead) we skip and let the next tick handle it. If it's alive but its plot
+     * anchor is null (post-reload state), we re-apply the saved plot coords — Sable's
+     * tick mixin then snaps the entity back onto the moving deck on its next tick.
+     *
+     * <p>This is a workaround for Sable not persisting {@code sable$plotPosition}. If
+     * that ever becomes save-aware upstream this whole helper can go away.
+     */
+    private static void reanchorEntities(Pirate p) {
+        if (p.anchoredEntities.isEmpty()) return;
+        for (AnchoredEntity ae : p.anchoredEntities) {
+            net.minecraft.world.entity.Entity entity = p.parentLevel.getEntity(ae.uuid());
+            if (entity == null || entity.isRemoved()) continue;
+            EntityStickExtension stuck = (EntityStickExtension) entity;
+            if (stuck.sable$getPlotPosition() == null) {
+                stuck.sable$setPlotPosition(ae.plotPos());
+                MCPirates.LOGGER.info(
+                        "re-anchored {} ({}) to plotPos={} after reload",
+                        ae.role(), ae.uuid(), ae.plotPos());
+            }
+        }
     }
 
     // ───────────────────────────── State machine ─────────────────────────────
@@ -910,7 +970,13 @@ public final class AirshipBrain {
     /** Mutable per-airship state. */
     private static final class Pirate {
         final ServerLevel parentLevel;
-        final SubLevel subLevel;
+        /** Stable identity of the airship's SubLevel across chunk unload/reload. The
+         *  {@link #subLevel} object reference is replaced when Sable rehydrates the
+         *  SubLevel into a fresh object on reload — the UUID is the only thing that
+         *  persists. Look up the live SubLevel through {@code parentLevel}'s
+         *  {@link SubLevelContainer} each tick using this id. */
+        final UUID subLevelId;
+        SubLevel subLevel;
         final BlockPos airpadAnchor;
         final BlockPos slAnalogLever;
         final BlockPos slLeftClutchLever;
@@ -919,6 +985,10 @@ public final class AirshipBrain {
         /** Ship "forward" (cannon-points-this-way) in SubLevel-local coords. Depends on
          *  the structure rotation chosen by jigsaw at placement time. */
         final Vector3d shipLocalForward;
+        /** Entities (captain, crewmate) that the brain re-anchors each tick when their
+         *  Sable plot-position is missing (i.e., after a chunk unload/reload round
+         *  trip wiped the in-memory anchor). */
+        final List<AnchoredEntity> anchoredEntities;
 
         State state = State.LIFTOFF;
         long stateEnteredTick;
@@ -955,9 +1025,12 @@ public final class AirshipBrain {
 
         Pirate(ServerLevel parentLevel, SubLevel subLevel, BlockPos airpadAnchor,
                BlockPos slAnalogLever, BlockPos slLeftClutchLever, BlockPos slRightClutchLever,
-               BlockPos slCannonMount, Vector3d shipLocalForward) {
+               BlockPos slCannonMount, Vector3d shipLocalForward,
+               List<AnchoredEntity> anchoredEntities) {
             this.parentLevel = parentLevel;
             this.subLevel = subLevel;
+            this.subLevelId = subLevel.getUniqueId();
+            this.anchoredEntities = anchoredEntities;
             this.airpadAnchor = airpadAnchor;
             this.slAnalogLever = slAnalogLever;
             this.slLeftClutchLever = slLeftClutchLever;

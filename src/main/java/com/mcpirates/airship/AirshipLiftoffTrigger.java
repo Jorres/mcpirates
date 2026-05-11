@@ -73,20 +73,23 @@ public final class AirshipLiftoffTrigger {
     /** NBT facing of the analog lever in the airship template. Used to determine rotation. */
     private static final Direction NBT_LEVER_FACING = Direction.EAST;
 
-    // Structure-local offsets from the trigger lever (analog_lever) in NBT-space:
-    //   analog_lever  → (7, 6, 5)
-    //   engine        → (7, 5, 5)   delta (0, -1, 0)
-    //   cannon mount  → (7, 3, 1)   delta (0, -3, -4)
-    //   left  clutch  → (5, 5, 7)   delta (-2, -1, 2)
-    //   right clutch  → (9, 5, 7)   delta (2, -1, 2)
+    // All offsets below are deltas from the trigger lever, NOT absolute NBT positions.
+    // The airship NBT is allowed to grow/shift independently of this file (more air
+    // padding, vertical shifts, etc.); only the relative geometry of components-around-
+    // the-lever must stay constant for these constants to keep working.
+    //
+    //   engine        → 1 block below the lever
+    //   cannon mount  → 3 below, 4 ahead (toward the cannon-facing side)
+    //   left  clutch  → 2 left, 1 below, 2 back
+    //   right clutch  → 2 right, 1 below, 2 back
     private static final BlockPos ENGINE_DELTA       = new BlockPos(0, -1, 0);
     private static final BlockPos CANNON_MOUNT_DELTA = new BlockPos(0, -3, -4);
     private static final BlockPos LEFT_CLUTCH_DELTA  = new BlockPos(-2, -1, 2);
     private static final BlockPos RIGHT_CLUTCH_DELTA = new BlockPos(2, -1, 2);
 
-    // Honey-glue body bounds in NBT space — *inclusive* block coords of the actual
-    // ship body (no pad, no surrounding air). Body spans NBT x=5..9, y=3..10, z=0..9.
-    // Deltas from the lever at NBT (7, 6, 5):
+    // Honey-glue body bounds, *inclusive* block coords expressed as deltas from the
+    // lever. Covers the actual ship hull (no pad, no surrounding air padding). Update
+    // these only when the ship body itself changes shape relative to the lever.
     private static final BlockPos GLUE_MIN_DELTA = new BlockPos(-2, -3, -5);
     private static final BlockPos GLUE_MAX_DELTA = new BlockPos(2, 4, 4);
 
@@ -341,6 +344,15 @@ public final class AirshipLiftoffTrigger {
         Direction shipForwardDir = rotation.rotate(Direction.NORTH);
         Vector3d shipLocalForward = new Vector3d(
                 shipForwardDir.getStepX(), shipForwardDir.getStepY(), shipForwardDir.getStepZ());
+        // Step 6: spawn the pirate captain + crewmate into the SubLevel — see
+        // CaptainSpawner for why this happens after assembly. The captain's death
+        // drops the bounty seal that the sheriff villager trades for emeralds.
+        // Spawn BEFORE registering with the brain so the brain has the anchor list
+        // at hand and can re-assert plot positions every tick (Sable's plot anchor
+        // is in-memory only; it doesn't survive chunk unload/reload).
+        java.util.List<com.mcpirates.pirates.CaptainSpawner.AnchoredEntity> anchors =
+                CaptainSpawner.spawn(subLevel, pos, offset, rotation);
+
         AirshipBrain.register(
                 level,
                 subLevel,
@@ -349,13 +361,8 @@ public final class AirshipLiftoffTrigger {
                 leftClutchPos.offset(offset),
                 rightClutchPos.offset(offset),
                 slCannonMount,
-                shipLocalForward);
-
-        // Step 6: spawn the pirate captain into the SubLevel — see CaptainSpawner for
-        // why this happens after assembly rather than baked into the airship NBT or
-        // spawned in the parent world. The captain's death drops the bounty seal that
-        // the sheriff villager trades for emeralds.
-        CaptainSpawner.spawn(subLevel, pos, offset, rotation);
+                shipLocalForward,
+                anchors);
     }
 
     /** Compute the rotation applied at jigsaw placement by comparing world vs NBT facing. */

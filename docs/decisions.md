@@ -4,17 +4,6 @@ Append-only. Each entry: date, decision, rationale, alternatives considered.
 
 ---
 
-## 2026-05-10 — Pin to NeoForge 21.1.228 despite Aeronautics being built against 21.1.219
-
-**Decision.** Use NeoForge `21.1.228` per project requirement.
-
-**Why.** User requirement. Same MC (1.21.1), same loader major version, additive-only changes
-in the patch range — published Aeronautics 1.2.1 jar should load against 228 fine.
-
-**Risk.** Untested cross-version behavior; if we hit binding issues we drop to 219.
-
----
-
 ## 2026-05-10 — Single-loader (NeoForge only), not multiloader
 
 **Decision.** Build a single NeoForge module, not a Fabric/NeoForge split.
@@ -224,3 +213,177 @@ names in `template_pools`. To re-skin the piece, edit
 test in dev: `./gradlew runClient`, fresh world, `/locate structure
 minecraft:village_plains` (or any CTOV village biome), teleport, walk the perimeter —
 should see the gazebo with a cobblestone block at one of the outer house slots.
+
+---
+
+## 2026-05-11 — Bounty pipeline v0.1: sheriff villager + tagged captain pillager + seal drop
+
+**Decision.** A complete (if minimal) bounty loop is in place, in **three independent pieces**
+so each can evolve without touching the others.
+
+**Piece 1 — Sheriff villager + bounty board POI anchor.** `mcpirates:bounty_board` is a
+plain wooden block (no block-entity, no GUI). Its only job is to be a Point of Interest
+anchor that the new `mcpirates:sheriff` profession claims as a workstation. The block
+replaces the cobblestone placeholder at the center of the village gazebo (re-emitted by
+`tools/build_bounty_board.py`). For v0.1 the sheriff has **one** trade at tier 1:
+`1 captain_seal → 10 emeralds`. No "buy a bounty map" trade yet — deferred to v0.2.
+
+**Piece 2 — Captain pillager spawn.** When an airship lifts off
+(`AirshipLiftoffTrigger.activateLever`), `CaptainSpawner.spawn` is called with the
+SubLevel, the world position of the lever, the assembly offset, and the jigsaw rotation.
+A vanilla `Pillager` is spawned into the SubLevel at NBT-local `(7, 6, 3)` — two blocks
+aft of the cannon mount, between the helm levers, on the bridge. Three NBT flags shape
+its behaviour: `NoAi=true` (it doesn't wander off the deck), `NoGravity=true` (it stays
+anchored at its plot-local position regardless of how the SubLevel moves), and the
+scoreboard-style tag `mcpirates.pirate_captain` (used by piece 3). Custom name
+"Pirate Captain" + crossbow in mainhand sell the fantasy.
+
+**Piece 3 — Captain death drop.** `CaptainDeath` listens on `LivingDeathEvent`, filters
+on the `mcpirates.pirate_captain` tag, and drops a `captain_seal` ItemEntity. **Crucial
+detail:** Sable stores SubLevel contents at "plot" coordinates in the same `ServerLevel`
+as the playable world. If we spawn the seal at `victim.position()` it lands inside the
+plot region (riding the wreckage); we instead transform via
+`SubLevel.logicalPose().transformPosition(plotLocal)` to spawn the seal at the
+world-rendered position, where it falls to real ground for the player to pick up.
+
+**Why a tagged vanilla pillager, not a custom entity.** A custom `EntityType` requires
+its own model, texture, renderer, attributes, AI registration, and spawn-egg item — a
+full session of work for what we can express as `entity.addTag(String)` + a `getTags()`
+check on death. The tag survives save/load and is namespaced (`mcpirates.…`) so we
+won't clash with vanilla or other mods' tag conventions.
+
+**POI block-state registration — NeoForge does it for us, don't do it twice.** An
+earlier draft of `MCPPoiTypes` hooked `FMLCommonSetupEvent` and reflectively called
+`PoiTypes.registerBlockStates(Holder, Set<BlockState>)` (the method is package-private
+in Mojang's 1.21.1 mappings). The dev client immediately logged
+`IllegalStateException: Block{mcpirates:bounty_board} is defined in more than one PoI type`
+because NeoForge had already added the block to `TYPE_BY_STATE` as part of the registry-
+add callback. The fix: **do nothing**. Registering a `PoiType` with non-empty
+`matchingStates` via `DeferredRegister` is sufficient on NeoForge 21.1.228 — the auto-
+registration is part of NeoForge's PoiTypes patch. Don't ship an AT, don't reflect.
+
+**Verified end-to-end (session 2026-05-11 via MCP bridge):**
+
+Full pipeline tested using the Tier-1 RCON bridge against a live `runServer`:
+1. Sheriff villager: summoned at `(0, 200, 0)`, traded 5 seals → 50 emeralds.
+   `read_entities Offers` confirmed the recipe is present on first interaction.
+2. Pillager outpost at `(64, ~, 1168)`: TP'd Dev nearby; AirshipLiftoffTrigger
+   fired honey-glue → assembly → cannon → brain registration → captain spawn
+   in ~1 second. All log lines present.
+3. Captain death drop: killed via `/kill`, `CaptainDeath` fired and a
+   `mcpirates:captain_seal` ItemEntity appeared at the captain's world-rendered
+   position, falling to ground as designed.
+
+**Peaceful-mode footgun discovered.** Default `runs/server/server.properties`
+shipped `difficulty=peaceful`. Pillagers `discard()` themselves within a tick
+under peaceful regardless of `PersistenceRequired`, so the captain was killed
+silently on every test. Changed default to `difficulty=easy`. If future tests
+see "captain spawned but `@e[type=pillager]` finds nothing," check difficulty
+first — easy to mis-diagnose as a SubLevel-visibility race.
+
+---
+
+## 2026-05-11 — Captain rides ship via `sable$setPlotPosition`, not the retain tag
+
+**Decision.** Anchor pillagers to a moving Sable SubLevel by calling
+`((EntityStickExtension) entity).sable$setPlotPosition(plotVec3)` immediately after
+`Level.addFreshEntity`. The `sable:retain_in_sub_level` entity-type tag is **not enough on
+its own** — it only stops Sable's `kickEntity` from moving wandering entities out of
+plot space. The actual ship-riding rebind is in `Entity.tick` (mixed by Sable): every
+tick, if `plotPosition != null`, the entity's world position is set to
+`subLevel.logicalPose().transformPosition(plotPosition)`.
+
+**Why this matters.** First implementation had captain at NoGravity/NoAI + plot-local
+spawn coords, hoping vanilla physics would do the right thing inside the SubLevel
+plot. It didn't — the captain hovered at its spawn world-position while the ship flew
+away, and the user reported "ship flied right through it." Adding `pillager` to the
+retain tag didn't fix it either (the tag only prevents one kick path; the per-tick
+rebind only happens with `setPlotPosition`).
+
+**Symptom diagnosis.** A captain "stuck in mid-air at original spawn coords while the
+ship visibly moves" almost always means `sable$setPlotPosition` wasn't called or was
+called too early. Sable's mixin field initialiser fires when the entity is first added
+to a level, so the call has to come AFTER `addFreshEntity`, not before.
+
+**Deck Y is NBT 3, not 5.** The deck floor on `airship_small.nbt` is cobblestone at
+NBT y=3 (verified by NBT inspection). Pillager feet should sit at y=4 (head at y≈5.95,
+above the deck, clearing the y=10 envelope). The first draft had `CAPTAIN_DELTA = (0, 0, -2)`
+relative to the lever at NBT (7, 6, 5), putting the captain at NBT y=6 — two blocks
+above the deck, hovering like a ghost. Final delta is `(0, -2, -2)` → NBT (7, 4, 3).
+
+**Generalized helper.** `CaptainSpawner.spawnAnchoredPillager(...)` now takes the
+delta and an optional tag, so every airship spawns both a captain (with the
+`mcpirates.pirate_captain` tag → seal drop on death) and a regular crewmate (no tag,
+no special drop). The crewmate exists partly to confirm the anchor mechanism is
+type-agnostic — any vanilla entity type can ride if bound — and partly to make the
+ship feel populated.
+
+**Side benefit / known limitation.** Pillagers still have `NoAi=true`, so they don't
+shoot or take knockback. Fixing knockback would mean removing NoAi, which means
+inventing AI that doesn't walk the captain off the deck (since walking would fight
+the per-tick rebind). Deferred to a session that wants combat-on-airship.
+
+**How to apply.** When adding more anchored entities to airships (a parrot mascot, a
+seated commander, etc.), use the same recipe: `spawnAnchoredPillager` is the
+reference; copy its sequence (create entity → `moveTo(initialWorldPos)` → flags +
+items + name → `addFreshEntity` → `sable$setPlotPosition`). The
+`((EntityStickExtension) entity)` cast is via the public mixin interface, no AT needed.
+
+**Cannon split into AIM (always-on) + FIRE (runtime-toggled).** Earlier session shipped
+a single `DEBUG_CANNON_ENABLED` boolean to silence cannons during debugging. Final
+design (session 2026-05-11):
+- {@code CANNON_AIM_ENABLED} — compile-time `true`. The cannon visually tracks the
+  player during PURSUE; no projectiles spawned, just yaw/pitch updates.
+- {@code CANNON_FIRE_ENABLED} — runtime `volatile boolean`, defaults to `false`.
+  Toggled at chat via {@code /mcpirates fire on|off} (see `MCPCommands`). Stays in
+  whatever state the last command set; resets to false on server restart.
+
+Why this split: the user wants the visual feedback of an aiming cannon (sells the
+"the pirates see you" fantasy) but doesn't want cannonball impacts during routine
+debug sessions. Splitting AIM from FIRE keeps the demo-ready visuals on while
+gating the actual harm. To fight a fully-armed airship, op-level player runs
+{@code /mcpirates fire on}.
+
+---
+
+## 2026-05-11 — PURSUE engage range 12 chunks → 8 chunks (matched to "ship visible but not yet chasing")
+
+**Decision.** {@code DISENGAGE_RANGE_SQ} dropped from {@code (12*16)^2} to
+{@code (8*16)^2}. Was 192 blocks (exactly vanilla render distance, so the ship
+started pursuing the instant it appeared on screen — felt jarring). Now 128 blocks,
+leaving ~64 blocks of "ship is in view, looming, but not yet attacking" before
+combat engages. Improves the "you see the pirate ship coming" gameplay beat.
+
+Also affects `findEnemyPlayerOnAirship` upper bound (same constant), so the brain's
+target acquisition matches.
+
+**Known limitations (deferred to v0.2+).**
+
+- **Captain doesn't shoot back.** `NoAi=true` is the simplest way to anchor it to the
+  SubLevel deck without inventing custom AI. The airship's cannon (`AirshipBrain`)
+  remains the only offensive system for now.
+- **No Create-seat embedding.** Mounting the captain on a `create:*_seat` block would be
+  the proper "captain at the helm" implementation. Defers to a session that can also
+  modify the airship NBT to bake a seat in.
+- **No ship-identity matching between seal and (yet-to-exist) bounty map.** All seals are
+  interchangeable. When we add a buy-a-bounty-map trade, the right time to add a
+  `ship_id` NBT field to both is together — designing the registry now would be premature.
+- **Placeholder textures.** Three PNGs generated programmatically by
+  `tools/build_placeholder_textures.py`: a wood-and-parchment bounty board, a red-and-gold
+  wax seal, and a sheriff villager overlay with a red headband + gold chest-star. All
+  visually distinct from vanilla assets so they're easy to spot when replacing.
+
+**How to apply.**
+
+- To swap the cobblestone-era texture for the proper block: already done — the NBT was
+  regenerated from `build_bounty_board.py` after changing palette index 10 from
+  `minecraft:cobblestone` to `mcpirates:bounty_board`. The PoC structure is identical
+  in geometry; only that one block is different.
+- To add a "buy a bounty map" trade: extend `SheriffTrades.onVillagerTrades` with a tier
+  1 (or higher) `ItemListing` that emits a `filled_map` with a custom decoration. Tier
+  thresholds are `trades.get(N)`.
+- To swap any placeholder texture: replace the corresponding PNG and re-run nothing —
+  textures are read straight from `assets/`.
+- To test the loop: `./gradlew runClient` → fresh world → `/locate structure
+  minecraft:pillager_outpost` → wait for airship to lift off → kill captain → walk to
+  the village → find a sheriff villager next to a bounty board → trade.

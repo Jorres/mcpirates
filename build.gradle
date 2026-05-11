@@ -86,6 +86,16 @@ neoForge {
             gameDirectory = project.file('runs/client')
         }
 
+        // `./gradlew runClientQuick` — same as runClient but auto-joins localhost:25565
+        // on startup, skipping the title and multiplayer-menu clicks. Used together with
+        // `./gradlew runServer` for the Claude-bridge testing workflow (see
+        // docs/claude-bridge.md). Falls through to normal launch if the server is down.
+        clientQuick {
+            client()
+            gameDirectory = project.file('runs/client')
+            programArguments.addAll '--quickPlayMultiplayer', 'localhost:25565'
+        }
+
         server {
             server()
             gameDirectory = project.file('runs/server')

@@ -14,6 +14,10 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
 /**
  * Spawn a pirate captain into the airship's SubLevel right after Aeronautics assembly
  * finishes. The captain rides the ship indefinitely as a stationary turret-style target;
@@ -39,21 +43,18 @@ import net.minecraft.world.phys.Vec3;
  * (which would fight the per-tick rebind anyway), NoGravity so we don't waste cycles on
  * fall math that gets overwritten each tick.
  *
- * <h2>NBT-space layout</h2>
+ * <h2>Anchor layout (delta-based, not absolute)</h2>
  *
- * <p>Deck floor on this airship is NBT y=3 (cobblestone at the captain's column).
- * Pillagers position via feet-Y, so the captain stands at NBT y=4 (feet on the deck,
- * head at ~y=5.95). Captain placed at NBT {@code (7, 4, 3)} — centred between the helm
- * levers {@code (5, 5, 2)} / {@code (9, 5, 2)}, two blocks aft of the cannon mount at
- * {@code (7, 3, 1)}. Delta from lever {@code (7, 6, 5)} is {@code (0, -2, -2)}.
- *
- * <p>A crewmate (regular pillager, no captain tag) spawns at NBT {@code (6, 4, 3)} — one
- * block west of the captain on the same deck row. Both rotate with the structure via
+ * <p>Anchors are deltas from the trigger lever; the NBT can grow/shift independently
+ * (extra air padding, vertical compaction) without invalidating these constants. The
+ * captain stands two blocks below the lever (deck level) and two blocks aft (centred
+ * between the helm levers, behind the cannon mount). The crewmate stands one block
+ * west of the captain on the same deck row. Both rotate with the structure via
  * {@link BlockPos#rotate(Rotation)} on the delta, then we add the assembly offset.
  *
- * <p>An earlier draft put the captain at NBT y=6, floating two blocks above the deck;
- * visually the captain hovered like a ghost rather than standing at the helm. Lowered
- * to deck level after a screenshot review.
+ * <p>An earlier draft put the captain at lever-level, floating two blocks above the
+ * deck; visually the captain hovered like a ghost rather than standing at the helm.
+ * Lowered to deck level after a screenshot review.
  *
  * <h2>Tag, not custom entity type</h2>
  *
@@ -65,18 +66,34 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class CaptainSpawner {
 
+    /**
+     * Stable record of an entity anchored into a SubLevel via
+     * {@code sable$setPlotPosition}. Returned from {@link #spawn} so the caller
+     * (typically {@code AirshipBrain}) can re-assert the plot position each tick.
+     *
+     * <p>Sable's {@code sable$plotPosition} is a {@code @Unique} mixin field — it lives
+     * only in memory and is NOT serialised to entity NBT. On chunk unload the entity
+     * is written to disk with just its world coordinates; on reload the fresh entity
+     * has {@code plotPosition == null} and Sable's per-tick rebind never runs, so the
+     * pillager freezes wherever it happened to be when the chunk was saved. We work
+     * around this by holding the (uuid, plotPos) pair in the brain and re-applying it
+     * any tick the live entity is missing its anchor. The plot position is a function
+     * of the structure's NBT, so re-deriving it is cheap and exact.
+     */
+    public record AnchoredEntity(UUID uuid, Vec3 plotPos, String role) {}
+
     /** Marker tag on the pillager entity. {@link CaptainDeath} checks this to identify
      *  bounty-eligible kills. Format mirrors vanilla scoreboard-tag conventions. */
     public static final String CAPTAIN_TAG = "mcpirates.pirate_captain";
 
-    /** Feet-Y delta from the lever's NBT pos (7, 6, 5). Captain at NBT (7, 4, 3) puts
-     *  the pillager standing on the cobblestone deck (NBT y=3) between the helm levers. */
+    /** Feet-Y delta from the lever. 2 blocks below puts the captain on the deck; 2
+     *  blocks aft (toward the helm) puts him between the two helm levers, behind the
+     *  cannon mount. */
     private static final BlockPos CAPTAIN_DELTA = new BlockPos(0, -2, -2);
 
-    /** Crewmate (a regular pillager without the captain tag, won't drop a seal). Spawns
-     *  beside the captain at NBT (6, 4, 3) — same deck row, one block west of the
-     *  captain. Anchored by the same {@code sable$setPlotPosition} mechanism, which is
-     *  the gameplay-verification side benefit: any entity type can ride if bound. */
+    /** Crewmate (regular pillager, no captain tag, no seal drop). Spawns one block
+     *  to the captain's left on the same deck row. Anchored via the same
+     *  {@code sable$setPlotPosition} mechanism as the captain. */
     private static final BlockPos CREW_DELTA = new BlockPos(-1, -2, -2);
 
     private CaptainSpawner() {}
@@ -93,27 +110,32 @@ public final class CaptainSpawner {
      * @param rotation        the jigsaw-applied rotation of this airship piece, used to
      *                        rotate the NBT-local captain delta.
      */
-    public static void spawn(SubLevel subLevel, BlockPos leverWorldPos,
-                             BlockPos assemblyOffset, Rotation rotation) {
+    public static List<AnchoredEntity> spawn(SubLevel subLevel, BlockPos leverWorldPos,
+                                             BlockPos assemblyOffset, Rotation rotation) {
         Level inner = subLevel.getLevel();
         if (inner == null) {
             MCPirates.LOGGER.warn("CaptainSpawner: SubLevel.getLevel() returned null — captain not spawned");
-            return;
+            return List.of();
         }
 
-        spawnAnchoredPillager(
+        List<AnchoredEntity> anchors = new ArrayList<>(2);
+        AnchoredEntity captain = spawnAnchoredPillager(
                 inner, subLevel, leverWorldPos, assemblyOffset, rotation,
                 CAPTAIN_DELTA,
                 /*tag=*/CAPTAIN_TAG,
                 /*customName=*/Component.translatable("mcpirates.entity.pirate_captain"),
                 /*role=*/"captain");
+        if (captain != null) anchors.add(captain);
 
-        spawnAnchoredPillager(
+        AnchoredEntity crew = spawnAnchoredPillager(
                 inner, subLevel, leverWorldPos, assemblyOffset, rotation,
                 CREW_DELTA,
                 /*tag=*/null,
                 /*customName=*/Component.literal("Pirate Crewmate"),
                 /*role=*/"crewmate");
+        if (crew != null) anchors.add(crew);
+
+        return anchors;
     }
 
     /**
@@ -125,7 +147,7 @@ public final class CaptainSpawner {
      * @param customName name shown above the pillager.
      * @param role       short string used in the spawn log to tell captain/crew apart.
      */
-    private static void spawnAnchoredPillager(
+    private static AnchoredEntity spawnAnchoredPillager(
             Level inner, SubLevel subLevel,
             BlockPos leverWorldPos, BlockPos assemblyOffset, Rotation rotation,
             BlockPos delta,
@@ -149,7 +171,7 @@ public final class CaptainSpawner {
         Pillager pillager = EntityType.PILLAGER.create(inner);
         if (pillager == null) {
             MCPirates.LOGGER.warn("CaptainSpawner: EntityType.PILLAGER.create returned null for role={}", role);
-            return;
+            return null;
         }
         pillager.moveTo(initialWorldPos.x, initialWorldPos.y, initialWorldPos.z, /*yaw=*/0.0f, /*pitch=*/0.0f);
         pillager.setNoAi(true);
@@ -171,5 +193,7 @@ public final class CaptainSpawner {
         MCPirates.LOGGER.info(
                 "{} spawned: subLevel={} plotPos={} initialWorldPos={} rotation={} added={}",
                 role, subLevel.getUniqueId(), plotPos, initialWorldPos, rotation, added);
+
+        return added ? new AnchoredEntity(pillager.getUUID(), plotPos, role) : null;
     }
 }
