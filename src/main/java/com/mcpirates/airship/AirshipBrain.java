@@ -39,7 +39,6 @@ import rbasamoyai.createbigcannons.cannons.big_cannons.BigCannonBehavior;
 import java.lang.reflect.Field;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
@@ -137,8 +136,6 @@ public final class AirshipBrain {
             ResourceLocation.fromNamespaceAndPath("createbigcannons", "solid_shot");
 
     private static final List<Pirate> SHIPS = new CopyOnWriteArrayList<>();
-    private static final java.util.Set<UUID> AIMED_ONCE = ConcurrentHashMap.newKeySet();
-    private static final java.util.Set<UUID> FIRED_ONCE = ConcurrentHashMap.newKeySet();
 
     private static Field cachedAnalogStateField;
     private static Field cachedMountedContraptionField;
@@ -251,18 +248,14 @@ public final class AirshipBrain {
                     String.format("%.1f", Math.sqrt(horizDistSq(shipPos, p.airpadAnchor))));
             p.state = desired;
             p.stateEnteredTick = now;
-            // Clutch state-transition handling.
-            //
-            // Bug observed in playtesting: after a long idle (e.g. chunk reload),
-            // the propellers visually keep spinning but stop applying thrust to the
-            // SubLevel — toggling the clutch lever fixed it. The fix is to actively
-            // "kick" the clutches whenever we transition INTO PURSUE (so thrust is
-            // re-evaluated from a known-good state) and to outright disengage them
-            // when entering HOVER (so an idle ship parks deliberately rather than
-            // sitting in some half-engaged stale state).
-            if (desired == State.PURSUE) {
-                kickClutches(p);
-            } else if (desired == State.HOVER) {
+            // On any state transition, snap both clutches to disengaged. Entering
+            // PURSUE: applyMovement on the same tick will re-engage whichever side(s)
+            // tank-steering wants, and the off→on edge reliably refreshes Aeronautics'
+            // thrust contribution (observed once that the propellers can be visually
+            // spinning but applying zero thrust after an idle chunk reload — toggling
+            // the clutch lever fixed it). Entering HOVER: stay disengaged, so an idle
+            // ship parks deliberately rather than coasting on stale engagement.
+            if (desired == State.PURSUE || desired == State.HOVER) {
                 setBothClutchesDisengaged(p);
             }
             applyMovement(p, target, shipPos, now);
@@ -432,8 +425,7 @@ public final class AirshipBrain {
         setLeverPowered(subLevelLevel, p.slLeftClutchLever, !leftEngaged);
         setLeverPowered(subLevelLevel, p.slRightClutchLever, !rightEngaged);
 
-        // Throttle: bang-bang on altitude error relative to target/airpad,
-        // with floor protection + stuck-on-terrain override.
+        // Throttle: PD on altitude error relative to target/airpad with floor protection.
         int throttle = chooseThrottle(p, p.state, shipPos, target, p.parentLevel, now);
         setAnalogLeverState(subLevelLevel, p.slAnalogLever, throttle);
         // Diagnostic: log throttle decisions every ~2s so we can verify the floor
@@ -464,14 +456,13 @@ public final class AirshipBrain {
                     ? Math.max(target.getEyeY() + PURSUE_ALT_OFFSET, maxGround + MIN_ALT_ABOVE_GROUND + 2.0)
                     : Double.NaN;
             MCPirates.LOGGER.info(
-                    "pirate {} throttle: state={} thr={} shipY={} groundUnder={} maxGroundAhead={} altAboveMax={} targetY={} dy={} stuckTicks={}",
+                    "pirate {} throttle: state={} thr={} shipY={} groundUnder={} maxGroundAhead={} altAboveMax={} targetY={} dy={}",
                     p.subLevel.getUniqueId(), p.state, throttle,
                     String.format("%.1f", shipPos.y),
                     groundUnderShip, maxGround,
                     String.format("%.1f", shipPos.y - maxGround),
                     Double.isNaN(targetY) ? "—" : String.format("%.1f", targetY),
-                    Double.isNaN(targetY) ? "—" : String.format("%.1f", shipPos.y - targetY),
-                    p.stuckTicks);
+                    Double.isNaN(targetY) ? "—" : String.format("%.1f", shipPos.y - targetY));
         }
 
         // Record for the debug overlay.
@@ -520,10 +511,6 @@ public final class AirshipBrain {
      *  this many ticks into the future to anticipate momentum. Larger = more damping
      *  but more sluggish recovery. */
     private static final double THROTTLE_VELOCITY_LOOKAHEAD_TICKS = 20.0;
-    /** Within this Y delta two samples count as "no movement" for stuck detection. */
-    private static final double STUCK_Y_EPSILON = 0.05;
-    /** Stuck if shipY hasn't budged for this many ticks while we're trying to descend. */
-    private static final int STUCK_TICKS_THRESHOLD = 30;
     /** Distances (blocks) ahead along the heading direction at which we sample terrain
      *  height for floor protection. The MAX over these + ship-center sample becomes
      *  the effective ground level, so cresting a slope doesn't crash the ship. */
@@ -531,7 +518,7 @@ public final class AirshipBrain {
 
     /**
      * Throttle scales with altitude error so we descend faster when we're way above
-     * target. Three safety overrides:
+     * target. Two safety overrides:
      *
      * <ul>
      *     <li><b>Look-ahead floor protection</b> — terrain height is sampled at the
@@ -541,9 +528,6 @@ public final class AirshipBrain {
      *     <li><b>Ground-clamped target altitude</b> — for PURSUE the requested
      *         altitude is at least {@code maxGround + MIN_ALT_ABOVE_GROUND}. A target
      *         in a valley below a ridge can't ask the ship to dive into the ridge.</li>
-     *     <li><b>Stuck override</b> — if shipY hasn't moved for {@link #STUCK_TICKS_THRESHOLD}
-     *         ticks while we're commanding descent, the ship is resting on something the
-     *         heightmap can't see. Force throttle 15 to break free.</li>
      * </ul>
      */
     private static int chooseThrottle(
@@ -589,33 +573,12 @@ public final class AirshipBrain {
         // (PD control). Aeronautics airships have noticeable inertia — without
         // this damping, throttle bang-bangs and the ship yo-yos around target alt.
         double vy = 0.0;
-        if (!Double.isNaN(p.stuckCheckLastY) && p.stuckCheckLastTick > 0) {
-            long dt = Math.max(1, now - p.stuckCheckLastTick);
-            vy = (shipPos.y - p.stuckCheckLastY) / dt;
+        if (!Double.isNaN(p.lastYSample) && p.lastYSampleTick > 0) {
+            long dt = Math.max(1, now - p.lastYSampleTick);
+            vy = (shipPos.y - p.lastYSample) / dt;
         }
-
-        // Stuck detector — only count "trying to move but not" ticks.
-        if (Math.abs(dy) > 3.0) {
-            if (!Double.isNaN(p.stuckCheckLastY)
-                    && Math.abs(shipPos.y - p.stuckCheckLastY) < STUCK_Y_EPSILON) {
-                p.stuckTicks += (int) Math.max(1, now - p.stuckCheckLastTick);
-            } else {
-                p.stuckTicks = 0;
-            }
-        } else {
-            p.stuckTicks = 0;
-        }
-        p.stuckCheckLastY = shipPos.y;
-        p.stuckCheckLastTick = now;
-
-        if (dy > 3.0 && p.stuckTicks > STUCK_TICKS_THRESHOLD
-                && shipPos.y - maxGround < 15.0) {
-            // Wedged on terrain the heightmap can't see — break free with full burn.
-            // Only applies when we're actually *near* the ground; at envelope ceiling
-            // (high altitude, stuck because there's no more buoyancy headroom) full
-            // burn keeps us pinned at the ceiling instead of letting the PD descend.
-            return 15;
-        }
+        p.lastYSample = shipPos.y;
+        p.lastYSampleTick = now;
 
         // Predicted-error PD control: where will the ship be in the lookahead window
         // if its current velocity continues unchanged? Throttle proportionally to
@@ -679,7 +642,8 @@ public final class AirshipBrain {
         // Diagnostic: log aim state every ~2s so we can see whether the cannon
         // tracks correctly across PURSUE → RETURN → PURSUE state cycles.
         long bucket = System.currentTimeMillis() / 2000;
-        boolean firstAim = AIMED_ONCE.add(p.subLevel.getUniqueId());
+        boolean firstAim = !p.hasAimedOnce;
+        p.hasAimedOnce = true;
         if (firstAim || bucket != p.lastAimLogBucket) {
             p.lastAimLogBucket = bucket;
             float storedYaw = readCannonYaw(mount);
@@ -710,7 +674,8 @@ public final class AirshipBrain {
         loadIfNeeded(cannon);
         try {
             cannon.fireShot(p.parentLevel, entity);
-            if (FIRED_ONCE.add(p.subLevel.getUniqueId())) {
+            if (!p.hasFiredOnce) {
+                p.hasFiredOnce = true;
                 MCPirates.LOGGER.info("pirate {} first fire", p.subLevel.getUniqueId());
             }
             return true;
@@ -818,29 +783,15 @@ public final class AirshipBrain {
     }
 
     /**
-     * Force both clutches to DISENGAGED (lever powered=true). Called when entering
-     * HOVER so the airship parks with propellers idle rather than sitting in a
-     * half-engaged state that Aeronautics might not re-evaluate.
+     * Force both clutches to DISENGAGED (lever powered=true). Used at state
+     * transitions: entering HOVER parks the ship deliberately, and entering PURSUE
+     * resets clutches to a known-good state before {@link #applyMovement} re-engages
+     * whichever side(s) the new tank-steer decision wants.
      */
     private static void setBothClutchesDisengaged(Pirate p) {
         Level subLevelLevel = p.subLevel.getLevel();
         setLeverPowered(subLevelLevel, p.slLeftClutchLever, /*powered=disengaged=*/true);
         setLeverPowered(subLevelLevel, p.slRightClutchLever, /*powered=disengaged=*/true);
-    }
-
-    /**
-     * "Kick" both clutches by forcing them DISENGAGED right now. Normal
-     * {@link #applyMovement} will re-engage on the next decision tick (≤ {@link #DECISION_INTERVAL}
-     * ticks away), and the off→on transition reliably refreshes Aeronautics'
-     * thrust contribution from the propellers. Observed in playtesting that after
-     * an idle chunk reload the propellers can be visually spinning but applying
-     * zero thrust until the clutch is toggled — this is the same toggle.
-     *
-     * <p>Cheaper than a full off→sleep→on sequence; one tick's worth of "no thrust"
-     * is invisible to the player.
-     */
-    private static void kickClutches(Pirate p) {
-        setBothClutchesDisengaged(p);
     }
 
     /** Toggle a vanilla lever's POWERED state, with the proper neighbour updates so adjacent
@@ -1010,18 +961,20 @@ public final class AirshipBrain {
         double lastSampledY = Double.NaN;
         int steadyTicks = 0;
 
-        // Stuck-on-ground detection: tracks how long shipY has remained ~unchanged.
-        // The world heightmap doesn't always agree with where the SubLevel actually
-        // sits (mountains, trees, off-by-one XZ between SubLevel pose and rendered
-        // blocks), so we fall back on "shipY hasn't moved" as ground evidence.
-        double stuckCheckLastY = Double.NaN;
-        long stuckCheckLastTick = Long.MIN_VALUE;
-        int stuckTicks = 0;
+        // Previous-tick altitude sample feeding the throttle PD's vertical-velocity
+        // estimate. Updated each {@link #chooseThrottle} call.
+        double lastYSample = Double.NaN;
+        long lastYSampleTick = Long.MIN_VALUE;
 
         // Diagnostic: rate-limit aim and throttle logs to one per ~2s wall-clock so
         // we can correlate state-cycle behavior without spamming the log.
         long lastAimLogBucket = -1;
         long lastThrottleLogBucket = -1;
+        // Gate "first aim/fire" log lines so each ship emits them exactly once over
+        // its lifetime. Per-Pirate (not static) so dead ships' bookkeeping is GC'd
+        // with the ship.
+        boolean hasAimedOnce = false;
+        boolean hasFiredOnce = false;
 
         Pirate(ServerLevel parentLevel, SubLevel subLevel, BlockPos airpadAnchor,
                BlockPos slAnalogLever, BlockPos slLeftClutchLever, BlockPos slRightClutchLever,

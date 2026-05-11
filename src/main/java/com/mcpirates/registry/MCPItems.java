@@ -1,6 +1,7 @@
 package com.mcpirates.registry;
 
 import com.mcpirates.MCPirates;
+import com.mcpirates.village.FurledBountyItem;
 import net.minecraft.world.item.Item;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.registries.DeferredItem;
@@ -23,6 +24,12 @@ public final class MCPItems {
     public static final DeferredItem<Item> CAPTAIN_SEAL = ITEMS.registerSimpleItem(
             "captain_seal",
             new Item.Properties().stacksTo(16));
+
+    /** Furled-up treasure scroll. Right-click resolves to a bounty map pointing at
+     *  the nearest undefeated pillager outpost — see {@link FurledBountyItem}. */
+    public static final DeferredItem<FurledBountyItem> FURLED_BOUNTY = ITEMS.register(
+            "furled_bounty",
+            () -> new FurledBountyItem(new Item.Properties().stacksTo(16)));
 
     private MCPItems() {}
 

@@ -1,0 +1,7 @@
+{
+  "_comment": "Append-only. Adds mcpirates:sheriff_workstation to the vanilla acquirable_job_site tag so unemployed villagers consider it a valid workstation. Without this entry, VillagerProfession.NONE.acquirableJobSite (= p -> p.is(PoiTypeTags.ACQUIRABLE_JOB_SITE)) filters our POI out, and no villager ever auto-becomes a sheriff via the standard claim flow — even though the POI is correctly registered and the SHERIFF profession's own predicate matches.",
+  "replace": false,
+  "values": [
+    "mcpirates:sheriff_workstation"
+  ]
+}

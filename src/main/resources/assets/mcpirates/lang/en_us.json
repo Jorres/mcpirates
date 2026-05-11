@@ -4,8 +4,10 @@
 
   "block.mcpirates.bounty_board": "Bounty Board",
   "item.mcpirates.captain_seal": "Captain's Seal",
+  "item.mcpirates.furled_bounty": "Furled Bounty",
+  "item.mcpirates.furled_bounty.no_target": "No live pirate outposts nearby.",
 
-  "entity.minecraft.villager.sheriff": "Sheriff",
+  "entity.minecraft.villager.mcpirates.sheriff": "Sheriff",
   "mcpirates.entity.pirate_captain": "Pirate Captain",
 
   "pirate_bounty": "Pirate Bounty Map"

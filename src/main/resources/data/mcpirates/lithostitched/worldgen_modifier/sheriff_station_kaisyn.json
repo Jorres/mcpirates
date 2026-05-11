@@ -1,0 +1,52 @@
+{
+  "_comment": "Same pattern but for Towns and Towers (modid t_and_t, namespace kaisyn). House pool enumeration pulled from t_and_t-1.13.7's worldgen/template_pool/village/**/house(s)*.json. Excludes town_centers (= village core, sheriff doesn't belong there), beach_lighthouse/side/{cross,outdoor_shack} (road / utility pieces, not residences). Piglin / forest_ruins / wandering_trader_camp pools are included for completeness even though the sheriff fits the theme poorly — easier to delete a line than to add 22.",
+  "type": "lithostitched:add_template_pool_elements",
+  "neoforge:conditions": [
+    { "type": "neoforge:mod_loaded", "modid": "t_and_t" }
+  ],
+  "fabric:load_conditions": {
+    "condition": "fabric:all_mods_loaded",
+    "values": ["t_and_t"]
+  },
+  "template_pools": [
+    "kaisyn:village/badlands_pueblo/houses",
+    "kaisyn:village/beach_lighthouse/side/house",
+    "kaisyn:village/birch_forest_romanian/houses",
+    "kaisyn:village/exclusives/classic/houses",
+    "kaisyn:village/exclusives/iberian/houses",
+    "kaisyn:village/exclusives/mediterranean/houses/corner",
+    "kaisyn:village/exclusives/mediterranean/houses/regular",
+    "kaisyn:village/exclusives/nilotic/houses",
+    "kaisyn:village/exclusives/piglin/houses",
+    "kaisyn:village/exclusives/rustic/houses",
+    "kaisyn:village/exclusives/swedish/houses",
+    "kaisyn:village/exclusives/tudor/houses",
+    "kaisyn:village/exclusives/wandering_trader_camp/houses",
+    "kaisyn:village/flower_forest_japanese/houses",
+    "kaisyn:village/forest_ruins/houses",
+    "kaisyn:village/jungle_tribal/houses",
+    "kaisyn:village/meadow_swiss/houses",
+    "kaisyn:village/mushroom_fields_fantasy/houses",
+    "kaisyn:village/old_growth_taiga_polish/houses",
+    "kaisyn:village/snowy_taiga_viking/houses",
+    "kaisyn:village/sparse_jungle_polynesian/houses",
+    "kaisyn:village/swamp_boat/houses",
+    "kaisyn:village/wooded_badlands_tipi/houses"
+  ],
+  "elements": [
+    {
+      "weight": 5,
+      "element": {
+        "element_type": "lithostitched:guaranteed",
+        "delegate": {
+          "element_type": "minecraft:single_pool_element",
+          "projection": "rigid",
+          "processors": { "processors": [] },
+          "location": "mcpirates:village/common/sheriff_station"
+        },
+        "count": 1,
+        "min_depth": 3
+      }
+    }
+  ]
+}

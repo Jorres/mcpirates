@@ -1,4 +1,5 @@
 {
+  "_comment": "Injects mcpirates:sheriff_station into vanilla village house pools as a guaranteed piece (count=1, min_depth=3). Same pattern Bountiful uses for its bounty gazebo. min_depth=3 keeps it off the village centre so it lands in the residential ring with the other houses.",
   "type": "lithostitched:add_template_pool_elements",
   "template_pools": [
     "minecraft:village/plains/houses",
@@ -16,7 +17,7 @@
           "element_type": "minecraft:single_pool_element",
           "projection": "rigid",
           "processors": { "processors": [] },
-          "location": "mcpirates:village/common/pirate_bounty_board"
+          "location": "mcpirates:village/common/sheriff_station"
         },
         "count": 1,
         "min_depth": 3

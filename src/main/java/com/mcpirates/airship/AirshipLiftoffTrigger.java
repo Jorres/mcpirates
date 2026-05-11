@@ -137,18 +137,6 @@ public final class AirshipLiftoffTrigger {
         }
     }
 
-    // Two-phase activation: glue can't be queried by AABB on the same tick it was
-    // added — the entity-section visibility filter doesn't see freshly added entities
-    // until later. Map records the tick when glue was spawned per lever; assembly
-    // waits {@link #GLUE_SETTLE_TICKS} ticks (1 second) before proceeding.
-    private static final long GLUE_SETTLE_TICKS = 20L;
-    private static final java.util.Map<BlockPos, Long> GLUE_PRESPAWNED =
-            new java.util.concurrent.ConcurrentHashMap<>();
-    /** Tracks the spawned glue UUID per lever so we can verify it didn't get removed
-     *  during the settling window. */
-    private static final java.util.Map<BlockPos, java.util.UUID> GLUE_UUIDS =
-            new java.util.concurrent.ConcurrentHashMap<>();
-
     private AirshipLiftoffTrigger() {}
 
     /** Diagnostic: capture the exact moment any HoneyGlueEntity is removed from a server
@@ -211,38 +199,12 @@ public final class AirshipLiftoffTrigger {
                     if (!isAirshipLever(level, pos)) {
                         continue;
                     }
-                    // Two-phase: spawn glue first pass, wait 1s, then assemble.
                     // spawnHoneyGlue returns false if the airship's chunk section is
                     // HIDDEN (chunk not yet at ENTITY_TICKING — entity would be added
                     // but invisible to spatial queries). We retry next pass; the player
                     // will eventually get close enough that the chunk gets promoted.
-                    long now = level.getServer().getTickCount();
-                    Long spawnedAt = GLUE_PRESPAWNED.get(pos);
-                    if (spawnedAt == null) {
-                        Rotation rotation = detectRotation(level.getBlockState(pos));
-                        if (!spawnHoneyGlue(level, pos, rotation)) {
-                            continue;
-                        }
-                        GLUE_PRESPAWNED.put(pos, now);
-                        continue;
-                    }
-                    // Track the glue's fate while we wait — if it gets removed
-                    // mid-settling we want to know which tick.
-                    java.util.UUID glueId = GLUE_UUIDS.get(pos);
-                    if (glueId != null) {
-                        net.minecraft.world.entity.Entity glue = level.getEntity(glueId);
-                        if (glue == null) {
-                            MCPirates.LOGGER.warn(
-                                    "glue at {} ({}) DISAPPEARED during settling at tick {}",
-                                    pos, glueId, now);
-                        } else if (glue.isRemoved()) {
-                            MCPirates.LOGGER.warn(
-                                    "glue at {} ({}) marked removed (reason={}) at tick {}",
-                                    pos, glueId, glue.getRemovalReason(), now);
-                        }
-                    }
-                    long waited = now - spawnedAt;
-                    if (waited < GLUE_SETTLE_TICKS) {
+                    Rotation rotation = detectRotation(level.getBlockState(pos));
+                    if (!spawnHoneyGlue(level, pos, rotation)) {
                         continue;
                     }
                     activateLever(level, pos, lever);
@@ -305,23 +267,8 @@ public final class AirshipLiftoffTrigger {
         level.sendBlockUpdated(pos, bs, bs, Block.UPDATE_ALL);
         MCPirates.LOGGER.info("activated airship lever at {} (state -> {})", pos, TARGET_STATE);
 
-        // Step 3: assemble — honey glue was pre-spawned on the previous trigger pass
-        // (see GLUE_PRESPAWNED two-phase activation in checkAroundPlayer).
+        // Step 3: assemble — honey glue was spawned earlier in the same pass.
         BlockPos assemblySeed = pos.relative(connected.getOpposite());
-        AABB probeBox = new AABB(pos).inflate(20);
-        int aabbHits = level.getEntitiesOfClass(HoneyGlueEntity.class, probeBox).size();
-        int allHits = 0;
-        HoneyGlueEntity nearest = null;
-        for (var e : level.getEntities().getAll()) {
-            if (e instanceof HoneyGlueEntity g) {
-                allHits++;
-                if (nearest == null) nearest = g;
-            }
-        }
-        MCPirates.LOGGER.info(
-                "pre-assembly glue: AABB probe={} hits, full iter={} hits, nearest={}",
-                aabbHits, allHits,
-                nearest == null ? "(none)" : (nearest.getId() + " BB=" + nearest.getBoundingBox()));
         AssemblyResult result = AirshipAssembler.assemble(level, assemblySeed);
         if (result == null) {
             MCPirates.LOGGER.warn("ship assembly failed; aborting startup at {}", pos);
@@ -446,7 +393,6 @@ public final class AirshipLiftoffTrigger {
                     leverPos, glue.chunkPosition().x, glue.chunkPosition().z, chunkStatus);
             return false;
         }
-        GLUE_UUIDS.put(leverPos, glue.getUUID());
         MCPirates.LOGGER.info(
                 "spawned runtime honey glue {} (uuid={}) for lever {} (added={}, removed={}, pos={}, chunk=({}, {}), sectionVisibility={}, chunkStatus={})",
                 aabb, glue.getUUID(), leverPos, added, glue.isRemoved(),

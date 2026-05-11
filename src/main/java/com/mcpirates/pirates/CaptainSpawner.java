@@ -87,6 +87,16 @@ public final class CaptainSpawner {
      *  bounty-eligible kills. Format mirrors vanilla scoreboard-tag conventions. */
     public static final String CAPTAIN_TAG = "mcpirates.pirate_captain";
 
+    /** Key into the captain's {@code persistentData} NBT pointing at the airship-anchor
+     *  block position (= the analog-lever world pos before assembly). {@link CaptainDeath}
+     *  reads this on kill to add the right entry to {@link DefeatedAirships}.
+     *
+     *  <p>We can't rely on the captain's own {@code position()} for this — that's a
+     *  plot-local coord inside the SubLevel storage region (~20M block coord), unrelated
+     *  to the outpost's world position. The lever pos is the only stable handle we have
+     *  back to the world location of the outpost. */
+    public static final String ANCHOR_NBT_KEY = "mcpirates.airship_anchor";
+
     /** Feet-Y delta from the lever. 2 blocks below puts the captain on the deck; 2
      *  blocks aft (toward the helm) puts him between the two helm levers, behind the
      *  cannon mount. */
@@ -184,6 +194,12 @@ public final class CaptainSpawner {
         pillager.setItemSlot(EquipmentSlot.MAINHAND, new ItemStack(Items.CROSSBOW));
         pillager.setCustomName(customName);
         pillager.setCustomNameVisible(true);
+        // Stamp the captain's persistentData with its airship's world anchor (the lever
+        // pos before assembly). CaptainDeath reads this on kill to mark the right
+        // airship as defeated in DefeatedAirships. We do this for crewmates too —
+        // harmless (their death isn't watched) and lets us later promote a crewmate to
+        // captain without touching the spawning code.
+        pillager.getPersistentData().putLong(ANCHOR_NBT_KEY, leverWorldPos.asLong());
 
         boolean added = inner.addFreshEntity(pillager);
         // Bind to the SubLevel via the EntityStickExtension API. Must happen AFTER

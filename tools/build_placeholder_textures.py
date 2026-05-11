@@ -4,6 +4,7 @@ build_placeholder_textures.py — emit hand-drawn placeholder PNGs for mcpirates
 Outputs:
     src/main/resources/assets/mcpirates/textures/block/bounty_board.png   (16x16)
     src/main/resources/assets/mcpirates/textures/item/captain_seal.png    (16x16)
+    src/main/resources/assets/mcpirates/textures/item/furled_bounty.png   (16x16)
     src/main/resources/assets/mcpirates/textures/entity/villager/profession/sheriff.png  (64x64)
 
 These are intentionally simple and visually distinct from any vanilla asset so we can
@@ -90,6 +91,51 @@ def make_captain_seal() -> Image.Image:
     return img
 
 
+def make_furled_bounty() -> Image.Image:
+    """16x16 rolled-up parchment scroll with a red wax seal at the centre."""
+    img = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    parchment = (232, 211, 165, 255)
+    parchment_shade = (190, 168, 120, 255)
+    parchment_dark = (148, 124, 80, 255)
+    wax_red = (170, 26, 36, 255)
+    wax_dark = (122, 14, 22, 255)
+
+    # Scroll body: horizontal cylinder centred at y=8, spanning x=1..14.
+    # Top edge (lit) at y=5..6, mid at y=7..10, bottom shade at y=11..12.
+    for x in range(1, 15):
+        d.point((x, 5), fill=parchment_shade)
+        for y in range(6, 11):
+            d.point((x, y), fill=parchment)
+        d.point((x, 11), fill=parchment_shade)
+        d.point((x, 12), fill=parchment_dark)
+
+    # End caps: small darker rolls at x=0 and x=15 hinting at the curl.
+    for y in range(5, 13):
+        d.point((0, y), fill=parchment_dark)
+        d.point((15, y), fill=parchment_dark)
+    # Curl detail at the ends
+    d.point((1, 5), fill=parchment_dark)
+    d.point((1, 12), fill=parchment_dark)
+    d.point((14, 5), fill=parchment_dark)
+    d.point((14, 12), fill=parchment_dark)
+
+    # Red wax seal in the middle to suggest "still sealed / unread".
+    seal_pixels = [
+        (7, 7), (8, 7),
+        (6, 8), (7, 8), (8, 8), (9, 8),
+        (6, 9), (7, 9), (8, 9), (9, 9),
+        (7, 10), (8, 10),
+    ]
+    for p in seal_pixels:
+        d.point(p, fill=wax_red)
+    # Wax highlight to make it pop on the parchment
+    d.point((7, 8), fill=wax_dark)
+    d.point((8, 9), fill=wax_dark)
+
+    return img
+
+
 def make_sheriff_profession() -> Image.Image:
     """
     64x64 villager profession overlay.
@@ -145,6 +191,7 @@ def main() -> None:
     targets = [
         (ASSETS / "block" / "bounty_board.png", make_bounty_board),
         (ASSETS / "item" / "captain_seal.png", make_captain_seal),
+        (ASSETS / "item" / "furled_bounty.png", make_furled_bounty),
         (ASSETS / "entity" / "villager" / "profession" / "sheriff.png", make_sheriff_profession),
     ]
     for path, fn in targets:

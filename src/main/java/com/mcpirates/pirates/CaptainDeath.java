@@ -4,6 +4,8 @@ import com.mcpirates.MCPirates;
 import com.mcpirates.registry.MCPItems;
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.sublevel.SubLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.item.ItemEntity;
@@ -73,12 +75,25 @@ public final class CaptainDeath {
         drop.setDefaultPickUpDelay();
         level.addFreshEntity(drop);
 
-        MCPirates.LOGGER.info(
-                "captain {} died (plot-local={}, world-rendered={}); seal dropped at {} in {}",
-                victim.getUUID(),
-                victim.position(),
-                containing == null ? "(no sublevel)" : dropPos,
-                dropPos,
-                level instanceof ServerLevel sl ? sl.dimension().location() : "(non-server)");
+        // Mark the airship defeated so future bounty-scroll unfurls skip this outpost.
+        // The captain's airship anchor (lever world pos) was stamped on its
+        // persistentData at spawn time — read it back here. If the key's missing the
+        // captain pre-dates the Phase-2 change; skip the marker quietly.
+        CompoundTag data = victim.getPersistentData();
+        if (data.contains(CaptainSpawner.ANCHOR_NBT_KEY) && level instanceof ServerLevel sl) {
+            BlockPos anchor = BlockPos.of(data.getLong(CaptainSpawner.ANCHOR_NBT_KEY));
+            boolean wasNew = DefeatedAirships.get(sl).markDefeated(anchor);
+            MCPirates.LOGGER.info(
+                    "captain {} died; airship anchor {} marked defeated (new={}, total defeated={})",
+                    victim.getUUID(), anchor, wasNew, DefeatedAirships.get(sl).defeatedCount());
+        } else {
+            MCPirates.LOGGER.info(
+                    "captain {} died (plot-local={}, world-rendered={}); seal dropped at {} in {}",
+                    victim.getUUID(),
+                    victim.position(),
+                    containing == null ? "(no sublevel)" : dropPos,
+                    dropPos,
+                    level instanceof ServerLevel sl ? sl.dimension().location() : "(non-server)");
+        }
     }
 }
