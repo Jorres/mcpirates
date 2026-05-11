@@ -1,0 +1,5 @@
+{
+  "variants": {
+    "": { "model": "mcpirates:block/bounty_board" }
+  }
+}

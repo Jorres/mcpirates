@@ -1,7 +1,10 @@
 package com.mcpirates;
 
+import com.mcpirates.registry.MCPBlocks;
 import com.mcpirates.registry.MCPCreativeTabs;
 import com.mcpirates.registry.MCPItems;
+import com.mcpirates.registry.MCPPoiTypes;
+import com.mcpirates.registry.MCPVillagerProfessions;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
@@ -16,7 +19,13 @@ public class MCPirates {
     public MCPirates(IEventBus modBus) {
         LOGGER.info("[{}] initializing", MOD_ID);
 
+        // Registry order: blocks first because MCPItems pulls in block-items, and
+        // MCPPoiTypes references MCPBlocks at register-time. MCPVillagerProfessions
+        // references MCPPoiTypes. Creative tabs last so the iteration finds everything.
+        MCPBlocks.register(modBus);
         MCPItems.register(modBus);
+        MCPPoiTypes.register(modBus);
+        MCPVillagerProfessions.register(modBus);
         MCPCreativeTabs.register(modBus);
     }
 

@@ -1,6 +1,7 @@
 package com.mcpirates.airship;
 
 import com.mcpirates.MCPirates;
+import com.mcpirates.pirates.CaptainSpawner;
 import com.simibubi.create.content.redstone.analogLever.AnalogLeverBlockEntity;
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.sublevel.SubLevel;
@@ -349,6 +350,12 @@ public final class AirshipLiftoffTrigger {
                 rightClutchPos.offset(offset),
                 slCannonMount,
                 shipLocalForward);
+
+        // Step 6: spawn the pirate captain into the SubLevel — see CaptainSpawner for
+        // why this happens after assembly rather than baked into the airship NBT or
+        // spawned in the parent world. The captain's death drops the bounty seal that
+        // the sheriff villager trades for emeralds.
+        CaptainSpawner.spawn(subLevel, pos, offset, rotation);
     }
 
     /** Compute the rotation applied at jigsaw placement by comparing world vs NBT facing. */

@@ -65,8 +65,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @EventBusSubscriber(modid = MCPirates.MOD_ID)
 public final class AirshipBrain {
 
-    /** Disengage if target leaves this radius (horizontal, from airpad anchor). */
-    private static final double DISENGAGE_RANGE_SQ = (12 * 16) * (12 * 16);
+    /** Engage/disengage PURSUE if a target enters/leaves this horizontal radius. Was
+     *  12 chunks (192 blocks = exactly vanilla render distance) — ship started
+     *  pursuing the instant it rendered, which felt sudden. 8 chunks (128 blocks)
+     *  gives roughly 64 blocks of "ship is visible, player can appreciate it" before
+     *  combat engages. */
+    private static final double DISENGAGE_RANGE_SQ = (8 * 16) * (8 * 16);
     /** Considered "at airpad" (HOVER) when within this horizontal range. */
     private static final double HOVER_RADIUS_SQ = 16 * 16;
     /** Per-tick altitude delta below which we count the ship as "not climbing". The
@@ -107,6 +111,22 @@ public final class AirshipBrain {
     private static final int OVERLAY_ACTIONBAR_INTERVAL = 10;
     /** Don't bother sending actionbar to players further than this (blocks). */
     private static final double OVERLAY_RENDER_RADIUS = 200.0;
+
+    /** Cannon aiming is always on so the cannon visually tracks the player during
+     *  PURSUE. Cheap, no projectiles spawned, useful for visual telemetry. */
+    private static final boolean CANNON_AIM_ENABLED = true;
+
+    /** Cannon FIRING is gated behind a runtime toggle (see {@link #setFireEnabled}).
+     *  Defaults to OFF so test sessions aren't interrupted by cannonball spam.
+     *  Flip from chat with {@code /mcpirates fire on|off} (see {@code MCPCommands}). */
+    public static volatile boolean CANNON_FIRE_ENABLED = false;
+
+    /** Runtime setter used by the {@code /mcpirates fire} command. Returns the new
+     *  value so callers can echo it back to the player. */
+    public static boolean setFireEnabled(boolean enabled) {
+        CANNON_FIRE_ENABLED = enabled;
+        return enabled;
+    }
 
     private static final ResourceLocation POWDER_CHARGE_ID =
             ResourceLocation.fromNamespaceAndPath("createbigcannons", "powder_charge");
@@ -196,6 +216,20 @@ public final class AirshipBrain {
                     String.format("%.1f", Math.sqrt(horizDistSq(shipPos, p.airpadAnchor))));
             p.state = desired;
             p.stateEnteredTick = now;
+            // Clutch state-transition handling.
+            //
+            // Bug observed in playtesting: after a long idle (e.g. chunk reload),
+            // the propellers visually keep spinning but stop applying thrust to the
+            // SubLevel — toggling the clutch lever fixed it. The fix is to actively
+            // "kick" the clutches whenever we transition INTO PURSUE (so thrust is
+            // re-evaluated from a known-good state) and to outright disengage them
+            // when entering HOVER (so an idle ship parks deliberately rather than
+            // sitting in some half-engaged stale state).
+            if (desired == State.PURSUE) {
+                kickClutches(p);
+            } else if (desired == State.HOVER) {
+                setBothClutchesDisengaged(p);
+            }
             applyMovement(p, target, shipPos, now);
             p.lastDecisionTick = now;
         } else if (now - p.lastDecisionTick >= DECISION_INTERVAL) {
@@ -203,12 +237,15 @@ public final class AirshipBrain {
             p.lastDecisionTick = now;
         }
 
-        // Cannon: aim + fire only while pursuing.
-        if (p.state == State.PURSUE && target != null) {
+        // Cannon: aim is always on so the barrel visibly tracks the player; firing
+        // is gated on the runtime CANNON_FIRE_ENABLED toggle so test sessions
+        // aren't interrupted by cannonballs unless explicitly armed via
+        // `/mcpirates fire on`.
+        if (CANNON_AIM_ENABLED && p.state == State.PURSUE && target != null) {
             if (now % AIM_INTERVAL == 0) {
                 aimCannon(p, target);
             }
-            if (now - p.lastFireTick >= FIRE_INTERVAL_TICKS) {
+            if (CANNON_FIRE_ENABLED && now - p.lastFireTick >= FIRE_INTERVAL_TICKS) {
                 if (fireCannon(p)) {
                     p.lastFireTick = now;
                 }
@@ -406,7 +443,14 @@ public final class AirshipBrain {
      * </ul>
      */
     private static final double PURSUE_ALT_OFFSET = 12.0;
-    private static final double MIN_ALT_ABOVE_GROUND = 10.0;
+    /** Hard floor: ship's throttle is forced to 15 whenever it's within this many
+     *  blocks of the heightmap below/ahead. Prevents the "lands on grass and can't
+     *  take off again" case AND the "ship dives into a ravine because the player is
+     *  on its floor" case. Bumped 10→30 (session 2026-05-11): at 10 a player walking
+     *  in flat terrain could still pull the ship down to ~12 blocks above ground —
+     *  the ship looked grounded rather than airborne, and the cannon's firing arc
+     *  was effectively cut off. 30 keeps the ship visibly an airship. */
+    private static final double MIN_ALT_ABOVE_GROUND = 30.0;
     /** Equilibrium throttle — guess; PD control trims around this. */
     private static final int THROTTLE_HOVER = 9;
     /** Proportional gain: throttle units per block of altitude error. 0.3 means a
@@ -539,28 +583,36 @@ public final class AirshipBrain {
         if (!(subLevelLevel.getBlockEntity(p.slCannonMount) instanceof CannonMountBlockEntity mount)) {
             return;
         }
-        // CBC stores the cannon's yaw in absolute MC world yaw (the mount BE is
-        // initialized from its blockstate's HORIZONTAL_FACING.toYRot()), so we
-        // must compute the aim in WORLD frame — not SubLevel-local. Going through
-        // logicalPose().transformPositionInverse(target) gives SL-local coords
-        // and matches CBC's stored yaw only when the SubLevel hasn't rotated;
-        // once the ship turns during PURSUE→RETURN→PURSUE, the SL-local yaw
-        // accumulates a shipPose offset and the cannon mis-aims.
-        Vector3d cannonLocal = new Vector3d(
-                p.slCannonMount.getX() + 0.5,
-                p.slCannonMount.getY() + 0.5,
-                p.slCannonMount.getZ() + 0.5);
+        // The cannon contraption renders with the SubLevel's orientation applied on
+        // top of the mount BE's stored yaw — i.e., visual_yaw = shipPoseYaw + cannonYaw.
+        // So to aim the cannon at a world-frame target we have to feed the BE a
+        // SHIP-LOCAL yaw/pitch (the direction to the target *expressed in the ship's
+        // own frame*), not a world-frame yaw.
+        //
+        // Earlier we tried world-frame and it visibly drifted as the ship rotated
+        // (rendered yaw = ship_yaw + world_aim_yaw, double-counting the ship rotation).
+        // SubLevel-local is the correct frame — the comment that "SL-local accumulates
+        // shipPose offset" was wrong; the accumulation came from feeding world-frame
+        // values to a BE whose render already applies the ship pose.
         Vec3 cannonWorldV = p.subLevel.logicalPose().transformPosition(
-                new Vec3(cannonLocal.x, cannonLocal.y, cannonLocal.z));
+                new Vec3(p.slCannonMount.getX() + 0.5,
+                        p.slCannonMount.getY() + 0.5,
+                        p.slCannonMount.getZ() + 0.5));
 
-        double dx = target.getX() - cannonWorldV.x;
-        double dy = target.getEyeY() - cannonWorldV.y;
-        double dz = target.getZ() - cannonWorldV.z;
-        double horiz = Math.sqrt(dx * dx + dz * dz);
-        float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
-        // Create Big Cannons treats positive pitch as "barrel up" (opposite of vanilla),
-        // so we don't negate atan2 here.
-        float pitch = (float) Math.toDegrees(Math.atan2(dy, horiz));
+        // World-frame direction from cannon to target's eye.
+        Vector3d worldDir = new Vector3d(
+                target.getX() - cannonWorldV.x,
+                target.getEyeY() - cannonWorldV.y,
+                target.getZ() - cannonWorldV.z);
+        // Rotate that direction *into ship-local frame*. Use inverse of the ship's
+        // orientation (orientation is a unit quaternion; transformInverse handles it).
+        Vector3d localDir = p.subLevel.logicalPose().orientation()
+                .transformInverse(worldDir, new Vector3d());
+
+        double horiz = Math.sqrt(localDir.x * localDir.x + localDir.z * localDir.z);
+        float yaw = (float) Math.toDegrees(Math.atan2(-localDir.x, localDir.z));
+        // CBC treats positive pitch as "barrel up" (opposite of vanilla), so no negate.
+        float pitch = (float) Math.toDegrees(Math.atan2(localDir.y, horiz));
         mount.setYaw(yaw);
         mount.setPitch(pitch);
 
@@ -703,6 +755,32 @@ public final class AirshipBrain {
         Direction connected = leverConnectedDirection(bs);
         level.updateNeighborsAt(pos.relative(connected.getOpposite()), block);
         level.sendBlockUpdated(pos, bs, bs, Block.UPDATE_ALL);
+    }
+
+    /**
+     * Force both clutches to DISENGAGED (lever powered=true). Called when entering
+     * HOVER so the airship parks with propellers idle rather than sitting in a
+     * half-engaged state that Aeronautics might not re-evaluate.
+     */
+    private static void setBothClutchesDisengaged(Pirate p) {
+        Level subLevelLevel = p.subLevel.getLevel();
+        setLeverPowered(subLevelLevel, p.slLeftClutchLever, /*powered=disengaged=*/true);
+        setLeverPowered(subLevelLevel, p.slRightClutchLever, /*powered=disengaged=*/true);
+    }
+
+    /**
+     * "Kick" both clutches by forcing them DISENGAGED right now. Normal
+     * {@link #applyMovement} will re-engage on the next decision tick (≤ {@link #DECISION_INTERVAL}
+     * ticks away), and the off→on transition reliably refreshes Aeronautics'
+     * thrust contribution from the propellers. Observed in playtesting that after
+     * an idle chunk reload the propellers can be visually spinning but applying
+     * zero thrust until the clutch is toggled — this is the same toggle.
+     *
+     * <p>Cheaper than a full off→sleep→on sequence; one tick's worth of "no thrust"
+     * is invisible to the player.
+     */
+    private static void kickClutches(Pirate p) {
+        setBothClutchesDisengaged(p);
     }
 
     /** Toggle a vanilla lever's POWERED state, with the proper neighbour updates so adjacent

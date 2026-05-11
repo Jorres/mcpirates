@@ -1,4 +1,12 @@
 {
   "itemGroup.mcpirates": "MC Pirates",
-  "mcpirates.airship.tag": "Pillager Airship"
+  "mcpirates.airship.tag": "Pillager Airship",
+
+  "block.mcpirates.bounty_board": "Bounty Board",
+  "item.mcpirates.captain_seal": "Captain's Seal",
+
+  "entity.minecraft.villager.sheriff": "Sheriff",
+  "mcpirates.entity.pirate_captain": "Pirate Captain",
+
+  "pirate_bounty": "Pirate Bounty Map"
 }
