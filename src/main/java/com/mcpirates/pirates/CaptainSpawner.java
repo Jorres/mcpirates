@@ -1,6 +1,7 @@
 package com.mcpirates.pirates;
 
 import com.mcpirates.MCPirates;
+import com.mcpirates.util.FunnyNames;
 import dev.ryanhcode.sable.mixinterface.entity.entities_stick_sublevels.EntityStickExtension;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.core.BlockPos;
@@ -123,7 +124,7 @@ public final class CaptainSpawner {
                 inner, subLevel, leverWorldPos, assemblyOffset, rotation,
                 CAPTAIN_DELTA,
                 /*tag=*/CAPTAIN_TAG,
-                /*customName=*/Component.translatable("mcpirates.entity.pirate_captain"),
+                /*customName=*/Component.literal(FunnyNames.nextPirateCaptainName(inner.getRandom())),
                 /*role=*/"captain");
         if (captain != null) anchors.add(captain);
 

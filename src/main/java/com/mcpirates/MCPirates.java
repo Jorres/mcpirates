@@ -1,13 +1,16 @@
 package com.mcpirates;
 
 import com.mcpirates.registry.MCPBlocks;
+import com.mcpirates.command.OutpostCommands;
 import com.mcpirates.registry.MCPCreativeTabs;
 import com.mcpirates.registry.MCPItems;
 import com.mcpirates.registry.MCPPoiTypes;
 import com.mcpirates.registry.MCPVillagerProfessions;
+import com.mcpirates.village.SheriffNameAssigner;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.neoforge.common.NeoForge;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,6 +30,9 @@ public class MCPirates {
         MCPPoiTypes.register(modBus);
         MCPVillagerProfessions.register(modBus);
         MCPCreativeTabs.register(modBus);
+
+        NeoForge.EVENT_BUS.addListener(OutpostCommands::onRegisterCommands);
+        NeoForge.EVENT_BUS.addListener(SheriffNameAssigner::onEntityJoinLevel);
     }
 
     public static ResourceLocation id(String path) {
