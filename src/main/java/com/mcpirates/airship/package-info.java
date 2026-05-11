@@ -1,6 +1,12 @@
 /**
- * Airship templates and the spawn logic that lifts a pillager airship off an outpost when a
- * player approaches. Implementation will live alongside Aeronautics' contraption / sable
- * physics-structure entry points; see docs/design.md.
+ * Airship runtime: discovers dormant ships at outposts, lifts them into a Sable
+ * SubLevel via {@link com.mcpirates.airship.AirshipAssembler}, then ticks the
+ * state machine + movement controller in {@link com.mcpirates.airship.AirshipBrain}.
+ *
+ * <p>The parked-ship structure NBT itself lives under
+ * {@code resources/data/mcpirates/structure/airship_small.nbt} and is wired into
+ * worldgen via the {@code base_plate_with_airship} pool override (see the {@code
+ * data/minecraft/worldgen/template_pool/pillager_outpost/base_plates.json}
+ * datapack-side override). All of this is documented in {@code docs/decisions.md}.
  */
 package com.mcpirates.airship;

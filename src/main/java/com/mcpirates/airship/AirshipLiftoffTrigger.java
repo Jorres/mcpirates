@@ -139,20 +139,6 @@ public final class AirshipLiftoffTrigger {
 
     private AirshipLiftoffTrigger() {}
 
-    /** Diagnostic: capture the exact moment any HoneyGlueEntity is removed from a server
-     *  level, with stack trace and reason. Helps identify what's killing the runtime
-     *  glue we spawn. Trigger fires for ALL HoneyGlueEntity removals, not just ours. */
-    @SubscribeEvent
-    public static void onEntityLeave(net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent event) {
-        if (!(event.getEntity() instanceof HoneyGlueEntity glue)) return;
-        if (event.getLevel().isClientSide()) return;
-        Throwable trace = new Throwable("removal trace");
-        MCPirates.LOGGER.warn(
-                "HoneyGlueEntity {} LEFT level: removed={} reason={} pos={} BB={}",
-                glue.getUUID(), glue.isRemoved(), glue.getRemovalReason(),
-                glue.position(), glue.getBoundingBox(), trace);
-    }
-
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
         if (event.getServer().getTickCount() % TICK_INTERVAL != 0) {

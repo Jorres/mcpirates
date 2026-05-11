@@ -1,5 +1,6 @@
 package com.mcpirates.pirates;
 
+import com.mcpirates.MCPDataKeys;
 import com.mcpirates.MCPirates;
 import com.mcpirates.registry.MCPItems;
 import dev.ryanhcode.sable.Sable;
@@ -53,7 +54,7 @@ public final class CaptainDeath {
     @SubscribeEvent
     public static void onLivingDeath(LivingDeathEvent event) {
         LivingEntity victim = event.getEntity();
-        if (!victim.getTags().contains(CaptainSpawner.CAPTAIN_TAG)) {
+        if (!victim.getTags().contains(MCPDataKeys.CAPTAIN_TAG)) {
             return;
         }
         Level level = victim.level();
@@ -80,8 +81,8 @@ public final class CaptainDeath {
         // persistentData at spawn time — read it back here. If the key's missing the
         // captain pre-dates the Phase-2 change; skip the marker quietly.
         CompoundTag data = victim.getPersistentData();
-        if (data.contains(CaptainSpawner.ANCHOR_NBT_KEY) && level instanceof ServerLevel sl) {
-            BlockPos anchor = BlockPos.of(data.getLong(CaptainSpawner.ANCHOR_NBT_KEY));
+        if (data.contains(MCPDataKeys.CAPTAIN_ANCHOR_NBT_KEY) && level instanceof ServerLevel sl) {
+            BlockPos anchor = BlockPos.of(data.getLong(MCPDataKeys.CAPTAIN_ANCHOR_NBT_KEY));
             boolean wasNew = DefeatedAirships.get(sl).markDefeated(anchor);
             MCPirates.LOGGER.info(
                     "captain {} died; airship anchor {} marked defeated (new={}, total defeated={})",

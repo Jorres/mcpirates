@@ -2,54 +2,76 @@
 
 ## Goal
 
-Pillager outposts spawn an airship parked nearby. When a player gets close, the airship lifts
-off, and some "air combat" plays out (pillagers shoot crossbows at the player, the airship
-maneuvers, etc.). No procedural generation — a small set of premade ship designs.
+Pillager outposts spawn a pre-built pirate airship next to the watchtower. When a player
+approaches, the airship lifts off into a Sable SubLevel and engages — orbits the player at
+range, fires its Create Big Cannons cannon, breaks contact and returns to its airpad when
+the player leaves. Killing the captain on board marks that ship "defeated" so the bounty
+system can hand out a different target next time.
 
-## High-level architecture
+Villages additionally get a sheriff station injected into the residential ring (vanilla,
+CTOV, T&T pools). The sheriff villager sells *furled bounty scrolls*; right-clicking a
+scroll resolves it to a treasure map pointing at the nearest still-undefeated airship.
+
+## Architecture (as built, see `decisions.md` for the change history)
 
 ```
-World gen / outpost hook
-        │
-        ▼
-Airship template loader  ─── reads premade NBT structures (one per ship design)
-        │
-        ▼
-Spawn manager  ─── places template blocks at the outpost on first chunk load
-        │
-        ▼
-Proximity trigger  ─── detects player within radius, lifts ship via Aeronautics contraption
-        │
-        ▼
-AI / combat behavior  ─── pillagers spawned aboard, ship moves with simple waypoints
+Worldgen
+├─ data/minecraft/worldgen/template_pool/pillager_outpost/base_plates.json
+│    overridden by mcpirates to always use base_plate_with_airship → 100 %
+│    of outposts carry a parked airship on a stone-brick pad.
+├─ data/mcpirates/structure/airship_small.nbt
+│    the parked ship (envelope, helm, cannon mount, propellers, beds).
+└─ data/mcpirates/lithostitched/worldgen_modifier/sheriff_station_{vanilla,ctov,kaisyn}.json
+     inject mcpirates:sheriff_station into the village house pools of vanilla
+     biomes, CTOV's house pools, and T&T's kaisyn house pools respectively.
+
+Runtime
+├─ AirshipLiftoffTrigger (server tick)
+│    scans loaded chunks for dormant analog levers near players, spawns the
+│    honey-glue bounding entity, calls AirshipAssembler.
+├─ AirshipAssembler
+│    wraps SimAssemblyHelper.assembleFromSingleBlock — yields a Sable SubLevel
+│    holding the ship's blocks at "plot" coords; world-rendered pos comes from
+│    subLevel.logicalPose().transformPosition().
+├─ CaptainSpawner
+│    spawns one tagged pillager (the captain) + one crewmate into the SubLevel,
+│    anchored to ride the ship's pose via Sable's sable$setPlotPosition.
+├─ AirshipBrain (server tick, per registered ship)
+│    state machine LIFTOFF → PURSUE → RETURN → HOVER. Tank-steers the propellers
+│    via clutch levers, throttles the burner via the analog lever, aims the
+│    cannon at the player. Re-acquires its SubLevel by UUID each tick so
+│    chunk unload/reload doesn't strand it. Re-anchors captain + crewmate each
+│    tick because Sable's plot-position field isn't persisted to entity NBT.
+├─ CaptainDeath (LivingDeathEvent)
+│    drops the captain_seal at world-rendered coords; marks the ship's airpad
+│    anchor in the DefeatedAirships SavedData.
+├─ SheriffTrades (VillagerTradesEvent)
+│    registers seal → emeralds + emeralds → furled_bounty trades on the
+│    mcpirates:sheriff profession.
+├─ FurledBountyItem.use
+│    server-side: locate nearest pirate_outpost via findNearestMapStructure,
+│    skip outposts in DefeatedAirships (perturb origin + retry up to N times),
+│    swap the scroll in hand for a filled bounty map.
+└─ SheriffLifetimeCap (TradeWithVillagerEvent + EntityTickEvent)
+     caps each sheriff to 5 lifetime scroll sales; re-pegs the offer to
+     out-of-stock every 100 ticks once the cap is reached, surviving restocks.
 ```
 
-## Open questions
+## Non-goals (v0.x)
 
-1. **How do we lift a static block structure into a moving Aeronautics contraption at runtime?**
-   Aeronautics builds contraptions from assembled block clusters; we need to figure out the
-   right entry point. Candidates to investigate in the cloned source:
-   - `dev.eriksonn.aeronautics.contraption.*` (look for assembly / take-off logic)
-   - Sable physics-structure entry: `dev.ryanhcode.sable.*` for the moving body itself
-   - Create's `Contraption.assemble()` flow as a reference pattern.
+- No procedural ship generation — premade NBT only.
+- No multiplayer-tuned netcode beyond what Sable / Create already provide.
+- No new pillager mob types — captain is a tagged vanilla `Pillager` with
+  `NoAi=true`, anchored to the deck via Sable's plot-position mechanism.
+- No loot tables on the ship (boarding is not the intended interaction; bounty
+  maps are the gameplay-aligned reward path).
 
-2. **Where do we hook outpost spawning?**
-   Two options:
-   - Add a structure piece to the vanilla `pillager_outpost` template pool via datapack.
-   - Listen on `ServerLevel` chunk-load / structure-start events and post-process.
-   The datapack approach is more idiomatic but constrains us to placing the *parked* ship as
-   blocks; the post-process approach gives more control over what becomes a contraption vs.
-   what stays as scenery.
+## Outstanding gameplay knobs
 
-3. **Premade ship designs** will live in `data/mcpirates/structures/airships/*.nbt` (vanilla
-   structure NBT format). Plan: 2–3 designs to start (small scout, medium gunship).
-
-4. **AI**: keep it dumb. Pillagers riding the ship use vanilla AI to shoot. The ship itself
-   just translates toward the player at low speed and rotates to keep broadside facing them.
-
-## Non-goals (for v0.1)
-
-- No procedural ship generation
-- No multiplayer-tuned netcode beyond what Aeronautics already provides
-- No new pillager mob types
-- No loot tables on the ship (yet)
+- Re-enable the "player must be on a SubLevel" filter in
+  `AirshipLiftoffTrigger.checkAroundPlayer` + `AirshipBrain.findEnemyPlayerOnAirship`
+  (both currently disabled for creative testing).
+- Phase 4: spent bounty trades should disappear from the trade GUI entirely,
+  not just grey out as out-of-stock.
+- Real textures (currently programmatic placeholders for captain_seal,
+  furled_bounty, bounty_board, sheriff overlay).

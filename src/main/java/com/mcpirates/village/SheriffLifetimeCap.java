@@ -1,5 +1,6 @@
 package com.mcpirates.village;
 
+import com.mcpirates.MCPDataKeys;
 import com.mcpirates.MCPirates;
 import com.mcpirates.registry.MCPItems;
 import com.mcpirates.registry.MCPVillagerProfessions;
@@ -34,8 +35,8 @@ import net.neoforged.neoforge.event.tick.EntityTickEvent;
 @EventBusSubscriber(modid = MCPirates.MOD_ID)
 public final class SheriffLifetimeCap {
 
-    /** NBT key on the sheriff's persistentData. Counts cumulative bounty-scroll sales. */
-    public static final String SOLD_COUNTER_KEY = "mcpirates.bounty_scrolls_sold";
+    // NBT counter key lives in {@link MCPDataKeys#SHERIFF_SCROLLS_SOLD_NBT_KEY}.
+
     /** How many scrolls a single sheriff is allowed to sell in his entire lifetime. */
     public static final int LIFETIME_CAP = 5;
     /** Re-pegging is idempotent; running it once a second is plenty. */
@@ -52,8 +53,8 @@ public final class SheriffLifetimeCap {
         if (!offer.getResult().is(MCPItems.FURLED_BOUNTY.get())) return;
 
         CompoundTag data = villager.getPersistentData();
-        int sold = data.getInt(SOLD_COUNTER_KEY) + 1;
-        data.putInt(SOLD_COUNTER_KEY, sold);
+        int sold = data.getInt(MCPDataKeys.SHERIFF_SCROLLS_SOLD_NBT_KEY) + 1;
+        data.putInt(MCPDataKeys.SHERIFF_SCROLLS_SOLD_NBT_KEY, sold);
 
         if (sold >= LIFETIME_CAP) {
             // Lock the offer immediately — don't wait for the next enforcement tick.
@@ -77,7 +78,7 @@ public final class SheriffLifetimeCap {
         if (villager.tickCount % ENFORCEMENT_PERIOD_TICKS != 0) return;
         if (villager.getVillagerData().getProfession() != MCPVillagerProfessions.SHERIFF.get()) return;
 
-        int sold = villager.getPersistentData().getInt(SOLD_COUNTER_KEY);
+        int sold = villager.getPersistentData().getInt(MCPDataKeys.SHERIFF_SCROLLS_SOLD_NBT_KEY);
         if (sold < LIFETIME_CAP) return;
 
         // Cap reached — make sure all FURLED_BOUNTY offers in his trade list are

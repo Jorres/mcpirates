@@ -1,5 +1,6 @@
 package com.mcpirates.pirates;
 
+import com.mcpirates.MCPDataKeys;
 import com.mcpirates.MCPirates;
 import com.mcpirates.util.FunnyNames;
 import dev.ryanhcode.sable.mixinterface.entity.entities_stick_sublevels.EntityStickExtension;
@@ -60,7 +61,7 @@ import java.util.UUID;
  * <h2>Tag, not custom entity type</h2>
  *
  * <p>The captain is a vanilla {@link Pillager} with a single string tag,
- * {@link #CAPTAIN_TAG}. {@link CaptainDeath} listens on {@code LivingDeathEvent} and
+ * {@link MCPDataKeys#CAPTAIN_TAG}. {@link CaptainDeath} listens on {@code LivingDeathEvent} and
  * checks for the tag to decide whether to drop a seal. No new entity type is registered —
  * the alternative would have been a full {@code EntityType} + model + texture pipeline,
  * a significant chunk of v0.2+ work.
@@ -83,19 +84,7 @@ public final class CaptainSpawner {
      */
     public record AnchoredEntity(UUID uuid, Vec3 plotPos, String role) {}
 
-    /** Marker tag on the pillager entity. {@link CaptainDeath} checks this to identify
-     *  bounty-eligible kills. Format mirrors vanilla scoreboard-tag conventions. */
-    public static final String CAPTAIN_TAG = "mcpirates.pirate_captain";
-
-    /** Key into the captain's {@code persistentData} NBT pointing at the airship-anchor
-     *  block position (= the analog-lever world pos before assembly). {@link CaptainDeath}
-     *  reads this on kill to add the right entry to {@link DefeatedAirships}.
-     *
-     *  <p>We can't rely on the captain's own {@code position()} for this — that's a
-     *  plot-local coord inside the SubLevel storage region (~20M block coord), unrelated
-     *  to the outpost's world position. The lever pos is the only stable handle we have
-     *  back to the world location of the outpost. */
-    public static final String ANCHOR_NBT_KEY = "mcpirates.airship_anchor";
+    // Captain tag + airship-anchor NBT key live in {@link MCPDataKeys}.
 
     /** Feet-Y delta from the lever. 2 blocks below puts the captain on the deck; 2
      *  blocks aft (toward the helm) puts him between the two helm levers, behind the
@@ -133,7 +122,7 @@ public final class CaptainSpawner {
         AnchoredEntity captain = spawnAnchoredPillager(
                 inner, subLevel, leverWorldPos, assemblyOffset, rotation,
                 CAPTAIN_DELTA,
-                /*tag=*/CAPTAIN_TAG,
+                /*tag=*/MCPDataKeys.CAPTAIN_TAG,
                 /*customName=*/Component.literal(FunnyNames.nextPirateCaptainName(inner.getRandom())),
                 /*role=*/"captain");
         if (captain != null) anchors.add(captain);
@@ -153,8 +142,8 @@ public final class CaptainSpawner {
      * Spawn a single anchored pillager onto the airship's deck.
      *
      * @param tag        scoreboard-style tag to add (or null for "no marker"). Captain
-     *                   gets {@link #CAPTAIN_TAG} for {@link CaptainDeath} to find on
-     *                   death; crewmate gets no tag so it drops nothing special.
+     *                   gets {@link MCPDataKeys#CAPTAIN_TAG} for {@link CaptainDeath} to
+     *                   find on death; crewmate gets no tag so it drops nothing special.
      * @param customName name shown above the pillager.
      * @param role       short string used in the spawn log to tell captain/crew apart.
      */
@@ -199,7 +188,7 @@ public final class CaptainSpawner {
         // airship as defeated in DefeatedAirships. We do this for crewmates too —
         // harmless (their death isn't watched) and lets us later promote a crewmate to
         // captain without touching the spawning code.
-        pillager.getPersistentData().putLong(ANCHOR_NBT_KEY, leverWorldPos.asLong());
+        pillager.getPersistentData().putLong(MCPDataKeys.CAPTAIN_ANCHOR_NBT_KEY, leverWorldPos.asLong());
 
         boolean added = inner.addFreshEntity(pillager);
         // Bind to the SubLevel via the EntityStickExtension API. Must happen AFTER

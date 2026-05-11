@@ -1,4 +1,5 @@
 {
+  "_comment": "Tells Sable not to evict our captain/crewmate pillagers when its various 'entity in a SubLevel that shouldn't be' code paths fire (ServerLevel.shouldDiscardEntity mixin, SubLevelEntityCollision tracking, etc.). Without this, the pillagers we addFreshEntity into the SubLevel would be kicked back into world space and lose their plot-anchor link. This tag is INDEPENDENT of sable$setPlotPosition — the plot-position field makes the entity follow the ship's pose; this tag makes Sable leave it inside the SubLevel in the first place. Both are required to anchor an entity to an airship.",
   "replace": false,
   "values": [
     "minecraft:pillager"

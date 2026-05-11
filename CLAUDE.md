@@ -29,6 +29,11 @@ user to start it.
   `.minecraft`. Never write outside `mcpirates/`.
 - **Pinned versions:** see `gradle.properties`. NeoForge **21.1.228**,
   Lithostitched **1.7.0** (NOT 1.7.3 — crashes Create's Registrate).
-- **NBT regen:** running `tools/build_outpost_pieces.py` against the committed
-  `airship_small.nbt` re-wraps it. Pass `--airship` pointing at a fresh
-  structure-block save, or don't re-run.
+- **NBT regen:** the structure-import scripts read from the saved-world
+  `generated/minecraft/structures/<name>.nbt` and write to the resources tree.
+  - `tools/build_outpost_pieces.py` (airship/outpost base plate) — running
+    against the *committed* `airship_small.nbt` re-wraps it (not idempotent).
+    Pass `--airship` pointing at a fresh structure-block save instead.
+  - `tools/import_sheriff_station.py` (sheriff station building) — idempotent
+    (strips existing jigsaws before stamping). Override entrance via
+    `--jigsaw-pos X Y Z --jigsaw-orientation <face>_up` when the layout changes.

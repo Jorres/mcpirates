@@ -1,7 +1,6 @@
 package com.mcpirates;
 
 import com.mcpirates.registry.MCPBlocks;
-import com.mcpirates.command.OutpostCommands;
 import com.mcpirates.registry.MCPCreativeTabs;
 import com.mcpirates.registry.MCPItems;
 import com.mcpirates.registry.MCPPoiTypes;
@@ -31,7 +30,10 @@ public class MCPirates {
         MCPVillagerProfessions.register(modBus);
         MCPCreativeTabs.register(modBus);
 
-        NeoForge.EVENT_BUS.addListener(OutpostCommands::onRegisterCommands);
+        // SheriffNameAssigner uses a plain listener instead of @EventBusSubscriber
+        // because it doesn't have a register-event entry point of its own — the
+        // EntityJoinLevelEvent listener IS the whole class. Adding it manually keeps
+        // the class itself dependency-free of NeoForge annotations.
         NeoForge.EVENT_BUS.addListener(SheriffNameAssigner::onEntityJoinLevel);
     }
 
