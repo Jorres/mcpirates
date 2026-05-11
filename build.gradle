@@ -27,12 +27,7 @@ repositories {
     // Sable
     maven { url = 'https://maven.ryanhcode.dev/releases' }
 
-    // Aeronautics-bundled (no public dev maven yet) — drop the bundled jar in libs/
-    flatDir {
-        dirs 'libs'
-    }
-
-    // Modrinth, used as a fallback for any deps that publish there
+    // Modrinth, used for Create Big Cannons and Create Aeronautics
     exclusiveContent {
         forRepository {
             maven {
@@ -44,6 +39,32 @@ repositories {
             includeGroup 'maven.modrinth'
         }
     }
+}
+
+configurations {
+    aeronauticsBundled {
+        canBeResolved = true
+        canBeConsumed = false
+        transitive = false
+    }
+}
+
+def aeronauticsArtifact = "maven.modrinth:create-aeronautics:YhZLrAFC"
+def extractedAeronauticsJarJarDir = layout.buildDirectory.dir("extracted/aeronautics-jarjar")
+
+tasks.register("extractAeronauticsJarJar", Copy) {
+    from {
+        configurations.aeronauticsBundled.collect { zipTree(it) }
+    }
+
+    include "META-INF/jarjar/*.jar"
+
+    eachFile { details ->
+        details.path = details.name
+    }
+
+    includeEmptyDirs = false
+    into extractedAeronauticsJarJarDir
 }
 
 neoForge {
@@ -90,9 +111,24 @@ neoForge {
 
 dependencies {
     // Create + ecosystem (matched to Aeronautics 1.2.1)
-    implementation("com.simibubi.create:create-${minecraft_version}:${create_version}") { transitive = false }
+    implementation("com.simibubi.create:create-${minecraft_version}:${create_version}") {
+        transitive = false
+    }
+
     implementation("net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}")
     implementation("dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}")
+
+    // Create Big Cannons
+    implementation "maven.modrinth:create-big-cannons:bsGaXKEd" // 5.11.3+mc1.21.1
+
+    implementation "maven.modrinth:lithostitched:29zrKXCQ" // v1.7.0 ~ Neoforge 21.1
+
+    implementation "maven.modrinth:rpl:hZ6B2Z0x" // 2.1.2+mc.1.21.1
+
+    // Create Aeronautics bundled jar
+    aeronauticsBundled aeronauticsArtifact
+    implementation aeronauticsArtifact // 1.2.1+mc1.21.1
+
     compileOnly("dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:${flywheel_version}")
     compileOnly("com.tterrag.registrate:Registrate:${registrate_version}")
 
@@ -102,14 +138,17 @@ dependencies {
         exclude group: 'com.tterrag.registrate'
     }
 
-    // Create Aeronautics — see docs/dependencies.md for how to obtain the jar.
-    // Drop create-aeronautics-bundled-1.21.1-X.X.X.jar (or the dev jar) into libs/ and it
-    // will be picked up by the flatDir repo above.
-    compileOnly fileTree(dir: 'libs', include: ['*.jar'])
-    // simulated-neoforge-*.jar is extracted from the bundled aeronautics jar via NeoForge
-    // JarJar at runtime — including it on the runtimeOnly classpath would register the
-    // 'simulated' mod twice and fail mod loading. Compile against it only.
-    runtimeOnly fileTree(dir: 'libs', include: ['*.jar'], exclude: ['simulated-neoforge-*.jar'])
+    // JarJar dependencies embedded inside Create Aeronautics.
+    //
+    // Needed for compile-time access to packages like:
+    // dev.simulated_team.simulated.*
+    //
+    // Do NOT add these to runtimeOnly: Aeronautics already carries them in META-INF/jarjar,
+    // and NeoForge JarJar should load them at runtime.
+    compileOnly fileTree(
+            dir: extractedAeronauticsJarJarDir,
+            include: ['*.jar']
+    )
 }
 
 var generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
@@ -131,6 +170,7 @@ var generateModMetadata = tasks.register('generateModMetadata', ProcessResources
             lithostitched_mod_version    : lithostitched_mod_version,
             cbc_mod_version              : cbc_mod_version
     ]
+
     inputs.properties(replaceProperties)
     expand replaceProperties
     from 'src/main/templates'
@@ -141,6 +181,11 @@ sourceSets.main.resources.srcDir generateModMetadata
 sourceSets.main.resources.srcDir 'src/generated/resources'
 
 neoForge.ideSyncTask generateModMetadata
+neoForge.ideSyncTask tasks.named("extractAeronauticsJarJar")
+
+tasks.named("compileJava") {
+    dependsOn tasks.named("extractAeronauticsJarJar")
+}
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
