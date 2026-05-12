@@ -1,0 +1,16 @@
+{
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 7341812,
+    "spacing": 64,
+    "separation": 32,
+    "frequency": 0.4,
+    "frequency_reduction_method": "default"
+  },
+  "structures": [
+    {
+      "structure": "mcpirates:pirate_galleon",
+      "weight": 1
+    }
+  ]
+}

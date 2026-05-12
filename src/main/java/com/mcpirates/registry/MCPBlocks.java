@@ -1,12 +1,14 @@
 package com.mcpirates.registry;
 
 import com.mcpirates.MCPirates;
+import com.mcpirates.airship.anchor.MCPShipAnchorBlock;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.material.MapColor;
+import net.minecraft.world.level.material.PushReaction;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.registries.DeferredBlock;
 import net.neoforged.neoforge.registries.DeferredRegister;
@@ -30,6 +32,21 @@ public final class MCPBlocks {
                     .mapColor(MapColor.WOOD)
                     .strength(1.5f, 6.0f)
                     .sound(SoundType.WOOD));
+
+    /** Invisible metadata block baked into every airship's structure NBT by
+     *  {@code tools/build_ships.py}. Holds the kind name in its BE so the lift-off
+     *  trigger doesn't have to geometrically guess which ship a lever belongs to.
+     *  See {@link com.mcpirates.airship.anchor.MCPShipAnchorBlock} for the visual /
+     *  physical properties (no model, no collision, unbreakable). */
+    public static final DeferredBlock<Block> SHIP_ANCHOR = BLOCKS.register(
+            "ship_anchor",
+            () -> new MCPShipAnchorBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.NONE)
+                    .strength(-1.0F, 3600000.0F)
+                    .noOcclusion()
+                    .noLootTable()
+                    .noTerrainParticles()
+                    .pushReaction(PushReaction.BLOCK)));
 
     private MCPBlocks() {}
 

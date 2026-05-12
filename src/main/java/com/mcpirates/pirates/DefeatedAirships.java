@@ -42,6 +42,12 @@ public final class DefeatedAirships extends SavedData {
 
     /** All known defeated-ship anchor positions in this level. */
     private final Set<BlockPos> anchors = new HashSet<>();
+    /** Global counter of bounty scrolls unfurled in this level. Bumped by
+     *  {@link com.mcpirates.village.FurledBountyItem} on every successful resolve so it
+     *  can decide when to spawn a boss (galleon) instead of pointing at a regular
+     *  outpost. World-scoped (one counter per dimension); per-player tracking would
+     *  require fanout to player NBT but the gameplay loop doesn't need it. */
+    private int scrollsUnfurled = 0;
 
     public static DefeatedAirships get(ServerLevel level) {
         return level.getDataStorage().computeIfAbsent(
@@ -57,6 +63,17 @@ public final class DefeatedAirships extends SavedData {
 
     public int defeatedCount() {
         return this.anchors.size();
+    }
+
+    /** Increment and return the new value (1-based: returns 1 the first time it's called). */
+    public int incrementScrollsUnfurled() {
+        this.scrollsUnfurled++;
+        this.setDirty();
+        return this.scrollsUnfurled;
+    }
+
+    public int scrollsUnfurled() {
+        return this.scrollsUnfurled;
     }
 
     /**
@@ -84,6 +101,7 @@ public final class DefeatedAirships extends SavedData {
             list.add(LongTag.valueOf(pos.asLong()));
         }
         tag.put("anchors", list);
+        tag.putInt("scrollsUnfurled", this.scrollsUnfurled);
         return tag;
     }
 
@@ -93,6 +111,7 @@ public final class DefeatedAirships extends SavedData {
         for (int i = 0; i < list.size(); i++) {
             d.anchors.add(BlockPos.of(((LongTag) list.get(i)).getAsLong()));
         }
+        d.scrollsUnfurled = tag.getInt("scrollsUnfurled");
         return d;
     }
 }

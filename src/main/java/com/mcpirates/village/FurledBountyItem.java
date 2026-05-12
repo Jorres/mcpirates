@@ -1,6 +1,8 @@
 package com.mcpirates.village;
 
 import com.mcpirates.MCPirates;
+import com.mcpirates.airship.GalleonSpawner;
+import com.mcpirates.airship.worldgen.GalleonUnlockState;
 import com.mcpirates.pirates.DefeatedAirships;
 import com.mcpirates.registry.MCPStructureTags;
 import net.minecraft.core.BlockPos;
@@ -54,6 +56,11 @@ public final class FurledBountyItem extends Item {
     private static final String MAP_DISPLAY_NAME_KEY = "pirate_bounty";
     /** {@code findNearestMapStructure}'s searchRadius is in chunks; 200ch = 3200 blocks. */
     private static final int SEARCH_RADIUS_CHUNKS = 200;
+    /** Same units as {@link #SEARCH_RADIUS_CHUNKS}, but wider — the galleon's structure_set
+     *  spacing is large (~64 chunks), so a 200-chunk radius might miss every spawn cell in
+     *  a sparse part of the world. 400ch ≈ 6400 blocks is enough to guarantee at least one
+     *  candidate in every direction. */
+    private static final int GALLEON_SEARCH_RADIUS_CHUNKS = 400;
     /** How many times we re-try with a perturbed origin if the result is defeated. */
     private static final int MAX_RETRIES = 6;
     /** Perturbation distance (blocks) added per retry to nudge the search elsewhere. */
@@ -72,14 +79,47 @@ public final class FurledBountyItem extends Item {
             return InteractionResultHolder.pass(held);
         }
 
-        BlockPos found = findUndefeatedOutpost(serverLevel, player);
-        if (found == null) {
-            // No outpost within the search ring. Refund the scroll (don't consume),
-            // tell the player. Treating this as soft-fail so a player on an island
-            // far from any village doesn't burn 16 emeralds worth of scroll.
-            player.displayClientMessage(
-                    Component.translatable("item.mcpirates.furled_bounty.no_target"), true);
-            return InteractionResultHolder.fail(held);
+        // Atomically bump the world counter so two scrolls unfurled in the same tick don't
+        // both come up "5th". DefeatedAirships is a SavedData; the bump is dirtied to disk.
+        DefeatedAirships airships = DefeatedAirships.get(serverLevel);
+        int unfurlIndex = airships.incrementScrollsUnfurled();
+        boolean isBoss = (unfurlIndex % GalleonSpawner.BOSS_INTERVAL) == 0;
+
+        BlockPos found;
+        if (isBoss) {
+            // Flip the world flag — from this point on, newly-generated chunks may
+            // contain {@code mcpirates:pirate_galleon} structures wherever the
+            // structure_set's spacing grid + biome whitelist say. Then look up the
+            // nearest one with skipExistingChunks=true so the player is steered into
+            // an unexplored direction (chunks already-generated pre-unlock contain no
+            // galleons; the function correctly skips them).
+            //
+            // Note: this is the worldgen path. The /mcpirates galleon spawn dev command
+            // still uses GalleonSpawner.spawnGalleonAt for deterministic close-range
+            // placement when testing.
+            GalleonUnlockState.get(serverLevel).unlock();
+            found = serverLevel.findNearestMapStructure(
+                    MCPStructureTags.PIRATE_GALLEONS,
+                    player.blockPosition(),
+                    GALLEON_SEARCH_RADIUS_CHUNKS,
+                    /*skipExistingChunks=*/true);
+            if (found == null) {
+                // No valid placement spot within radius. The biome whitelist may have
+                // excluded everything around this player (e.g. ocean spawner) — refund.
+                player.displayClientMessage(
+                        Component.translatable("item.mcpirates.furled_bounty.no_target"), true);
+                return InteractionResultHolder.fail(held);
+            }
+        } else {
+            found = findUndefeatedOutpost(serverLevel, player);
+            if (found == null) {
+                // No outpost within the search ring. Refund the scroll (don't consume),
+                // tell the player. Treating this as soft-fail so a player on an island
+                // far from any village doesn't burn 16 emeralds worth of scroll.
+                player.displayClientMessage(
+                        Component.translatable("item.mcpirates.furled_bounty.no_target"), true);
+                return InteractionResultHolder.fail(held);
+            }
         }
 
         ItemStack map = makeBountyMap(serverLevel, found);
@@ -100,9 +140,10 @@ public final class FurledBountyItem extends Item {
                 SoundEvents.BOOK_PAGE_TURN, SoundSource.PLAYERS, 1.0F, 1.0F);
 
         MCPirates.LOGGER.info(
-                "{} unfurled a bounty scroll → outpost at {} (defeated set has {})",
-                player.getName().getString(), found,
-                DefeatedAirships.get(serverLevel).defeatedCount());
+                "{} unfurled bounty scroll #{} ({}) → {} (defeated set has {})",
+                player.getName().getString(), unfurlIndex,
+                isBoss ? "BOSS galleon" : "regular outpost",
+                found, airships.defeatedCount());
 
         return InteractionResultHolder.consume(held);
     }

@@ -1,0 +1,113 @@
+package com.mcpirates.airship.kind;
+
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.block.entity.BlockEntity;
+
+import java.util.List;
+
+/**
+ * Per-design constants for one kind of pirate airship. The {@link com.mcpirates.airship.AirshipBrain}
+ * handles flight envelope behaviour (LIFTOFF / PURSUE / RETURN / HOVER, orbit math, throttle PD,
+ * tank-steer logic) generically; everything that depends on <em>where the levers are</em> or
+ * <em>which cannons exist</em> lives here.
+ *
+ * <h2>Coordinate convention</h2>
+ *
+ * All positional methods return <strong>NBT-frame deltas</strong> from this kind's "primary
+ * anchor" — the throttle lever the brain treats as the ship's identity. Worldgen rotates the
+ * structure 0/90/180/270°; the trigger detects the rotation by comparing the anchor's world
+ * FACING to {@link #nbtPrimaryFacing()} and then rotates every delta by the same amount
+ * before adding world / SubLevel offsets.
+ *
+ * <h2>Identification — metadata block, not geometric guessing</h2>
+ *
+ * Each ship NBT carries one {@link com.mcpirates.airship.anchor.MCPShipAnchorBlock} placed at
+ * a hidden position inside the hull, whose BE stores the kind name. The lift-off trigger
+ * scans chunks for those anchor BEs and looks up the kind via
+ * {@link AirshipKinds#byName(String)} — no heuristic {@code matches()} predicate to maintain,
+ * no risk of one ship's lever masquerading as another ship's primary anchor. From the
+ * anchor's world position the trigger derives the primary lever via
+ * {@link #anchorToLeverDelta()}; the rest of the deltas below are still lever-relative.
+ */
+public interface AirshipKind {
+
+    String name();
+
+    // ───────────── orientation / identification ─────────────
+
+    /** NBT-frame FACING of the primary-anchor lever, used to derive rotation at trigger time. */
+    Direction nbtPrimaryFacing();
+
+    /** NBT-frame "ship forward" direction. For airship_small/galleon this is NORTH (the
+     *  bow side where the cannon arc / main propulsion points). After {@code rotation},
+     *  this becomes the world-frame forward we hand to the brain. */
+    Direction nbtForward();
+
+    /** Which 0..15 lever block the throttle uses. */
+    LeverKind throttleLeverKind();
+
+    /** Is this BE possibly a primary anchor for this kind? Cheap pre-filter the trigger
+     *  uses when reading the actual lever pointed at by the anchor block. */
+    boolean isPrimaryAnchorBE(BlockEntity be);
+
+    /** Current 0..15 state of this anchor BE. Trigger uses this to skip already-activated ships. */
+    int readAnchorState(BlockEntity be);
+
+    /** State to set on liftoff (caller compares {@code readAnchorState(be) >= activatedAt()}
+     *  to detect "already triggered"). 10 is the canonical burner-on level — high enough
+     *  to lift, low enough that the brain can dial it down further during HOVER. */
+    default int activatedAt() { return 10; }
+
+    /** NBT-frame delta from the ship's metadata anchor block (placed by build_ships.py)
+     *  to the primary lever (this kind's identity for layout purposes). Must match the
+     *  {@code anchor_nbt_pos} vs primary-lever-pos defined in the build_ships.py SHIPS
+     *  config for this ship. */
+    BlockPos anchorToLeverDelta();
+
+    // ───────────── layout (NBT-frame deltas from the primary anchor) ─────────────
+
+    /** Portable-engine positions to fuel at lift-off. May be 1 or 2. */
+    List<BlockPos> engineDeltas();
+
+    /** All throttle-equivalent levers (including the primary anchor at {@code (0,0,0)}).
+     *  Two-burner kinds list both; the brain writes the same state to each so burners
+     *  stay in lock-step. */
+    List<BlockPos> throttleLeverDeltas();
+
+    /** Vanilla {@code minecraft:lever} that the brain flips to engage/disengage the
+     *  port-side propeller clutch. */
+    BlockPos leftClutchLeverDelta();
+
+    /** Vanilla {@code minecraft:lever} that the brain flips to engage/disengage the
+     *  starboard-side propeller clutch. */
+    BlockPos rightClutchLeverDelta();
+
+    /** CBC cannon-mount positions to assemble + register for the combat module. May be
+     *  empty for cannonless ships. */
+    List<BlockPos> cannonMountDeltas();
+
+    /** Inclusive min corner of the honey-glue body bounding box (covers hull only, no
+     *  surrounding air). The trigger inflates by +1 on max sides so AABB.contains
+     *  covers the inclusive block coords. */
+    BlockPos glueMin();
+
+    /** Inclusive max corner of the honey-glue body bounding box. */
+    BlockPos glueMax();
+
+    /** Where the assembly BFS seeds from. Defaults to "one block in the
+     *  {@link ThrottleLevers#leverConnectedDirection direction the lever attaches}"
+     *  (i.e., the block the lever is mounted on) — that's part of the hull on every
+     *  current design. Kinds with weird seeding can override. */
+    default BlockPos seedDelta(Direction leverConnectedDir) {
+        Direction into = leverConnectedDir.getOpposite();
+        return new BlockPos(into.getStepX(), into.getStepY(), into.getStepZ());
+    }
+
+    // ───────────── combat ─────────────
+
+    /** Combat strategy. {@link com.mcpirates.airship.AirshipBrain} calls
+     *  {@link CombatBehavior#aim} every aim tick and
+     *  {@link CombatBehavior#fire} every fire tick during PURSUE. */
+    CombatBehavior combat();
+}

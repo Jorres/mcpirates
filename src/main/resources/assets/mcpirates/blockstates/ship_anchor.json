@@ -1,0 +1,5 @@
+{
+  "variants": {
+    "": { "model": "mcpirates:block/ship_anchor" }
+  }
+}

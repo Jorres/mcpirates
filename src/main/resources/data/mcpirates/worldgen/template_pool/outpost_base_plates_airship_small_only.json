@@ -1,0 +1,17 @@
+{
+  "name": "mcpirates:outpost_base_plates_airship_small_only",
+  "fallback": "minecraft:empty",
+  "elements": [
+    {
+      "weight": 1,
+      "element": {
+        "element_type": "minecraft:single_pool_element",
+        "location": "mcpirates:base_plate_with_airship_small",
+        "processors": {
+          "processors": []
+        },
+        "projection": "rigid"
+      }
+    }
+  ]
+}

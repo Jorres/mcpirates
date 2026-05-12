@@ -2,6 +2,7 @@ package com.mcpirates.commands;
 
 import com.mcpirates.MCPirates;
 import com.mcpirates.airship.AirshipBrain;
+import com.mcpirates.airship.GalleonSpawner;
 import com.mcpirates.util.FunnyNames;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
@@ -43,12 +44,22 @@ import java.util.Set;
  *         safe surface position near the nearest {@code minecraft:pillager_outpost}
  *         (searches a 100-chunk radius). Useful when iterating on outpost
  *         worldgen / airship lift-off.</li>
- *     <li>{@code /mcpirates outpost spawn} — places a {@code minecraft:pillager_outpost}
- *         structure 48 blocks east of the issuing player. Bypasses worldgen so
- *         a new outpost can be built without travelling.</li>
+ *     <li>{@code /mcpirates outpost spawn [airship_small|crossbow_board]} —
+ *         places a pillager outpost 48 blocks east of the issuing player.
+ *         With no argument, places {@code minecraft:pillager_outpost} and lets
+ *         the worldgen airships pool roll randomly between the two ships. With
+ *         an argument, places one of our variant structures
+ *         ({@code mcpirates:outpost_with_<ship>}) that uses a single-ship pool,
+ *         guaranteeing the requested ship. Bypasses worldgen so a new outpost
+ *         can be built without travelling.</li>
  *     <li>{@code /mcpirates sheriff spawn} — spawns a named sheriff villager
  *         two blocks NE of the issuing player. Bypasses the village's natural
  *         POI-claim flow for trade testing.</li>
+ *     <li>{@code /mcpirates galleon spawn} — places a galleon 80 blocks east of
+ *         the issuing player at heightmap+altitude. Same placement primitive
+ *         {@link com.mcpirates.airship.GalleonSpawner} uses for boss-bounty
+ *         spawns, just at deterministic close range so liftoff can be tested
+ *         without flying 1500 blocks to find the random-far spawn.</li>
  * </ul>
  *
  * <p>All subcommands require op level 2 (vanilla cheats). In dev {@code Dev}
@@ -74,10 +85,18 @@ public final class MCPCommands {
 
                 .then(Commands.literal("outpost")
                         .then(Commands.literal("tp").executes(MCPCommands::tpNearestOutpost))
-                        .then(Commands.literal("spawn").executes(MCPCommands::spawnOutpost)))
+                        .then(Commands.literal("spawn")
+                                .executes(ctx -> spawnOutpost(ctx, null))
+                                .then(Commands.literal("airship_small")
+                                        .executes(ctx -> spawnOutpost(ctx, "airship_small")))
+                                .then(Commands.literal("crossbow_board")
+                                        .executes(ctx -> spawnOutpost(ctx, "crossbow_board")))))
 
                 .then(Commands.literal("sheriff")
-                        .then(Commands.literal("spawn").executes(MCPCommands::spawnSheriff)));
+                        .then(Commands.literal("spawn").executes(MCPCommands::spawnSheriff)))
+
+                .then(Commands.literal("galleon")
+                        .then(Commands.literal("spawn").executes(MCPCommands::spawnGalleon)));
 
         event.getDispatcher().register(root);
     }
@@ -126,7 +145,11 @@ public final class MCPCommands {
 
     // ────────────────────────────── /mcpirates outpost spawn ──────────────────────────────
 
-    private static int spawnOutpost(CommandContext<CommandSourceStack> ctx) {
+    /** @param ship null = vanilla {@code pillager_outpost} (random ship via the
+     *              50/50 airships pool); otherwise {@code "airship_small"} or
+     *              {@code "crossbow_board"} → one of our variant structures whose
+     *              start_pool references a single-ship airship pool. */
+    private static int spawnOutpost(CommandContext<CommandSourceStack> ctx, String ship) {
         CommandSourceStack src = ctx.getSource();
         ServerLevel level = src.getLevel();
         BlockPos origin = BlockPos.containing(src.getPosition());
@@ -136,11 +159,16 @@ public final class MCPCommands {
         int tz = origin.getZ();
         int ty = level.getHeight(Heightmap.Types.WORLD_SURFACE_WG, tx, tz);
 
-        String cmd = String.format("place structure minecraft:pillager_outpost %d %d %d", tx, ty, tz);
+        String structureId = (ship == null)
+                ? "minecraft:pillager_outpost"
+                : "mcpirates:outpost_with_" + ship;
+        String cmd = String.format("place structure %s %d %d %d", structureId, tx, ty, tz);
         try {
             level.getServer().getCommands().performPrefixedCommand(src.withPermission(4), cmd);
+            String label = (ship == null) ? "pillager outpost (random ship)"
+                                          : "pillager outpost with " + ship;
             src.sendSuccess(() -> Component.literal(
-                    "Placed pillager outpost at " + new BlockPos(tx, ty, tz).toShortString()), true);
+                    "Placed " + label + " at " + new BlockPos(tx, ty, tz).toShortString()), true);
         } catch (Exception e) {
             MCPirates.LOGGER.error("[outpost spawn] failed", e);
             src.sendFailure(Component.literal("Failed to place outpost: " + e.getMessage()));
@@ -179,6 +207,30 @@ public final class MCPCommands {
             return 0;
         }
         return 1;
+    }
+
+    // ────────────────────────────── /mcpirates galleon spawn ──────────────────────────────
+
+    private static int spawnGalleon(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        BlockPos origin = BlockPos.containing(src.getPosition());
+
+        // 80 blocks east of the player. Galleon footprint is 12×28; 80 keeps it clear
+        // of the player's chunk while still close enough to fly to in a few seconds.
+        int centerX = origin.getX() + 80;
+        int centerZ = origin.getZ();
+
+        BlockPos anchor = GalleonSpawner.spawnGalleonAt(level, centerX, centerZ);
+        if (anchor == null) {
+            src.sendFailure(Component.literal(
+                    "galleon placement failed (check log) — NBT missing or template error"));
+            return 0;
+        }
+        src.sendSuccess(() -> Component.literal(
+                "Placed galleon at " + anchor.toShortString()
+                        + " (fly close to trigger liftoff)"), true);
+        return Command.SINGLE_SUCCESS;
     }
 
     // ────────────────────────────── helpers ──────────────────────────────

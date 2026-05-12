@@ -20,5 +20,13 @@ public final class MCPStructureTags {
     public static final TagKey<Structure> PIRATE_OUTPOSTS =
             TagKey.create(Registries.STRUCTURE, MCPirates.id("pirate_outposts"));
 
+    /** Set of structures the boss-bounty (every Nth scroll) path searches with
+     *  {@code findNearestMapStructure} after the player unfurls a 5th scroll. Tag JSON at
+     *  {@code data/mcpirates/tags/worldgen/structure/pirate_galleons.json}; holds
+     *  {@code mcpirates:pirate_galleon}. Separate from {@link #PIRATE_OUTPOSTS} so the
+     *  regular bounty flow never accidentally points at a galleon and vice versa. */
+    public static final TagKey<Structure> PIRATE_GALLEONS =
+            TagKey.create(Registries.STRUCTURE, MCPirates.id("pirate_galleons"));
+
     private MCPStructureTags() {}
 }
