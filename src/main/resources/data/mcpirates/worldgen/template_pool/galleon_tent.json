@@ -1,0 +1,16 @@
+{
+  "_comment": "Single-element pool for the galleon_pad's west-side tent/scaffolding appendage. Referenced by the pad's west-facing jigsaw; one element + fallback=empty = guaranteed appearance whenever galleon_pad is generated.",
+  "name": "mcpirates:galleon_tent",
+  "fallback": "minecraft:empty",
+  "elements": [
+    {
+      "weight": 1,
+      "element": {
+        "element_type": "minecraft:single_pool_element",
+        "location": "mcpirates:galleon_tent",
+        "processors": { "processors": [] },
+        "projection": "rigid"
+      }
+    }
+  ]
+}

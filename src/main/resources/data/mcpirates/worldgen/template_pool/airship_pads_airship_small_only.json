@@ -1,0 +1,15 @@
+{
+  "name": "mcpirates:airship_pads_airship_small_only",
+  "fallback": "minecraft:empty",
+  "elements": [
+    {
+      "weight": 1,
+      "element": {
+        "element_type": "minecraft:single_pool_element",
+        "location": "mcpirates:airship_small_pad",
+        "processors": { "processors": [] },
+        "projection": "rigid"
+      }
+    }
+  ]
+}

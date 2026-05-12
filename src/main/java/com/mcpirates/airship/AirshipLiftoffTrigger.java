@@ -66,6 +66,18 @@ import java.util.List;
 @EventBusSubscriber(modid = MCPirates.MOD_ID)
 public final class AirshipLiftoffTrigger {
 
+    /** Runtime kill-switch for the auto-trigger. Set false (via
+     *  {@code /mcpirates lift off}) when iterating on ship NBT designs in a flat test
+     *  world — placed ships stay dormant indefinitely so they can be inspected and
+     *  re-saved through structure blocks without lifting off. Defaults true so production
+     *  ships still activate when a player approaches. */
+    public static volatile boolean AUTO_LIFTOFF_ENABLED = true;
+
+    public static boolean setAutoLiftoffEnabled(boolean enabled) {
+        AUTO_LIFTOFF_ENABLED = enabled;
+        return enabled;
+    }
+
     private static final int TICK_INTERVAL = 10;          // ~0.5 s at 20 TPS
     /** Trigger when an enemy-on-airship is within this chunk radius of a dormant pirate
      *  anchor. 10 chunks ≈ 160 blocks. */
@@ -82,6 +94,7 @@ public final class AirshipLiftoffTrigger {
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
+        if (!AUTO_LIFTOFF_ENABLED) return;
         if (event.getServer().getTickCount() % TICK_INTERVAL != 0) {
             return;
         }
@@ -231,16 +244,17 @@ public final class AirshipLiftoffTrigger {
         Vector3d shipLocalForward = new Vector3d(
                 shipForwardDir.getStepX(), shipForwardDir.getStepY(), shipForwardDir.getStepZ());
 
-        // Step 7: spawn captain + crewmate BEFORE registering with the brain so the brain
-        // has the anchor list at hand and can re-assert plot positions every tick.
-        List<CaptainSpawner.AnchoredEntity> anchors =
-                CaptainSpawner.spawn(subLevel, pos, offset, rotation);
+        // Step 7: scan seats, bind cannons to nearest seats, spawn the crew. Returns both
+        // the anchor list (for the brain to drive per-pirate roles) and the cannon→
+        // cannoneer UUID map (for combat behaviours to gate fire on isMountManned).
+        CaptainSpawner.CrewSpawnResult crew =
+                CaptainSpawner.spawn(subLevel, pos, offset, rotation, kind, slCannonMounts);
 
         // Step 8: hand off
         AirshipBrain.register(
                 level, subLevel, pos, kind,
                 slThrottleLevers, slLeftClutch, slRightClutch, slCannonMounts,
-                shipLocalForward, anchors);
+                shipLocalForward, crew.anchors(), crew.cannoneerByMount());
     }
 
     /**

@@ -2,6 +2,7 @@ package com.mcpirates.commands;
 
 import com.mcpirates.MCPirates;
 import com.mcpirates.airship.AirshipBrain;
+import com.mcpirates.airship.AirshipLiftoffTrigger;
 import com.mcpirates.airship.GalleonSpawner;
 import com.mcpirates.util.FunnyNames;
 import com.mojang.brigadier.Command;
@@ -83,6 +84,10 @@ public final class MCPCommands {
                         .then(Commands.literal("on").executes(ctx -> setFire(ctx.getSource(), true)))
                         .then(Commands.literal("off").executes(ctx -> setFire(ctx.getSource(), false))))
 
+                .then(Commands.literal("lift")
+                        .then(Commands.literal("on").executes(ctx -> setLift(ctx.getSource(), true)))
+                        .then(Commands.literal("off").executes(ctx -> setLift(ctx.getSource(), false))))
+
                 .then(Commands.literal("outpost")
                         .then(Commands.literal("tp").executes(MCPCommands::tpNearestOutpost))
                         .then(Commands.literal("spawn")
@@ -107,6 +112,18 @@ public final class MCPCommands {
         AirshipBrain.setFireEnabled(enabled);
         Component msg = Component.literal(
                 "mcpirates cannon fire is now " + (enabled ? "ON" : "OFF"));
+        source.sendSuccess(() -> msg, /*broadcastToAdmins=*/true);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    // ────────────────────────────── /mcpirates lift ──────────────────────────────
+
+    /** Toggle the auto-liftoff trigger. Off = placed ships stay dormant so flat-world
+     *  iteration on the NBT layout doesn't fire activations every time you /place. */
+    private static int setLift(CommandSourceStack source, boolean enabled) {
+        AirshipLiftoffTrigger.setAutoLiftoffEnabled(enabled);
+        Component msg = Component.literal(
+                "mcpirates auto-liftoff is now " + (enabled ? "ON" : "OFF"));
         source.sendSuccess(() -> msg, /*broadcastToAdmins=*/true);
         return Command.SINGLE_SUCCESS;
     }

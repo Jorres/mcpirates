@@ -110,4 +110,11 @@ public interface AirshipKind {
      *  {@link CombatBehavior#aim} every aim tick and
      *  {@link CombatBehavior#fire} every fire tick during PURSUE. */
     CombatBehavior combat();
+
+    /** Horizontal distance at which the brain strafes the target during PURSUE. Brain-level
+     *  knob — different ship roles want different stand-off distances (cannon ship close
+     *  to the action, crossbow board outside crew firing arc + a buffer). Default suits
+     *  cannon-armed ships; override per-kind when crew weapons or stand-off behaviour
+     *  changes the optimal radius. */
+    default double orbitRadius() { return 25.0; }
 }

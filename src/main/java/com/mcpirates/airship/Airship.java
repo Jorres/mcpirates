@@ -5,9 +5,11 @@ import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
 import org.joml.Vector3d;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -51,6 +53,13 @@ public final class Airship {
      *  plot-position is missing (i.e., after chunk unload/reload wiped the in-memory
      *  anchor). */
     public final List<AnchoredEntity> anchoredEntities;
+
+    /** Cannon-mount → cannoneer UUID. A mount fires only while its bound cannoneer is
+     *  alive ({@link #isMountManned}). Populated at spawn from seat→cannon proximity; if
+     *  a cannon had no nearby seat in the NBT it is simply absent from the map (which
+     *  reads as "not manned" — that cannon never fires). The map itself is unmodifiable
+     *  after construction; we don't add cannoneers mid-flight. */
+    public final Map<BlockPos, UUID> cannoneerByMount;
 
     public AirshipBrain.State state = AirshipBrain.State.LIFTOFF;
     public long stateEnteredTick;
@@ -100,7 +109,8 @@ public final class Airship {
                    BlockPos slLeftClutchLever, BlockPos slRightClutchLever,
                    List<BlockPos> slCannonMounts,
                    Vector3d shipLocalForward,
-                   List<AnchoredEntity> anchoredEntities) {
+                   List<AnchoredEntity> anchoredEntities,
+                   Map<BlockPos, UUID> cannoneerByMount) {
         this.parentLevel = parentLevel;
         this.subLevel = subLevel;
         this.subLevelId = subLevel.getUniqueId();
@@ -112,5 +122,20 @@ public final class Airship {
         this.slCannonMounts = slCannonMounts;
         this.shipLocalForward = shipLocalForward;
         this.anchoredEntities = anchoredEntities;
+        this.cannoneerByMount = cannoneerByMount;
+    }
+
+    /**
+     * @return true iff this cannon mount has a bound cannoneer and that cannoneer is
+     *         alive and present in the parent level. False for cannons that never had a
+     *         bound seat (NBT designer omitted), cannons whose cannoneer died, or cannons
+     *         whose cannoneer entity was somehow removed (chunk evict + failed reload).
+     *         Combat behaviours call this before aiming/firing each mount.
+     */
+    public boolean isMountManned(BlockPos slMount) {
+        UUID uuid = cannoneerByMount.get(slMount);
+        if (uuid == null) return false;
+        Entity e = parentLevel.getEntity(uuid);
+        return e != null && !e.isRemoved() && e.isAlive();
     }
 }

@@ -1,0 +1,16 @@
+{
+  "_comment": "Single-element pool guaranteeing the airship_small_pad's ammo box appendage. Referenced by the pad's south-facing jigsaw; with one element and fallback=empty, the piece is selected 100% of the time and only fails to appear if it physically can't fit (which is essentially impossible for a 5x2x4 piece next to a pad on flat outpost terrain).",
+  "name": "mcpirates:airship_small_ammo_box",
+  "fallback": "minecraft:empty",
+  "elements": [
+    {
+      "weight": 1,
+      "element": {
+        "element_type": "minecraft:single_pool_element",
+        "location": "mcpirates:airship_small_ammo_box",
+        "processors": { "processors": [] },
+        "projection": "rigid"
+      }
+    }
+  ]
+}

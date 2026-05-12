@@ -5,6 +5,7 @@ import com.mcpirates.airship.kind.AirshipKind;
 import com.mcpirates.airship.kind.ClutchLevers;
 import com.mcpirates.airship.kind.ThrottleLevers;
 import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
+import com.mcpirates.pirates.PirateBrain;
 import dev.ryanhcode.sable.mixinterface.entity.entities_stick_sublevels.EntityStickExtension;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
@@ -82,8 +83,6 @@ public final class AirshipBrain {
     /** Ticks of "no target" before dropping out of PURSUE. */
     private static final int LOST_TARGET_DEBOUNCE = 60;
 
-    /** PURSUE strafing radius — ship orbits the target at this XZ distance. */
-    private static final double ORBIT_RADIUS = 25.0;
     /** How far ahead along the tangent we aim the ship's heading. Larger = wider
      *  orbits, smoother turns. Smaller = tighter, more aggressive turning. */
     private static final double ORBIT_LOOK_AHEAD = 18.0;
@@ -129,18 +128,19 @@ public final class AirshipBrain {
             BlockPos slRightClutchLever,
             List<BlockPos> slCannonMounts,
             Vector3d shipLocalForward,
-            List<AnchoredEntity> anchoredEntities) {
+            List<AnchoredEntity> anchoredEntities,
+            java.util.Map<BlockPos, java.util.UUID> cannoneerByMount) {
         Airship a = new Airship(parentLevel, subLevel, airpadAnchor, kind,
                 slThrottleLevers, slLeftClutchLever, slRightClutchLever,
-                slCannonMounts, shipLocalForward, anchoredEntities);
+                slCannonMounts, shipLocalForward, anchoredEntities, cannoneerByMount);
         SHIPS.add(a);
         MCPirates.LOGGER.info(
-                "registered pirate airship: kind={} subLevel={} anchor={} mounts={} throttles={} clutches=({},{}) fwd=({},{},{}) anchoredEntities={}",
+                "registered pirate airship: kind={} subLevel={} anchor={} mounts={} throttles={} clutches=({},{}) fwd=({},{},{}) anchoredEntities={} cannoneers={}",
                 kind.name(), subLevel.getUniqueId(), airpadAnchor,
                 slCannonMounts, slThrottleLevers,
                 slLeftClutchLever, slRightClutchLever,
                 shipLocalForward.x, shipLocalForward.y, shipLocalForward.z,
-                anchoredEntities.size());
+                anchoredEntities.size(), cannoneerByMount.size());
     }
 
     @SubscribeEvent
@@ -254,6 +254,11 @@ public final class AirshipBrain {
             }
         }
 
+        // Per-pirate behaviour (aim + fire crossbows on the crossbow board, idle on cannon
+        // ships). Runs after combat so the ship's flight state is already settled — pirates
+        // can read {@code a.state} to gate behaviour to PURSUE only.
+        PirateBrain.tickShip(a, target, now);
+
         if (DEBUG_OVERLAY && now % OVERLAY_ACTIONBAR_INTERVAL == 0) {
             writeDebugActionbar(a, target, shipPos);
         }
@@ -271,7 +276,7 @@ public final class AirshipBrain {
                 stuck.sable$setPlotPosition(ae.plotPos());
                 MCPirates.LOGGER.info(
                         "re-anchored {} ({}) to plotPos={} after reload",
-                        ae.role(), ae.uuid(), ae.plotPos());
+                        ae.role().name(), ae.uuid(), ae.plotPos());
             }
         }
     }
@@ -331,7 +336,8 @@ public final class AirshipBrain {
                     double tanZ = ftx / r;
                     double radInX = -ftx / r;
                     double radInZ = -ftz / r;
-                    double radialErr = (r - ORBIT_RADIUS) / ORBIT_RADIUS;
+                    double orbitRadius = a.kind.orbitRadius();
+                    double radialErr = (r - orbitRadius) / orbitRadius;
                     double radialBlend = Math.max(-1.0, Math.min(1.0, radialErr)) * ORBIT_RADIAL_GAIN;
                     double dirX = tanX + radInX * radialBlend;
                     double dirZ = tanZ + radInZ * radialBlend;

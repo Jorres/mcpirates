@@ -1,55 +1,53 @@
 """
-build_ships.py — single pipeline that builds every airship resource the mod ships.
+build_ships.py — packages ship + pad source NBTs into the final structure resources.
 
-Replaces the previous one-off scripts (import_airship.py, build_outpost_pieces.py,
-build_galleon_pad.py, wrap_ship.py, unwrap_ship.py). Reads raw structure-block saves
-from tools/sources/, injects the airship_keel jigsaw at the configured position +
-orientation, and produces every derived NBT the mod needs:
+Inputs (all required):
+    tools/sources/<name>.nbt       — bare hull. Must contain exactly one down-facing
+                                     jigsaw block (the keel connector) at the cell where
+                                     the ship attaches to its pad. May contain trailing
+                                     air rows from oversized structure-block save bounds
+                                     — the script trims them automatically.
+    tools/sources/<name>_pad.nbt   — pad design. Must contain exactly one up-facing
+                                     jigsaw block (the ship connector). Outpost-attached
+                                     pads must additionally contain one west-facing
+                                     jigsaw (the outpost connector).
 
-    src/main/resources/data/mcpirates/structure/
-        airship_small.nbt           # outpost-attached small ship + internal pad
-        crossbow_board.nbt          # outpost-attached patrol ship + internal pad
-        galleon.nbt                 # bare ship hull (no pad — attaches to galleon_pad)
-        galleon_pad.nbt             # standalone parent piece with pad + air column
-        base_plate_with_airship.nbt # outpost variant repointed to the airships pool
+Outputs (regenerated each run):
+    src/main/resources/data/mcpirates/structure/<name>.nbt
+    src/main/resources/data/mcpirates/structure/<name>_pad.nbt
+    src/main/resources/data/mcpirates/structure/base_plate_with_airship.nbt
+    src/main/resources/data/mcpirates/structure/base_plate_with_<ship>.nbt
 
-Usage:
-    python tools/build_ships.py                # rebuild everything (with backup)
-    python tools/build_ships.py --ship galleon # rebuild one ship + its pad
-    python tools/build_ships.py --no-backup    # skip the auto-backup step
+Pipeline:
+    1. Read source. Trim trailing all-air rows (ships only) so the canopy-clearance
+       buffer doesn't compound oversize.
+    2. Add air_above buffer above the hull (ships only).
+    3. Locate jigsaws in source by orientation prefix (down_ / up_ / west_) — positions
+       come from the user's design. The script never invents jigsaw positions.
+    4. Normalise the jigsaw block-NBT: name/target/pool/final_state/joint are overwritten
+       to the values this mod's worldgen expects.
+    5. For ships: stamp the ship_anchor block at anchor_src_pos.
+    6. Write the result.
 
-The per-ship config lives in SHIPS below. Two ship-types are supported:
-
-    "internal_pad"  — wraps the raw source ship with a stone-brick pad layer + air
-                      shroud and shifts the body away from the connector. Used for
-                      outpost-attached ships where the airship_keel jigsaw must face
-                      the outpost's east-facing feature_plates connector. The pad
-                      sits inside the ship NBT; the outpost provides only its own
-                      base plate at the connection point.
-
-    "external_pad"  — leaves the ship NBT bare (just hull + a center-bottom airship_keel
-                      jigsaw facing down). Generates a SEPARATE galleon_pad.nbt parent
-                      piece with the matching upward-facing jigsaw. Used for ships that
-                      stand alone in their own worldgen structure (the galleon).
-
-If you add a new ship, add a SHIPS entry and re-run. The source NBT lives in
-tools/sources/<name>.nbt — re-save the ship in dev MC, copy the structure-block
-output there, then re-run this script.
+Jigsaw geometry recap (magnets, not overlap):
+    The jigsaw assembler places piece B such that B's matching jigsaw lands at piece-A
+    jigsaw position + 1 in A's facing direction. So pad's up-jigsaw and ship's down-
+    jigsaw end up on ADJACENT cells (one block apart in Y), not the same cell. Author
+    pad jigsaws at the y where the ship's down-jigsaw cell should sit one above; for
+    "ship's hull-bottom row flush with pad-top layer", put pad's up-jigsaw at pad y=0
+    so ship's keel cell lands at pad y=1 (= pad top layer cell).
 """
 from __future__ import annotations
 
 import argparse
-import gzip
 import shutil
 import zipfile
-from datetime import datetime
 from pathlib import Path
 
-from nbtlib import Compound, Double, File, Int, List, String
+from nbtlib import Compound, File, Int, List, String
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SOURCES_DIR = REPO_ROOT / "tools" / "sources"
-BACKUPS_DIR = REPO_ROOT / "tools" / "backups"
 OUT_DIR = REPO_ROOT / "src" / "main" / "resources" / "data" / "mcpirates" / "structure"
 NEOFORGE_RESOURCE_JAR = (
     REPO_ROOT / "build" / "moddev" / "artifacts"
@@ -59,67 +57,64 @@ VANILLA_BASE_PLATE_PATH = "data/minecraft/structure/pillager_outpost/base_plate.
 
 KEEL_JIGSAW_NAME = "mcpirates:airship_keel"
 LANDING_PAD_JIGSAW_NAME = "mcpirates:landing_pad_top"
-PAD_BLOCK = "minecraft:stone_bricks"
 AIR_BLOCK = "minecraft:air"
+PAD_BLOCK = "minecraft:stone_bricks"
 JIGSAW_BLOCK = "minecraft:jigsaw"
 ANCHOR_BLOCK = "mcpirates:ship_anchor"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Per-ship configuration
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# Keys:
+#   anchor_src_pos        Where the ship_anchor block goes in the source NBT.
+#                         Must equal primary_lever_src_pos − AirshipKind.anchorToLeverDelta().
+#   ship_keel_final_state Block the down-facing keel jigsaw becomes after JigsawReplacement-
+#                         Processor runs. Use stone_bricks for outpost-attached ships
+#                         (cell coincides with the pad's top layer at worldgen time) and
+#                         air for hovering ships (cell sits in mid-air above the pad).
+#   air_above             Air buffer above the hull, stamped over tree canopies.
+#   outpost_attached      True → the pad source must include a west-facing jigsaw; the
+#                         pad goes into the mcpirates:airship_pads pool. False → the pad
+#                         only has an up-facing jigsaw and is placed standalone (galleon
+#                         spawner / pirate_galleon structure).
+# ─────────────────────────────────────────────────────────────────────────────
+# Appendage configuration
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Appendages are small pad-attached sub-pieces (ammo crates, banners, dock stairs)
+# referenced from a pad jigsaw and a pool. They are authored entirely in MC: the user
+# saves the appendage volume through a structure block (writes to tools/sources/<name>.nbt),
+# and the script just copies the source verbatim into the resources structure folder.
+# Jigsaw NBT inside the source must already be correct — the script does not normalise
+# appendage jigsaws (unlike ship/pad jigsaws). Pool JSON wiring lives separately under
+# data/mcpirates/worldgen/template_pool/<name>.json — one element + fallback=empty for
+# "always appears" semantics.
+APPENDAGES: list[str] = [
+    "airship_small_ammo_box",
+    "crossbow_board_ammo_box",
+    "galleon_tent",
+]
+
 
 SHIPS: dict[str, dict] = {
-    # Outpost-attached: wraps with internal pad + west-facing keel jigsaw, matches the
-    # outpost's east-facing feature_plates connector at base_plate (15, 0, 8).
-    #
-    # Pad sits at NBT y=0 so it lands AT the outpost's base plate level. The ship body
-    # stays at NBT y=body_y_offset (= 3 by default), leaving a 2-block air gap between
-    # pad and keel — the airship visually floats just above its docking surface, like a
-    # moored ship hovering over a quay. Earlier build_outpost_pieces.py raised the pad
-    # to y=2 with the ship right above; that put the pad floating 2 blocks above the
-    # outpost which looked wrong.
-    #
-    # The keel jigsaw lives at (0, 0, cz) within the pad layer with
-    # final_state=stone_bricks so its cell remains pad after JigsawReplacementProcessor
-    # runs (no visible hole in the pad).
     "airship_small": {
-        "internal_pad": True,
-        "shift_east": 5,        # ship body shifted this many blocks east of jigsaw
-        "body_y_offset": 3,     # ship body starts at this NBT y (air at y=1..body_y_offset-1)
-        # Tall air buffer above the body — worldgen stamps NBT air over any vegetation
-        # blocks in the same chunk, preventing tree canopies from clipping the envelope.
-        # 16 covers most overworld trees; giant jungle / cross-chunk canopy from
-        # neighbouring chunks can still bleed in.
-        "air_above": 16,
-        "jigsaw_orientation": "west_up",
-        # Source-NBT position of the ship_anchor block. Must be (primary_lever_src_pos
-        # − AirshipSmallKind.anchorToLeverDelta()) in NBT coords. Lever at source
-        # (3, 3, 6), delta (0, 0, +1) → anchor at (3, 3, 5). Currently an air cell.
         "anchor_src_pos": (3, 3, 5),
+        "ship_keel_final_state": "minecraft:stone_bricks",
+        "air_above": 16,
+        "outpost_attached": True,
     },
     "crossbow_board": {
-        "internal_pad": True,
-        "shift_east": 5,
-        "body_y_offset": 3,
-        "air_above": 16,
-        "jigsaw_orientation": "west_up",
-        # Left primary lever at source (2, 3, 9); anchor at (2, 3, 8).
         "anchor_src_pos": (2, 3, 8),
+        "ship_keel_final_state": "minecraft:stone_bricks",
+        "air_above": 16,
+        "outpost_attached": True,
     },
-    # Standalone with external parent pad: ship NBT is bare, with a center-bottom
-    # down-facing jigsaw that attaches to galleon_pad's up-facing connector.
     "galleon": {
-        "external_pad": True,
-        # Pad parent piece dimensions and jigsaw position.
-        "pad_size_x": 16,
-        "pad_size_z": 32,
-        "pad_jigsaw_y": 20,     # ship hovers at this height above the pad surface
-        # Tall air buffer above the ship's highest hull block. Same tree-clearance
-        # rationale as airship_small / crossbow_board's air_above — see those configs.
-        "pad_buffer_above": 16,
-        "jigsaw_orientation": "down_south",
-        # Left primary throttle at source (3, 9, 14); anchor at (3, 9, 13).
         "anchor_src_pos": (3, 9, 13),
+        "ship_keel_final_state": "minecraft:air",
+        "air_above": 16,
+        "outpost_attached": False,
     },
 }
 
@@ -130,8 +125,7 @@ SHIPS: dict[str, dict] = {
 
 
 def read_nbt(path: Path) -> File:
-    with gzip.open(path, "rb") as f:
-        return File.parse(f)
+    return File.load(str(path), gzipped=True)
 
 
 def write_nbt(nbt: File, path: Path) -> None:
@@ -140,7 +134,7 @@ def write_nbt(nbt: File, path: Path) -> None:
 
 
 def palette_idx(palette: list, name: str, props: dict | None = None) -> int:
-    """Find or add an entry. Mutates the palette list in place."""
+    """Find-or-append. Mutates the palette list in place."""
     props_str = {k: str(v) for k, v in (props or {}).items()}
     for i, entry in enumerate(palette):
         if str(entry.get("Name", "")) != name:
@@ -163,21 +157,18 @@ def make_block(state: int, x: int, y: int, z: int, block_nbt: Compound | None = 
 
 
 def ship_anchor_nbt(kind_name: str) -> Compound:
-    """Block-NBT for MCPShipAnchorBlockEntity. Carries the AirshipKind name baked at
-    build time; AirshipKinds.byName(kind) resolves it back to a kind instance at
-    trigger time. The {@code id} field is required so MC reconstructs the BE type."""
+    """Block-NBT for MCPShipAnchorBlockEntity. The {@code kind} field is baked at build
+    time; AirshipKinds.byName resolves it at trigger time."""
     return Compound({
         "id": String(ANCHOR_BLOCK),
         "kind": String(kind_name),
     })
 
 
-def keel_jigsaw_nbt(final_state: str = "minecraft:air") -> Compound:
-    """Block-NBT for the airship_keel connector on a ship piece. {@code final_state}
-    decides what the cell becomes after JigsawReplacementProcessor runs:
-    {@code "minecraft:air"} for external-pad ships (the connector sits inside the pad's
-    air column anyway), {@code "minecraft:stone_bricks"} for internal-pad ships (the
-    connector lives in the pad layer; air would punch a visible hole)."""
+def keel_jigsaw_nbt(final_state: str) -> Compound:
+    """Down-facing keel jigsaw on the SHIP. Incoming socket for the pad's up-facing
+    landing_pad_top. final_state replaces the jigsaw cell post-worldgen — stone_bricks
+    for outpost-attached ships (cell coincides with pad top layer), air for galleon."""
     return Compound({k: String(v) for k, v in {
         "name": KEEL_JIGSAW_NAME,
         "target": LANDING_PAD_JIGSAW_NAME,
@@ -187,32 +178,64 @@ def keel_jigsaw_nbt(final_state: str = "minecraft:air") -> Compound:
     }.items()})
 
 
-def landing_pad_jigsaw_nbt() -> Compound:
-    """Block-NBT for the parent pad's upward connector. Points back at airship_keel and
-    expands the ship-pool to attach the actual hull above the pad."""
+def pad_up_jigsaw_nbt(ship_pool: str) -> Compound:
+    """Up-facing jigsaw on the PAD. Outgoing socket targeting the per-ship pool so each
+    pad always pairs with its specific ship; ship-vs-ship mixing happens in the
+    airship_pads pool, not the airships pool."""
     return Compound({k: String(v) for k, v in {
         "name": LANDING_PAD_JIGSAW_NAME,
         "target": KEEL_JIGSAW_NAME,
-        "pool": "mcpirates:galleon",  # only the galleon uses external pad today
+        "pool": ship_pool,
         "final_state": "minecraft:air",
         "joint": "rollable",
     }.items()})
 
 
-def strip_keel_jigsaws(nbt: File) -> int:
-    """Remove any pre-existing airship_keel jigsaws from the source NBT before injecting
-    a fresh one — keeps the pipeline idempotent if someone re-runs with a previously-
-    processed NBT as input. Returns the number stripped."""
-    kept = []
-    stripped = 0
-    for b in nbt["blocks"]:
-        block_nbt = b.get("nbt")
-        if block_nbt is not None and str(block_nbt.get("name", "")) == KEEL_JIGSAW_NAME:
-            stripped += 1
+def pad_west_jigsaw_nbt() -> Compound:
+    """West-facing jigsaw on outpost-attached PADs. Incoming socket from the outpost's
+    east-facing connector. After matching, this jigsaw is consumed; final_state keeps
+    the pad surface continuous if anything sees the cell post-replacement."""
+    return Compound({k: String(v) for k, v in {
+        "name": KEEL_JIGSAW_NAME,
+        "target": LANDING_PAD_JIGSAW_NAME,
+        "pool": "minecraft:empty",
+        "final_state": PAD_BLOCK,
+        "joint": "rollable",
+    }.items()})
+
+
+def find_jigsaw_by_orientation(palette: list, blocks, prefix: str):
+    """Find the first jigsaw block whose orientation starts with {@code prefix} (e.g.
+    "down_", "up_", "west_"). Returns (block_index_in_blocks, position_tuple) or
+    (None, None). The exact orientation suffix is preserved by callers — only the facing
+    prefix identifies the jigsaw's role.
+    """
+    matching_states = set()
+    for i, p in enumerate(palette):
+        if str(p.get("Name", "")) != JIGSAW_BLOCK:
             continue
-        kept.append(b)
-    nbt["blocks"] = List[Compound](kept)
-    return stripped
+        orientation = str(dict(p.get("Properties", {})).get("orientation", ""))
+        if orientation.startswith(prefix):
+            matching_states.add(i)
+    if not matching_states:
+        return None, None
+    for j, b in enumerate(blocks):
+        if int(b["state"]) in matching_states:
+            return j, (int(b["pos"][0]), int(b["pos"][1]), int(b["pos"][2]))
+    return None, None
+
+
+def effective_hull_height(src: File) -> int:
+    """Topmost non-air Y + 1. Trims trailing all-air rows in user saves where the
+    structure-block bounds were taller than the actual ship."""
+    air_idx = next((i for i, p in enumerate(src["palette"])
+                    if str(p.get("Name", "")) == AIR_BLOCK), None)
+    top = -1
+    for b in src["blocks"]:
+        if air_idx is not None and int(b["state"]) == air_idx:
+            continue
+        top = max(top, int(b["pos"][1]))
+    return top + 1
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -220,218 +243,178 @@ def strip_keel_jigsaws(nbt: File) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def build_ship_with_internal_pad(name: str, cfg: dict) -> None:
-    """Wrap a raw source ship with a stone-brick pad at NBT y=0, an air gap, then the
-    ship body at NBT y=body_y_offset, and finally an air buffer above. Pad at y=0 lands
-    at the outpost's base-plate level (the outpost's east jigsaw is at base_plate y=0).
-    The body offset leaves visible airspace between the pad and the ship's keel so the
-    airship reads as "hovering above a dock", not "embedded in a stone slab".
-
-    Layout (NBT-frame, post-wrap):
-      y=0                                   : stone-brick pad, full output footprint.
-                                              The keel jigsaw replaces (0, 0, cz) with
-                                              final_state=stone_bricks so the cell stays
-                                              pad after JigsawReplacementProcessor.
-      y=1..body_y_offset-1                  : air (visual gap below the keel).
-      y=body_y_offset..body_y_offset+sy-1   : ship body (source y=0..sy-1), shifted
-                                              east by `shift_east` so the pad has clear
-                                              space west of the body for the outpost
-                                              attachment.
-      y=body_y_offset+sy..end               : `air_above` layers of air (tree-canopy
-                                              clearance).
-    """
+def build_ship(name: str, cfg: dict) -> None:
+    """Bare hull NBT: source (trailing air trimmed) + air buffer above + anchor block.
+    The down-facing keel jigsaw must already be in the source — script preserves its
+    position and only rewrites its NBT to the canonical name/target/pool/final_state."""
     src = read_nbt(SOURCES_DIR / f"{name}.nbt")
-    stripped = strip_keel_jigsaws(src)
-    if stripped:
-        print(f"  [{name}] stripped {stripped} pre-existing keel jigsaw(s) from source")
+    palette = list(src["palette"])
+    blocks = list(src["blocks"])
 
-    sx, sy, sz = (int(x) for x in src["size"])
-    east_offset = cfg["shift_east"]
-    body_y_offset = cfg.get("body_y_offset", 3)
-    air_above = cfg.get("air_above", 0)
-    out_sx = sx + east_offset
-    out_sy = body_y_offset + sy + air_above
-    out_sz = sz
-    cz = out_sz // 2
+    sx, declared_sy, sz = (int(x) for x in src["size"])
+    sy = effective_hull_height(src)
+    if sy < declared_sy:
+        print(f"  [{name}] trimmed {declared_sy - sy} trailing air row(s) from source")
+    air_above = cfg.get("air_above", 16)
+    out_sx, out_sy, out_sz = sx, sy + air_above, sz
 
-    # Build fresh palette starting with stone/air/jigsaw/anchor.
-    palette: list[Compound] = []
-    pad_idx = palette_idx(palette, PAD_BLOCK)
+    _, keel_pos = find_jigsaw_by_orientation(palette, blocks, "down_")
+    if keel_pos is None:
+        raise SystemExit(
+            f"{name}: source NBT has no down-facing jigsaw. Place a 'minecraft:jigsaw' "
+            f"block oriented down_* at the desired keel position and re-save."
+        )
+
+    anchor_pos = cfg["anchor_src_pos"]
+    final_state = cfg["ship_keel_final_state"]
+
+    # Drop existing blocks at keel/anchor positions; we overwrite them.
+    blocks = [b for b in blocks
+              if (int(b["pos"][0]), int(b["pos"][1]), int(b["pos"][2])) not in
+                 (tuple(keel_pos), tuple(anchor_pos))]
+
     air_idx = palette_idx(palette, AIR_BLOCK)
-    jigsaw_idx = palette_idx(palette, JIGSAW_BLOCK, {"orientation": cfg["jigsaw_orientation"]})
+    jigsaw_idx = palette_idx(palette, JIGSAW_BLOCK, {"orientation": "down_south"})
     anchor_idx = palette_idx(palette, ANCHOR_BLOCK)
 
-    # Append source palette, tracking the index offset so we can remap source states.
-    src_palette = list(src["palette"])
-    src_idx_offset = len(palette)
-    for entry in src_palette:
-        palette.append(entry)
+    src_blocks = {(int(b["pos"][0]), int(b["pos"][1]), int(b["pos"][2])): b
+                  for b in blocks}
 
     out_blocks: list[Compound] = []
-    def add(state: int, x: int, y: int, z: int, block_nbt: Compound | None = None) -> None:
-        out_blocks.append(make_block(state, x, y, z, block_nbt))
-
-    src_block_index = {(int(b["pos"][0]), int(b["pos"][1]), int(b["pos"][2])): b
-                       for b in src["blocks"]}
-
-    body_y_end = body_y_offset + sy  # exclusive
-
-    # The anchor block is stamped at the configured source position, mapped through
-    # the same shift_east + body_y_offset transform as the rest of the ship body.
-    anchor_src = cfg.get("anchor_src_pos")
-    if anchor_src is None:
-        raise SystemExit(f"ship '{name}' is missing anchor_src_pos in SHIPS config")
-    anchor_out_pos = (
-        anchor_src[0] + east_offset,
-        anchor_src[1] + body_y_offset,
-        anchor_src[2],
-    )
-
     for y in range(out_sy):
         for x in range(out_sx):
             for z in range(out_sz):
-                if y == 0:
-                    # Pad layer. The jigsaw cell is overwritten below — but the
-                    # jigsaw's final_state=stone_bricks makes the post-replacement
-                    # state match the pad anyway.
-                    if x == 0 and z == cz:
-                        add(jigsaw_idx, x, y, z,
-                            keel_jigsaw_nbt(final_state=PAD_BLOCK))
-                    else:
-                        add(pad_idx, x, y, z)
-                elif y < body_y_offset:
-                    # Air gap between pad and ship keel.
-                    add(air_idx, x, y, z)
-                elif y < body_y_end:
-                    # Ship body — source y = output y - body_y_offset.
-                    # The anchor block overrides whatever the source had at this cell
-                    # (cfg["anchor_src_pos"] should be an air cell anyway).
-                    if (x, y, z) == anchor_out_pos:
-                        add(anchor_idx, x, y, z, ship_anchor_nbt(name))
-                        continue
-                    sx_in = x - east_offset
-                    sy_in = y - body_y_offset
-                    if 0 <= sx_in < sx and 0 <= z < sz:
-                        src_b = src_block_index.get((sx_in, sy_in, z))
-                        if src_b is not None:
-                            add(int(src_b["state"]) + src_idx_offset, x, y, z, src_b.get("nbt"))
-                        else:
-                            add(air_idx, x, y, z)
-                    else:
-                        add(air_idx, x, y, z)
+                if (x, y, z) == tuple(keel_pos):
+                    out_blocks.append(make_block(jigsaw_idx, x, y, z,
+                                                 keel_jigsaw_nbt(final_state)))
+                elif (x, y, z) == tuple(anchor_pos):
+                    out_blocks.append(make_block(anchor_idx, x, y, z,
+                                                 ship_anchor_nbt(name)))
+                elif y < sy and (x, y, z) in src_blocks:
+                    sb = src_blocks[(x, y, z)]
+                    out_blocks.append(make_block(int(sb["state"]), x, y, z, sb.get("nbt")))
                 else:
-                    # Top air-buffer.
-                    add(air_idx, x, y, z)
+                    out_blocks.append(make_block(air_idx, x, y, z))
 
-    out_nbt = File(Compound({
+    write_nbt(File(Compound({
         "size": List[Int]([Int(out_sx), Int(out_sy), Int(out_sz)]),
         "palette": List[Compound](palette),
         "blocks": List[Compound](out_blocks),
         "entities": src.get("entities", List[Compound]()),
         "DataVersion": src.get("DataVersion", Int(3955)),
-    }))
-    write_nbt(out_nbt, OUT_DIR / f"{name}.nbt")
-    print(f"  [{name}] wrote {out_sx}x{out_sy}x{out_sz}, {len(out_blocks)} blocks "
-          f"(keel jigsaw at (0, 0, {cz}) facing {cfg['jigsaw_orientation']}, "
-          f"pad y=0, air y=1..{body_y_offset-1}, body y={body_y_offset}..{body_y_end-1}, "
-          f"anchor at {anchor_out_pos})")
+    })), OUT_DIR / f"{name}.nbt")
+
+    print(f"  [{name}] wrote bare ship {out_sx}x{out_sy}x{out_sz} "
+          f"(hull y=0..{sy-1}, buffer y={sy}..{out_sy-1}, "
+          f"keel at {tuple(keel_pos)}, anchor at {tuple(anchor_pos)})")
 
 
-def build_ship_with_external_pad(name: str, cfg: dict) -> None:
-    """Bare ship NBT (no pad) with a center-bottom downward keel jigsaw + a separate
-    `<name>_pad.nbt` parent piece (stone pad + air column + upward connector)."""
-    src = read_nbt(SOURCES_DIR / f"{name}.nbt")
-    stripped = strip_keel_jigsaws(src)
-    if stripped:
-        print(f"  [{name}] stripped {stripped} pre-existing keel jigsaw(s) from source")
-
-    sx, sy, sz = (int(x) for x in src["size"])
-
-    # Inject keel jigsaw at the center-bottom of the source NBT — facing whatever the
-    # config asked for (currently down_south to attach to the pad's upward connector).
+def build_pad(name: str, cfg: dict) -> None:
+    """Pad NBT: source verbatim + normalised jigsaw NBT. The up-facing jigsaw is
+    required. Outpost-attached pads additionally require a west-facing jigsaw."""
+    src_path = SOURCES_DIR / f"{name}_pad.nbt"
+    if not src_path.exists():
+        raise SystemExit(
+            f"{name}_pad: source NBT missing at {src_path}. All pads must be authored "
+            f"by hand — there is no programmatic fallback."
+        )
+    src = read_nbt(src_path)
+    sx, sy, sz = (int(v) for v in src["size"])
     palette = list(src["palette"])
-    jigsaw_idx = palette_idx(palette, JIGSAW_BLOCK, {"orientation": cfg["jigsaw_orientation"]})
-    anchor_idx = palette_idx(palette, ANCHOR_BLOCK)
-    cx, cz = sx // 2, sz // 2
+    blocks = list(src["blocks"])
 
-    # Filter: drop the cell where the keel jigsaw lands, AND the cell where the anchor
-    # block lands (we replace whatever was there — should be air per cfg).
-    anchor_src = cfg.get("anchor_src_pos")
-    if anchor_src is None:
-        raise SystemExit(f"ship '{name}' is missing anchor_src_pos in SHIPS config")
-    anchor_tuple = (anchor_src[0], anchor_src[1], anchor_src[2])
-    blocks = []
+    _, up_pos = find_jigsaw_by_orientation(palette, blocks, "up_")
+    if up_pos is None:
+        raise SystemExit(
+            f"{name}_pad: source has no up-facing jigsaw. Place a 'minecraft:jigsaw' "
+            f"block oriented up_* at the cell where the ship's keel should attach."
+        )
+
+    outpost_attached = cfg["outpost_attached"]
+    if outpost_attached:
+        _, west_pos = find_jigsaw_by_orientation(palette, blocks, "west_")
+        if west_pos is None:
+            print(f"  [{name}_pad] WARN: outpost_attached=True but no west-facing "
+                  f"jigsaw in source — this pad won't chain from outposts until you "
+                  f"add one. Ship-pad attachment still works.")
+    else:
+        west_pos = None
+
+    # Drop blocks at jigsaw positions — we overwrite with normalised NBT.
+    overwrite = {tuple(up_pos)}
+    if west_pos is not None:
+        overwrite.add(tuple(west_pos))
+    blocks = [b for b in blocks
+              if (int(b["pos"][0]), int(b["pos"][1]), int(b["pos"][2])) not in overwrite]
+
+    # Preserve the original jigsaw blockstates (so we don't lose the user's orientation
+    # rotation suffix). Reuse palette indexes already in the source.
+    up_state = None
+    west_state = None
     for b in src["blocks"]:
-        bp = (int(b["pos"][0]), int(b["pos"][1]), int(b["pos"][2]))
-        if bp == (cx, 0, cz):
-            continue  # keel jigsaw cell
-        if bp == anchor_tuple:
-            continue  # anchor cell
-        blocks.append(b)
-    blocks.append(make_block(jigsaw_idx, cx, 0, cz, keel_jigsaw_nbt()))
-    blocks.append(make_block(anchor_idx, anchor_src[0], anchor_src[1], anchor_src[2],
-                             ship_anchor_nbt(name)))
+        pos = (int(b["pos"][0]), int(b["pos"][1]), int(b["pos"][2]))
+        if pos == tuple(up_pos):
+            up_state = int(b["state"])
+        elif west_pos is not None and pos == tuple(west_pos):
+            west_state = int(b["state"])
 
-    out_nbt = File(Compound({
+    src_blocks = {(int(b["pos"][0]), int(b["pos"][1]), int(b["pos"][2])): b
+                  for b in blocks}
+
+    ship_pool = f"mcpirates:airships_{name}_only"
+
+    out_blocks: list[Compound] = []
+    for y in range(sy):
+        for x in range(sx):
+            for z in range(sz):
+                if (x, y, z) == tuple(up_pos):
+                    out_blocks.append(make_block(up_state, x, y, z,
+                                                 pad_up_jigsaw_nbt(ship_pool)))
+                elif west_pos is not None and (x, y, z) == tuple(west_pos):
+                    out_blocks.append(make_block(west_state, x, y, z,
+                                                 pad_west_jigsaw_nbt()))
+                elif (x, y, z) in src_blocks:
+                    sb = src_blocks[(x, y, z)]
+                    out_blocks.append(make_block(int(sb["state"]), x, y, z, sb.get("nbt")))
+                # else: cell absent from source → skip (will be air on placement default)
+
+    write_nbt(File(Compound({
         "size": List[Int]([Int(sx), Int(sy), Int(sz)]),
         "palette": List[Compound](palette),
-        "blocks": List[Compound](blocks),
+        "blocks": List[Compound](out_blocks),
         "entities": src.get("entities", List[Compound]()),
         "DataVersion": src.get("DataVersion", Int(3955)),
-    }))
-    write_nbt(out_nbt, OUT_DIR / f"{name}.nbt")
-    print(f"  [{name}] wrote bare ship {sx}x{sy}x{sz}, "
-          f"keel jigsaw at ({cx}, 0, {cz}) facing {cfg['jigsaw_orientation']}, "
-          f"anchor at {anchor_tuple}")
+    })), OUT_DIR / f"{name}_pad.nbt")
 
-    # Now the parent pad piece.
-    pad_sx = cfg["pad_size_x"]
-    pad_sz = cfg["pad_size_z"]
-    pad_jy = cfg["pad_jigsaw_y"]
-    pad_sy = pad_jy + sy + cfg["pad_buffer_above"]
+    style = "outpost-attached" if outpost_attached else "standalone"
+    info = f"up jigsaw at {tuple(up_pos)} -> {ship_pool}"
+    if west_pos is not None:
+        info += f", west jigsaw at {tuple(west_pos)}"
+    print(f"  [{name}_pad] wrote {style} pad {sx}x{sy}x{sz} ({info})")
 
-    pad_palette: list[Compound] = []
-    pad_pad_idx = palette_idx(pad_palette, PAD_BLOCK)
-    pad_air_idx = palette_idx(pad_palette, AIR_BLOCK)
-    pad_jigsaw_idx = palette_idx(pad_palette, JIGSAW_BLOCK, {"orientation": "up_north"})
 
-    jigsaw_x, jigsaw_z = pad_sx // 2, pad_sz // 2
-
-    pad_blocks: list[Compound] = []
-    for y in range(pad_sy):
-        for x in range(pad_sx):
-            for z in range(pad_sz):
-                if y == 0:
-                    pad_blocks.append(make_block(pad_pad_idx, x, y, z))
-                elif y == pad_jy and x == jigsaw_x and z == jigsaw_z:
-                    pad_blocks.append(make_block(pad_jigsaw_idx, x, y, z, landing_pad_jigsaw_nbt()))
-                else:
-                    pad_blocks.append(make_block(pad_air_idx, x, y, z))
-
-    pad_nbt = File(Compound({
-        "size": List[Int]([Int(pad_sx), Int(pad_sy), Int(pad_sz)]),
-        "palette": List[Compound](pad_palette),
-        "blocks": List[Compound](pad_blocks),
-        "entities": List[Compound](),
-        "DataVersion": Int(3955),
-    }))
-    write_nbt(pad_nbt, OUT_DIR / f"{name}_pad.nbt")
-    print(f"  [{name}_pad] wrote {pad_sx}x{pad_sy}x{pad_sz}, "
-          f"upward jigsaw at ({jigsaw_x}, {pad_jy}, {jigsaw_z})")
+def build_appendage(name: str) -> None:
+    """Copy an appendage source NBT into the resources structure dir. No transformation
+    — jigsaw NBT must already be correct in the source (set via /data merge block in
+    MC before saving, or edited directly)."""
+    src = SOURCES_DIR / f"{name}.nbt"
+    if not src.exists():
+        raise SystemExit(f"{name}: appendage source NBT missing at {src}")
+    dst = OUT_DIR / f"{name}.nbt"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dst)
+    print(f"  [{name}] copied source -> structure/{name}.nbt")
 
 
 def build_base_plate_with_airship(pool: str, out_name: str) -> None:
     """Clone vanilla pillager_outpost/base_plate, repoint its east-facing feature_plates
-    jigsaw at (15, 0, 8) to {@code pool}, and write the result to
-    src/.../structure/{@code out_name}.nbt.
-
-    Called once with the default 50/50 pool for normal worldgen, then once per ship for
-    the single-ship variants the {@code /mcpirates outpost spawn <ship>} command places."""
+    jigsaw at (15, 0, 8) at our pool. Called once for the default airship_pads pool and
+    once per outpost-attached ship for the single-pad variants `/mcpirates outpost spawn
+    <ship>` uses."""
     if not NEOFORGE_RESOURCE_JAR.exists():
         raise SystemExit(f"Vanilla resource jar not found: {NEOFORGE_RESOURCE_JAR}\n"
                          "Run `./gradlew createMinecraftArtifacts` first.")
 
-    # Extract vanilla NBT (cached under build/tmp so we only do this once per session).
     tmp = REPO_ROOT / "build" / "tmp" / "vanilla_base_plate.nbt"
     if not tmp.exists():
         tmp.parent.mkdir(parents=True, exist_ok=True)
@@ -456,7 +439,7 @@ def build_base_plate_with_airship(pool: str, out_name: str) -> None:
         block_nbt = block.get("nbt")
         if block_nbt is None or str(block_nbt.get("name", "")) != "minecraft:plate_entry":
             continue
-        block_nbt["target"] = String(KEEL_JIGSAW_NAME)
+        block_nbt["target"] = String(KEEL_JIGSAW_NAME)  # matches pad's west-facing keel
         block_nbt["pool"] = String(pool)
         block_nbt["name"] = String("mcpirates:airship_anchor")
         repointed += 1
@@ -472,55 +455,33 @@ def build_base_plate_with_airship(pool: str, out_name: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def do_backup() -> Path | None:
-    """Auto-backup is disabled — {@code tools/backups/original/} is the only kept copy
-    (the earliest pre-corruption snapshot of airship_small + friends, useful for
-    recovering source data if a script messes things up). Re-enable by un-no-op-ing
-    this function if you need timestamped backups again."""
-    return None
-
-
-def build_ship(name: str) -> None:
-    cfg = SHIPS[name]
-    print(f"\nbuilding {name}…")
-    if cfg.get("internal_pad"):
-        build_ship_with_internal_pad(name, cfg)
-    elif cfg.get("external_pad"):
-        build_ship_with_external_pad(name, cfg)
-    else:
-        raise ValueError(f"ship {name!r} has neither internal_pad nor external_pad in config")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--ship", choices=list(SHIPS),
-                        help="Rebuild only this ship (and its pad if external). "
-                             "Default: all ships.")
-    parser.add_argument("--no-backup", action="store_true",
-                        help="(no-op) — auto-backup is disabled; flag preserved for "
-                             "script-call compatibility.")
+                        help="Rebuild only this ship + its pad. Default: all ships.")
     parser.add_argument("--skip-base-plate", action="store_true",
-                        help="Skip rebuilding base_plate_with_airship.nbt.")
+                        help="Skip rebuilding base_plate_with_airship.nbt and variants.")
     args = parser.parse_args()
-
-    if not args.no_backup:
-        do_backup()
 
     ships = [args.ship] if args.ship else list(SHIPS)
     for name in ships:
-        build_ship(name)
+        cfg = SHIPS[name]
+        print(f"\nbuilding {name}…")
+        build_ship(name, cfg)
+        build_pad(name, cfg)
 
-    # Rebuild outpost base plate variants whenever any outpost-attached ship is in scope.
-    # We always build the default (50/50 pool) plus one per outpost-attached ship that's
-    # in scope, where the variant points at a single-ship pool. The single-ship variants
-    # are the targets of `/mcpirates outpost spawn <ship>`.
-    outpost_ships = [n for n in ships if SHIPS[n].get("internal_pad")]
+    if not args.ship:
+        print("\nbuilding appendages…")
+        for app in APPENDAGES:
+            build_appendage(app)
+
+    outpost_ships = [n for n in ships if SHIPS[n]["outpost_attached"]]
     if outpost_ships and not args.skip_base_plate:
         print("\nbuilding outpost base plate variants…")
-        build_base_plate_with_airship("mcpirates:airships", "base_plate_with_airship")
+        build_base_plate_with_airship("mcpirates:airship_pads", "base_plate_with_airship")
         for n in outpost_ships:
-            build_base_plate_with_airship(f"mcpirates:airships_{n}_only",
+            build_base_plate_with_airship(f"mcpirates:airship_pads_{n}_only",
                                           f"base_plate_with_{n}")
 
     print("\ndone.")

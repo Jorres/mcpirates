@@ -21,12 +21,18 @@ public final class SingleFrontCannonCombat implements CombatBehavior {
     @Override
     public void aim(Airship ship, ServerPlayer target) {
         if (ship.slCannonMounts.isEmpty()) return;
-        CannonOps.aimAt(ship, ship.slCannonMounts.get(0), target);
+        net.minecraft.core.BlockPos mount = ship.slCannonMounts.get(0);
+        // Skip aiming when the gunner is dead — cosmetically the barrel freezes at its
+        // last aim, signalling "this cannon is out of action".
+        if (!ship.isMountManned(mount)) return;
+        CannonOps.aimAt(ship, mount, target);
     }
 
     @Override
     public boolean fire(Airship ship, ServerPlayer target) {
         if (ship.slCannonMounts.isEmpty()) return false;
-        return CannonOps.fireOnce(ship, ship.slCannonMounts.get(0));
+        net.minecraft.core.BlockPos mount = ship.slCannonMounts.get(0);
+        if (!ship.isMountManned(mount)) return false;
+        return CannonOps.fireOnce(ship, mount);
     }
 }

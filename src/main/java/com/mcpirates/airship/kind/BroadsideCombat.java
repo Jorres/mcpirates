@@ -136,6 +136,9 @@ public final class BroadsideCombat implements CombatBehavior {
             MountSide ms = sides.get(i);
             if (ms.side() != active) continue;
             BlockPos slMount = ship.slCannonMounts.get(i);
+            // Skip cannons whose gunner is dead — barrel freezes at last aim. Per-cannon
+            // check so a single dead gunner doesn't take the whole broadside down.
+            if (!ship.isMountManned(slMount)) continue;
             CannonOps.Aim raw = CannonOps.computeAim(ship, slMount, target);
             float restYaw = (ms.side() == Side.LEFT) ? portRestYaw : starboardRestYaw;
             float clampedYaw = clampYaw(raw.yaw(), restYaw);
@@ -156,13 +159,22 @@ public final class BroadsideCombat implements CombatBehavior {
         if (active == null) return false;
         List<BlockPos> activeMounts = collectSideMounts(ship, active);
         if (activeMounts.isEmpty()) return false;
+        // Filter to mounts whose cannoneer is still alive. The rolling cursor is then
+        // taken modulo the *manned* count, so dying gunners naturally shrink the rotation
+        // without skip cycles. If every gunner on the active side is dead, we return
+        // false without consuming the fire tick — the brain just keeps trying next tick.
+        List<BlockPos> manned = new ArrayList<>(activeMounts.size());
+        for (BlockPos m : activeMounts) {
+            if (ship.isMountManned(m)) manned.add(m);
+        }
+        if (manned.isEmpty()) return false;
         // Pick the next cannon in the rolling sequence. cursor starts at -1 so the first
         // shot lands on index 0. (cursor + 1) % size handles wrap and side-flip both —
         // see class doc.
-        int next = Math.floorMod(ship.combatCursor + 1, activeMounts.size());
+        int next = Math.floorMod(ship.combatCursor + 1, manned.size());
         ship.combatCursor = next;
-        boolean fired = CannonOps.fireOnce(ship, activeMounts.get(next));
-        if (fired && next == activeMounts.size() - 1) {
+        boolean fired = CannonOps.fireOnce(ship, manned.get(next));
+        if (fired && next == manned.size() - 1) {
             // We just fired the last cannon on the active side — apply the salvo
             // cooldown. Next fire() returns false until now + SALVO_COOLDOWN_TICKS, at
             // which point the cursor wraps to 0 for the next roll.

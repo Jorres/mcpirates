@@ -1,0 +1,16 @@
+{
+  "_comment": "Galleon ship pool. galleon_pad.nbt's up-facing jigsaw targets this pool to attach the galleon hull above the pad. Replaces the older mcpirates:galleon pool — naming now consistent with airships_<ship>_only across all ships.",
+  "name": "mcpirates:airships_galleon_only",
+  "fallback": "minecraft:empty",
+  "elements": [
+    {
+      "weight": 1,
+      "element": {
+        "element_type": "minecraft:single_pool_element",
+        "location": "mcpirates:galleon",
+        "processors": { "processors": [] },
+        "projection": "rigid"
+      }
+    }
+  ]
+}

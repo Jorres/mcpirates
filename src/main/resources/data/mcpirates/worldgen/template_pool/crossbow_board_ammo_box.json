@@ -1,0 +1,16 @@
+{
+  "_comment": "Single-element pool for the crossbow_board_pad's east-side ammo box appendage. Same 100%-appearance pattern as airship_small_ammo_box — one element, fallback=empty.",
+  "name": "mcpirates:crossbow_board_ammo_box",
+  "fallback": "minecraft:empty",
+  "elements": [
+    {
+      "weight": 1,
+      "element": {
+        "element_type": "minecraft:single_pool_element",
+        "location": "mcpirates:crossbow_board_ammo_box",
+        "processors": { "processors": [] },
+        "projection": "rigid"
+      }
+    }
+  ]
+}

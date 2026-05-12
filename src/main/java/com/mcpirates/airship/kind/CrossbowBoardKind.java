@@ -74,4 +74,9 @@ public final class CrossbowBoardKind implements AirshipKind {
     @Override public BlockPos glueMax() { return new BlockPos(+3, +4, +6); }
 
     @Override public CombatBehavior combat() { return combat; }
+
+    /** 30-block stand-off. Crew crossbows reach 40 blocks, so orbiting at 30 keeps the
+     *  ship well inside firing range without flying *into* the target. Brain reads this
+     *  for the orbit goal during PURSUE. */
+    @Override public double orbitRadius() { return 30.0; }
 }
