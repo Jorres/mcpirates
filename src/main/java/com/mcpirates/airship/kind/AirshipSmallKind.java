@@ -35,11 +35,6 @@ public final class AirshipSmallKind implements AirshipKind {
     }
 
     @Override
-    public int readAnchorState(BlockEntity be) {
-        return be instanceof AnalogLeverBlockEntity al ? al.getState() : -1;
-    }
-
-    @Override
     public BlockPos anchorToLeverDelta() {
         // anchor sits at source (3, 3, 5) — air cell immediately NBT-north of the lever
         // at source (3, 3, 6). Delta from anchor to lever = (0, 0, +1).

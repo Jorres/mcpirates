@@ -26,6 +26,10 @@ public final class Airship {
      *  re-acquired each tick via the container. */
     public final UUID subLevelId;
     public SubLevel subLevel;
+    /** True when the SubLevel was last seen loaded by the brain. Flipped on the
+     *  transition edges so the brain can emit one log line per unload/reload event
+     *  instead of spamming every tick. */
+    public boolean wasSubLevelLoaded = true;
     /** Liftoff-lever world-pos; also the RETURN target. */
     public final BlockPos airpadAnchor;
     public final AirshipKind kind;

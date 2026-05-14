@@ -39,11 +39,6 @@ public final class CrossbowBoardKind implements AirshipKind {
     }
 
     @Override
-    public int readAnchorState(BlockEntity be) {
-        return be instanceof AnalogLeverBlockEntity al ? al.getState() : -1;
-    }
-
-    @Override
     public BlockPos anchorToLeverDelta() {
         // anchor at source (2, 3, 8) — air cell NBT-north of the left primary lever
         // at source (2, 3, 9). Delta = (0, 0, +1).

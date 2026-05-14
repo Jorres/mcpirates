@@ -10,7 +10,7 @@ import java.util.Optional;
 
 /**
  * Per-design constants for one kind of pirate airship. The {@link com.mcpirates.airship.AirshipBrain}
- * handles flight envelope behaviour (LIFTOFF / PURSUE / RETURN / HOVER, orbit math, throttle PD,
+ * handles flight envelope behaviour (LIFTOFF / PURSUE / RETURN / HOVER, orbit math, plateau-based altitude control,
  * tank-steer logic) generically; everything that depends on <em>where the levers are</em> or
  * <em>which cannons exist</em> lives here.
  *
@@ -52,14 +52,6 @@ public interface AirshipKind {
     /** Is this BE possibly a primary anchor for this kind? Cheap pre-filter the trigger
      *  uses when reading the actual lever pointed at by the anchor block. */
     boolean isPrimaryAnchorBE(BlockEntity be);
-
-    /** Current 0..15 state of this anchor BE. Trigger uses this to skip already-activated ships. */
-    int readAnchorState(BlockEntity be);
-
-    /** State to set on liftoff (caller compares {@code readAnchorState(be) >= activatedAt()}
-     *  to detect "already triggered"). 10 is the canonical burner-on level — high enough
-     *  to lift, low enough that the brain can dial it down further during HOVER. */
-    default int activatedAt() { return 10; }
 
     /** NBT-frame delta from the ship's metadata anchor block (placed by build_ships.py)
      *  to the primary lever (this kind's identity for layout purposes). Must match the

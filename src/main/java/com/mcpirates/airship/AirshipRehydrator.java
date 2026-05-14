@@ -128,11 +128,22 @@ public final class AirshipRehydrator {
         return registered;
     }
 
+    /** Resurrects an existing mcpirates SubLevel back into the brain's {@code SHIPS}
+     *  list — for ships that survived a server restart or had their chunks unloaded
+     *  and reloaded. The brain itself is in-memory only; the SubLevel + its userDataTag
+     *  stamp persist on disk, so this is how a flying ship "comes back."
+     *
+     *  <p>Fresh assemblies don't go through here — {@link AirshipLiftoffTrigger} calls
+     *  {@link AirshipBrain#register} directly during Step 8 of {@code activateShip},
+     *  passing {@code state=LIFTOFF} so the new ship runs the full
+     *  LIFTOFF → PURSUE/RETURN/HOVER state-machine path. Our {@link SubLevelObserver}
+     *  catches every SubLevel allocation (fresh OR disk-loaded) and queues the UUID,
+     *  so the duplicate-skip guard below is needed to bail out for ones the trigger
+     *  has already registered. */
     private static boolean tryRehydrate(ServerLevel parentLevel, SubLevel subLevel) {
         if (!(subLevel instanceof ServerSubLevel ssl)) return false;
-        // Skip ships already registered (the trigger may have registered this SubLevel
-        // moments before our observer caught it — without this guard every fresh
-        // assembly produces a duplicate brain entry).
+        // Skip ships already in the brain — the trigger races our observer for fresh
+        // assemblies and gets there first.
         for (Airship existing : AirshipBrain.ships()) {
             if (existing.subLevelId.equals(ssl.getUniqueId())) return false;
         }

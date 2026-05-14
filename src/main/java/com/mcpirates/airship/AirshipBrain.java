@@ -144,8 +144,17 @@ public final class AirshipBrain {
         }
         SubLevel live = container.getSubLevel(a.subLevelId);
         if (live == null) {
+            if (a.wasSubLevelLoaded) {
+                MCPirates.LOGGER.info("ship {} ({}) SubLevel unloaded (holding-chunk)",
+                        a.subLevelId, a.kind.name());
+                a.wasSubLevelLoaded = false;
+            }
             // Holding-chunk: persisted to disk, not yet rehydrated. Stay registered.
             return true;
+        }
+        if (!a.wasSubLevelLoaded) {
+            MCPirates.LOGGER.info("ship {} ({}) SubLevel reloaded", a.subLevelId, a.kind.name());
+            a.wasSubLevelLoaded = true;
         }
         if (live != a.subLevel) {
             a.subLevel = live;
@@ -378,8 +387,9 @@ public final class AirshipBrain {
 
     /** PURSUE altitude = player.eye + this many blocks. */
     private static final double PURSUE_ALT_OFFSET = 12.0;
-    /** Safety floor: below this height-above-terrain the brain bang-bangs to max lift
-     *  so the ship can't be dragged down to where the cannon arc is cut off. */
+    /** Safety floor enforced by clamping the plateau pick: brain's targetY is bumped
+     *  up to {@code maxGround + MIN_ALT_ABOVE_GROUND + 2} so the picked plateau row
+     *  always equilibrates above this clearance, keeping the cannon arc unobstructed. */
     private static final double MIN_ALT_ABOVE_GROUND = 30.0;
 
     private static final int[] GROUND_LOOKAHEAD_SAMPLES = {0, 8, 16, 24, 32};
@@ -406,14 +416,22 @@ public final class AirshipBrain {
     }
 
     /** Picks the plateau row whose equilibrium altitude is closest to the target. LIFTOFF /
-     *  HOVER / RETURN aim for the kind's cruise altitude; PURSUE aims for the player.
-     *  Returns null while the balloon hasn't attached yet (caller skips the write; the
-     *  trigger's activated-lever value keeps the burner ignited so the balloon attaches
-     *  on its own). */
+     *  HOVER / RETURN aim for the kind's cruise altitude; PURSUE aims for the player. */
     private static LiftSetting chooseLiftSetting(
             Airship a, State state, Vector3d shipPos, LivingEntity target, int maxGround) {
         PlateauTable table = ensurePlateauTable(a, shipPos);
-        if (table == null || table.size() == 0) return null;
+        // Chicken-and-egg breaker. Plateau table requires balloonCap > 0 (the rebuild
+        // condition in ensurePlateauTable), balloonCap requires a balloon attached to the
+        // burner, balloon attachment requires Aeronautics' canOutputGas() == true, and
+        // canOutputGas() requires lever > 0. If we returned null here (or wrote nothing),
+        // the burner never ignites on a fresh assembly because the structure NBT bakes
+        // lever=0, so the loop never closes and the ship just sits at the airpad with no
+        // lift. Writing any positive (lever, vol) breaks the cycle: burner outputs gas,
+        // balloon attaches within a few ticks, ensurePlateauTable starts succeeding, and
+        // the next decision tick replaces this with the real plateau pick.
+        if (table == null || table.size() == 0) {
+            return new LiftSetting(/*lever=*/10, LiftMath.BURNER_MIN_VOLUME);
+        }
 
         double floor = maxGround + MIN_ALT_ABOVE_GROUND + 2.0;
         double cruiseY = a.airpadAnchor.getY() + a.kind.cruiseRise();
@@ -465,12 +483,25 @@ public final class AirshipBrain {
         ClutchLevers.setPowered(subLevelLevel, a.slRightClutchLever, /*powered=disengaged=*/true);
     }
 
-    /** One-shot shutdown when the crew is wiped: disengage both clutches so the
-     *  propellers stop. Throttle / burner state is left as-is — a dead crew can't
-     *  change it, and the ship drifts at whatever lift it had. */
+    /** One-shot shutdown when the crew is wiped:
+     *  <ol>
+     *    <li>Disengage both clutches so propellers stop.</li>
+     *    <li>Strip the {@code "mcpirates"} compound from the SubLevel's user-data tag —
+     *        rehydrator looks for that stamp on startup; without it the SubLevel
+     *        survives as a vanilla Sable contraption and we never touch it again.</li>
+     *  </ol>
+     *  Throttle / burner state is left as-is — dead crew can't change it, and the
+     *  wreck drifts on whatever lift it had until balloon drains naturally. */
     private static void shutdownDerelict(Airship a, Level subLevelLevel) {
         ClutchLevers.setPowered(subLevelLevel, a.slLeftClutchLever, true);
         ClutchLevers.setPowered(subLevelLevel, a.slRightClutchLever, true);
+        if (a.subLevel instanceof ServerSubLevel ssl) {
+            net.minecraft.nbt.CompoundTag tag = ssl.getUserDataTag();
+            if (tag != null && tag.contains("mcpirates")) {
+                tag.remove("mcpirates");
+                ssl.setUserDataTag(tag);
+            }
+        }
     }
 
     // ───────────────────────────── Debug overlay ─────────────────────────────

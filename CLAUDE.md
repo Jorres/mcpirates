@@ -115,13 +115,20 @@ run the gametest suite as the regression check:
 ./gradlew runGameTestServer
 ```
 
-It takes ~30 s cold, ~5 s warm cache, and runs 6 tests covering buoyancy
-(`airshipSmallRisesUnderBuoyancy`), assembly + actuation across kinds and
-rotations, ground combat spawn, and the on-foot retreat → DORMANT → air
-arrival lifecycle. All tests are sequential (each in its own batch), isolated
-(arenas ~200 blocks apart via `StructureGridSpawnerMixin`), and the gametest
-world is wiped before every run via `build.gradle`'s `doFirst` hook — no
-state leaks between runs.
+Cold ~50s, warm ~30s. Runs 12 tests:
+- **Buoyancy** — `airshipSmallRisesUnderBuoyancy`, `airshipSmallStabilizesAtFixedTargetHeight`
+- **Assembly + actuation** across kinds and rotations — `assemblesAndActuatesOnPursue`,
+  `assemblesAndActuatesRotated90`, `assemblesCrossbowBoardKindAndActuates`
+- **Ground combat** — `groundCombatSpawnsForOnFootPlayer`,
+  `groundCombatRetreatsToDormantThenAirArrivalLifts`
+- **Rehydrate / defeat** — `rehydrateAtAirpadPicksHover`,
+  `rehydrateAwayFromAirpadPicksReturn`, `crewDefeatShutdownDisengagesAndDeregisters`,
+  `rehydrateSkipsDefeatedShip`, `multiShipRehydrate`
+
+All tests are sequential (each in its own batch), isolated (arenas ~200
+blocks apart via `StructureGridSpawnerMixin`), and the gametest world is
+wiped before every run via `build.gradle`'s `doFirst` hook — no state leaks
+between runs.
 
 Failing tests print to console with a `LogTestReporter` line; the per-tick
 state of each ship is in `runs/gametest/logs/latest.log`.

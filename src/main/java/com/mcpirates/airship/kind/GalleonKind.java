@@ -59,11 +59,6 @@ public final class GalleonKind implements AirshipKind {
     }
 
     @Override
-    public int readAnchorState(BlockEntity be) {
-        return be instanceof ThrottleLeverBlockEntity tl ? tl.getState() : -1;
-    }
-
-    @Override
     public BlockPos anchorToLeverDelta() {
         // ship_anchor at NBT (3, 9, 13), left throttle at NBT (4, 8, 13).
         // Delta = (+1, -1, 0). Unambiguously points at the LEFT throttle of the pair

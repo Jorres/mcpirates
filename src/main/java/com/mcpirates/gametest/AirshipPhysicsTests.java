@@ -13,6 +13,7 @@ import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
@@ -144,6 +145,17 @@ public final class AirshipPhysicsTests {
                         helper.fail("no MCPShipAnchorBlockEntity in the test arena");
                         return;
                     }
+                    // Force-load a generous chunk region around the test arena. The ship
+                    // orbits the zombie at radius 25 during PURSUE, entering chunks the
+                    // gametest world doesn't keep loaded — Sable's PhysicsChunkTicketManager
+                    // then unloads the SubLevel and the brain stops being able to update
+                    // lift. Forcing keeps the SubLevel ticking for the full settle.
+                    ChunkPos centre = new ChunkPos(anchorWorld);
+                    for (int dx = -3; dx <= 3; dx++) {
+                        for (int dz = -3; dz <= 3; dz++) {
+                            parentLevel.setChunkForced(centre.x + dx, centre.z + dz, true);
+                        }
+                    }
                     if (!AirshipLiftoffTrigger.activateAnchor(parentLevel, anchorWorld)) {
                         helper.fail("activateAnchor returned false at " + anchorWorld);
                     }
@@ -216,6 +228,16 @@ public final class AirshipPhysicsTests {
                     Zombie target = targetRef.get();
                     if (target != null) {
                         target.discard();
+                    }
+                    // Release the chunk-force tickets we added in setup.
+                    BlockPos anchorWorld = findAnchor(helper);
+                    if (anchorWorld != null) {
+                        ChunkPos centre = new ChunkPos(anchorWorld);
+                        for (int dx = -3; dx <= 3; dx++) {
+                            for (int dz = -3; dz <= 3; dz++) {
+                                parentLevel.setChunkForced(centre.x + dx, centre.z + dz, false);
+                            }
+                        }
                     }
                     TestSetup.reset(helper);
                 })

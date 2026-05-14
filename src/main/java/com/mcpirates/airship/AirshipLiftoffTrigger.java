@@ -55,7 +55,8 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Discovers dormant pirate airships and triggers their lift-off when a player gets within
  * {@link #PLAYER_CHUNK_RADIUS} chunks. The trigger fires once per ship — subsequent passes
- * skip via the kind's {@code readAnchorState() >= activatedAt()} check on the primary lever.
+ * skip already-triggered ships by the {@code !(be instanceof MCPShipAnchorBlockEntity)}
+ * check on the world anchor BE (assembly moves it into the SubLevel, leaving air).
  *
  * <p><strong>How a ship is identified:</strong> every airship structure NBT contains one
  * {@link com.mcpirates.airship.anchor.MCPShipAnchorBlock} placed inside the hull by
@@ -69,7 +70,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <ol>
  *     <li>Insert 64 coal into each portable engine the kind owns.</li>
- *     <li>Set every throttle-equivalent lever to {@link AirshipKind#activatedAt()}.</li>
+ *     <li>Leave the throttle levers in their NBT-baked state. The structure NBT
+ *         already has them at a positive value, so the burner ignites on assembly
+ *         and the brain takes over on its first decision tick.</li>
  *     <li>Spawn the honey-glue body using the kind's bounding box.</li>
  *     <li>Assemble the ship into a Sable SubLevel via {@link AirshipAssembler}.</li>
  *     <li>Reflectively call {@code CannonMountBlockEntity.assemble()} on each mount.</li>
@@ -310,12 +313,10 @@ public final class AirshipLiftoffTrigger {
         if (kind.groundCombat().isEmpty()) return;
         Rotation rotation = detectRotationFromAnchor(level, anchorPos, kind);
         if (rotation == null) return; // chunks not primed; retry next pass
-        // Belt-and-braces: don't spawn for a ship that's already activated (its lever
-        // state >= activatedAt). Without this an already-lifted ship's anchor would
-        // still solicit ground combat on the next on-foot pass.
+        // An already-triggered ship has its anchor BE moved into the SubLevel during
+        // assembly, so the early `!(be instanceof MCPShipAnchorBlockEntity)` check
+        // above already catches that case — no need for a lever-state cross-check.
         BlockPos leverPos = anchorPos.offset(kind.anchorToLeverDelta().rotate(rotation));
-        BlockEntity leverBe = level.getBlockEntity(leverPos);
-        if (leverBe != null && kind.readAnchorState(leverBe) >= kind.activatedAt()) return;
         // Defeated-ship guard: GROUND_ENGAGEMENTS is in-memory (wiped on restart),
         // but DefeatedAirships persists to SavedData. Without this check, walking
         // up to a previously-cleared ship in a new server session would re-spawn
@@ -390,17 +391,11 @@ public final class AirshipLiftoffTrigger {
             insertCoalIntoEngine(level, enginePos);
         }
 
-        // Step 2: flip every throttle lever to TARGET_STATE
-        int target = kind.activatedAt();
-        for (BlockPos lvPos : throttleLeverPositions) {
-            if (!ThrottleLevers.setState(level, lvPos, target)) {
-                MCPirates.LOGGER.warn("({}) couldn't set throttle lever at {} to {}",
-                        kind.name(), lvPos, target);
-                return;
-            }
-        }
-        MCPirates.LOGGER.info("activated {} throttle lever(s) at {} (state -> {})",
-                throttleLeverPositions.size(), pos, target);
+        // (No throttle-lever write here — the structure NBT bakes the lever at a
+        // positive state so the burner ignites on its own. Brain reads the SubLevel's
+        // burner state on its first decision tick and overwrites with the plateau pick.)
+        MCPirates.LOGGER.info("trigger ({}) at {}: {} throttle lever(s), waiting on brain",
+                kind.name(), pos, throttleLeverPositions.size());
 
         // Step 3: assemble — honey glue was spawned earlier in this same pass.
         BlockPos assemblySeed = pos.relative(connected.getOpposite());
@@ -472,7 +467,10 @@ public final class AirshipLiftoffTrigger {
         CaptainSpawner.CrewSpawnResult crew =
                 CaptainSpawner.spawn(subLevel, pos, offset, rotation, kind, slCannonMounts);
 
-        // Step 8: hand off
+        // Step 8: register with the brain in LIFTOFF state. Fresh assemblies go through
+        // the full LIFTOFF → PURSUE/RETURN/HOVER state-machine path. (The rehydrator's
+        // SubLevelObserver also caught the allocate; its later tryRehydrate call sees
+        // the UUID already registered here and skips.)
         AirshipBrain.register(
                 level, subLevel, pos, kind,
                 slThrottleLevers, slBurnerPositions, slLeftClutch, slRightClutch, slCannonMounts,
