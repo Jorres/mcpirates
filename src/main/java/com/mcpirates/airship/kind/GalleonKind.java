@@ -49,6 +49,10 @@ public final class GalleonKind implements AirshipKind {
      *  while the ship is still ascending fast. */
     @Override public double liftoffMinRise() { return 100.0; }
 
+    /** Galleon cruises lower than lighter kinds — heavy broadside design fights
+     *  near the player rather than as a high observation platform. */
+    @Override public double cruiseRise() { return 40.0; }
+
     @Override
     public boolean isPrimaryAnchorBE(BlockEntity be) {
         return be instanceof ThrottleLeverBlockEntity;
@@ -61,45 +65,46 @@ public final class GalleonKind implements AirshipKind {
 
     @Override
     public BlockPos anchorToLeverDelta() {
-        // anchor at source (3, 9, 13) — air cell NBT-north of the left throttle at
-        // source (3, 9, 14). Delta = (0, 0, +1). This unambiguously points at the
-        // LEFT throttle of the pair — the right throttle is at (3, 9, 14)+(+5,0,0).
-        return new BlockPos(0, 0, +1);
+        // ship_anchor at NBT (3, 9, 13), left throttle at NBT (4, 8, 13).
+        // Delta = (+1, -1, 0). Unambiguously points at the LEFT throttle of the pair
+        // — the right throttle is at (4, 8, 13)+(+3,0,0).
+        return new BlockPos(+1, -1, 0);
     }
 
-    // NBT-frame deltas from the left throttle lever at (3,9,14):
-    //   engines (4,5,8),(7,5,8) → (+1,-4,-6),(+4,-4,-6)
-    //   right throttle (8,9,14) → (+5,0,0)
-    //   left clutch lever (4,6,9) → (+1,-3,-5) — vanilla floor lever on top of create:clutch
-    //   right clutch lever (7,6,9) → (+4,-3,-5)
-    //   port cannons (x=3, z=8/11/16/19) at y=1 → (0,-8,-6),(0,-8,-3),(0,-8,+2),(0,-8,+5)
-    //   starboard (x=8, z=8/11/16/19) at y=1 → (+5,-8,-6),(+5,-8,-3),(+5,-8,+2),(+5,-8,+5)
+    // NBT-frame deltas from the left throttle lever at (4, 8, 13):
+    //   engines (4,5,8),(7,5,8) → (0,-3,-5),(+3,-3,-5)
+    //   right throttle (7,8,13) → (+3,0,0)
+    //   left clutch lever (4,6,9) → (0,-2,-4)
+    //   right clutch lever (7,6,9) → (+3,-2,-4)
+    //   port cannons (x=3, z=8/11/16/19) at y=1 → (-1,-7,-5),(-1,-7,-2),(-1,-7,+3),(-1,-7,+6)
+    //   starboard (x=8, z=8/11/16/19) at y=1 → (+4,-7,-5),(+4,-7,-2),(+4,-7,+3),(+4,-7,+6)
     @Override public List<BlockPos> engineDeltas() {
         return List.of(
-                new BlockPos(+1, -4, -6),
-                new BlockPos(+4, -4, -6));
+                new BlockPos(0, -3, -5),
+                new BlockPos(+3, -3, -5));
     }
     @Override public List<BlockPos> throttleLeverDeltas() {
-        return List.of(BlockPos.ZERO, new BlockPos(+5, 0, 0));
+        return List.of(BlockPos.ZERO, new BlockPos(+3, 0, 0));
     }
-    @Override public BlockPos leftClutchLeverDelta() { return new BlockPos(+1, -3, -5); }
-    @Override public BlockPos rightClutchLeverDelta() { return new BlockPos(+4, -3, -5); }
+    @Override public BlockPos leftClutchLeverDelta() { return new BlockPos(0, -2, -4); }
+    @Override public BlockPos rightClutchLeverDelta() { return new BlockPos(+3, -2, -4); }
     @Override public List<BlockPos> cannonMountDeltas() {
         return List.of(
-                new BlockPos(0, -8, -6),
-                new BlockPos(0, -8, -3),
-                new BlockPos(0, -8, +2),
-                new BlockPos(0, -8, +5),
-                new BlockPos(+5, -8, -6),
-                new BlockPos(+5, -8, -3),
-                new BlockPos(+5, -8, +2),
-                new BlockPos(+5, -8, +5));
+                new BlockPos(-1, -7, -5),
+                new BlockPos(-1, -7, -2),
+                new BlockPos(-1, -7, +3),
+                new BlockPos(-1, -7, +6),
+                new BlockPos(+4, -7, -5),
+                new BlockPos(+4, -7, -2),
+                new BlockPos(+4, -7, +3),
+                new BlockPos(+4, -7, +6));
     }
 
-    // Hull spans NBT (0..11, 0..14, 0..27). Lever at (3,9,14), so deltas:
-    //   min (-3,-9,-14)  max (+8,+5,+13)
-    @Override public BlockPos glueMin() { return new BlockPos(-3, -9, -14); }
-    @Override public BlockPos glueMax() { return new BlockPos(+8, +5, +13); }
+    // Hull spans NBT (0..11, 0..14, 0..27). Left throttle at (4, 8, 13), so deltas
+    // (preserving the same absolute hull region as before):
+    //   min (-4,-8,-13)  max (+7,+6,+14)
+    @Override public BlockPos glueMin() { return new BlockPos(-4, -8, -13); }
+    @Override public BlockPos glueMax() { return new BlockPos(+7, +6, +14); }
 
     @Override public CombatBehavior combat() { return combat; }
 }

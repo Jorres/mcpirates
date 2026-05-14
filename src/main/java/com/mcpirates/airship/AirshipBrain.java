@@ -104,18 +104,20 @@ public final class AirshipBrain {
             List<BlockPos> slCannonMounts,
             Vector3d shipLocalForward,
             List<AnchoredEntity> anchoredEntities,
-            java.util.Map<BlockPos, java.util.UUID> cannoneerByMount) {
+            java.util.Map<BlockPos, java.util.UUID> cannoneerByMount,
+            State initialState) {
         Airship a = new Airship(parentLevel, subLevel, airpadAnchor, kind,
                 slThrottleLevers, slBurnerPositions,
                 slLeftClutchLever, slRightClutchLever,
                 slCannonMounts, shipLocalForward, anchoredEntities, cannoneerByMount);
+        a.state = initialState;
         // Without this, the default 0 makes (now - stateEnteredTick) resolve to millions
         // and the LIFTOFF_MIN_TICKS gate silently no-ops.
         a.stateEnteredTick = parentLevel.getGameTime();
         SHIPS.add(a);
         MCPirates.LOGGER.info(
-                "registered pirate airship: kind={} subLevel={} anchor={} mounts={} throttles={} burners={} clutches=({},{}) fwd=({},{},{}) anchoredEntities={} cannoneers={}",
-                kind.name(), subLevel.getUniqueId(), airpadAnchor,
+                "registered pirate airship: kind={} subLevel={} state={} anchor={} mounts={} throttles={} burners={} clutches=({},{}) fwd=({},{},{}) anchoredEntities={} cannoneers={}",
+                kind.name(), subLevel.getUniqueId(), initialState, airpadAnchor,
                 slCannonMounts, slThrottleLevers, slBurnerPositions,
                 slLeftClutchLever, slRightClutchLever,
                 shipLocalForward.x, shipLocalForward.y, shipLocalForward.z,
@@ -151,6 +153,15 @@ public final class AirshipBrain {
         Level subLevelLevel = a.subLevel.getLevel();
         if (subLevelLevel == null) {
             return true;
+        }
+        // Crew-defeat: when every anchored pirate is dead the ship is leaderless.
+        // Cut lift + disengage clutches one final time so the wreck drifts down
+        // instead of cruising on fossilised throttle state, then deregister.
+        if (!a.isAnyCrewAlive()) {
+            shutdownDerelict(a, subLevelLevel);
+            MCPirates.LOGGER.info("ship {} ({}): crew defeated, brain deregistering",
+                    a.subLevel.getUniqueId(), a.kind.name());
+            return false;
         }
         // Sable's plot anchor lives in a @Unique mixin field that isn't serialised to
         // entity NBT, so chunk reload wipes it and the pillager freezes in mid-air.
@@ -329,37 +340,33 @@ public final class AirshipBrain {
         }
         a.balloonCapacity = balloonCap;
         int burnerCount = Math.max(1, a.slBurnerPositions.size());
-        int effectiveMax = (balloonCap > 0)
-                ? Math.max(LiftMath.BURNER_MIN_VOLUME, Math.min(LiftMath.BURNER_MAX_VOLUME, balloonCap / burnerCount))
-                : LiftMath.BURNER_MAX_VOLUME;
         int maxGroundAhead = maxGroundAhead(a, shipPos);
-        LiftSetting lift = chooseLiftSetting(a, a.state, shipPos, target, maxGroundAhead, effectiveMax);
-        for (BlockPos lever : a.slThrottleLevers) {
-            ThrottleLevers.setState(subLevelLevel, lever, lift.lever());
-        }
-        for (BlockPos burner : a.slBurnerPositions) {
-            HotAirBurners.setVolume(subLevelLevel, burner, lift.volume());
+        LiftSetting lift = chooseLiftSetting(a, a.state, shipPos, target, maxGroundAhead);
+        if (lift != null) {
+            for (BlockPos lever : a.slThrottleLevers) {
+                ThrottleLevers.setState(subLevelLevel, lever, lift.lever());
+            }
+            for (BlockPos burner : a.slBurnerPositions) {
+                HotAirBurners.setVolume(subLevelLevel, burner, lift.volume());
+            }
         }
         long bucket = System.currentTimeMillis() / 2000;
         if (bucket != a.lastThrottleLogBucket) {
             a.lastThrottleLogBucket = bucket;
+            double cruiseY = a.airpadAnchor.getY() + a.kind.cruiseRise();
             double targetY = (a.state == State.PURSUE && target != null)
                     ? Math.max(target.getEyeY() + PURSUE_ALT_OFFSET, maxGroundAhead + MIN_ALT_ABOVE_GROUND + 2.0)
-                    : Double.NaN;
-            double plateauT = burnerCount * (double) lift.volume() * lift.lever() / 15.0;
+                    : cruiseY;
             int plateauRows = a.plateauTable == null ? 0 : a.plateauTable.size();
+            String liftStr = lift == null ? "—" : (lift.lever() + "/" + lift.volume()
+                    + " T=" + String.format("%.1f", burnerCount * (double) lift.volume() * lift.lever() / 15.0));
             MCPirates.LOGGER.info(
-                    "ship {} ({}) throttle: state={} thr={} vol={} T={} plateauRows={} balloonCap={} effMax={} shipY={} maxGroundAhead={} altAboveMax={} targetY={} dy={}",
-                    a.subLevel.getUniqueId(), a.kind.name(), a.state, lift.lever(),
-                    lift.volume(),
-                    String.format("%.1f", plateauT),
-                    plateauRows,
-                    a.balloonCapacity, effectiveMax,
-                    String.format("%.1f", shipPos.y),
-                    maxGroundAhead,
-                    String.format("%.1f", shipPos.y - maxGroundAhead),
-                    Double.isNaN(targetY) ? "—" : String.format("%.1f", targetY),
-                    Double.isNaN(targetY) ? "—" : String.format("%.1f", shipPos.y - targetY));
+                    "ship {} ({}) throttle: state={} lift={} plateauRows={} balloonCap={} shipY={} maxGroundAhead={} targetY={} dy={}",
+                    a.subLevel.getUniqueId(), a.kind.name(), a.state, liftStr,
+                    plateauRows, a.balloonCapacity,
+                    String.format("%.1f", shipPos.y), maxGroundAhead,
+                    String.format("%.1f", targetY),
+                    String.format("%.1f", shipPos.y - targetY));
         }
 
         // Orbit-math intermediates for the overlay; clutch/throttle/burner state lives
@@ -398,29 +405,24 @@ public final class AirshipBrain {
         return maxGround;
     }
 
-    /** Bang-bang for LIFTOFF and ground-proximity (plateau fill lag is too slow);
-     *  otherwise plateau lookup against {@link Airship#plateauTable}. */
+    /** Picks the plateau row whose equilibrium altitude is closest to the target. LIFTOFF /
+     *  HOVER / RETURN aim for the kind's cruise altitude; PURSUE aims for the player.
+     *  Returns null while the balloon hasn't attached yet (caller skips the write; the
+     *  trigger's activated-lever value keeps the burner ignited so the balloon attaches
+     *  on its own). */
     private static LiftSetting chooseLiftSetting(
-            Airship a, State state, Vector3d shipPos, LivingEntity target,
-            int maxGround, int effectiveMax) {
-        LiftSetting bangBang = LiftMath.maxLift(effectiveMax);
-        if (state == State.LIFTOFF) return bangBang;
-        if (shipPos.y - maxGround < MIN_ALT_ABOVE_GROUND) return bangBang;
-
-        double targetY;
-        switch (state) {
-            case PURSUE -> {
-                if (target == null) return bangBang;
-                targetY = Math.max(
-                        target.getEyeY() + PURSUE_ALT_OFFSET,
-                        maxGround + MIN_ALT_ABOVE_GROUND + 2.0);
-            }
-            case RETURN, HOVER -> targetY = Math.max(shipPos.y, maxGround + MIN_ALT_ABOVE_GROUND + 2.0);
-            default -> { return bangBang; }
-        }
-
+            Airship a, State state, Vector3d shipPos, LivingEntity target, int maxGround) {
         PlateauTable table = ensurePlateauTable(a, shipPos);
-        if (table == null || table.size() == 0) return bangBang;
+        if (table == null || table.size() == 0) return null;
+
+        double floor = maxGround + MIN_ALT_ABOVE_GROUND + 2.0;
+        double cruiseY = a.airpadAnchor.getY() + a.kind.cruiseRise();
+        double targetY = switch (state) {
+            case LIFTOFF, RETURN, HOVER -> Math.max(cruiseY, floor);
+            case PURSUE -> target == null
+                    ? Math.max(cruiseY, floor)
+                    : Math.max(target.getEyeY() + PURSUE_ALT_OFFSET, floor);
+        };
         return table.pickClosest(targetY).toLiftSetting();
     }
 
@@ -461,6 +463,14 @@ public final class AirshipBrain {
         Level subLevelLevel = a.subLevel.getLevel();
         ClutchLevers.setPowered(subLevelLevel, a.slLeftClutchLever, /*powered=disengaged=*/true);
         ClutchLevers.setPowered(subLevelLevel, a.slRightClutchLever, /*powered=disengaged=*/true);
+    }
+
+    /** One-shot shutdown when the crew is wiped: disengage both clutches so the
+     *  propellers stop. Throttle / burner state is left as-is — a dead crew can't
+     *  change it, and the ship drifts at whatever lift it had. */
+    private static void shutdownDerelict(Airship a, Level subLevelLevel) {
+        ClutchLevers.setPowered(subLevelLevel, a.slLeftClutchLever, true);
+        ClutchLevers.setPowered(subLevelLevel, a.slRightClutchLever, true);
     }
 
     // ───────────────────────────── Debug overlay ─────────────────────────────

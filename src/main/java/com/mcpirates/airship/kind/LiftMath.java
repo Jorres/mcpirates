@@ -22,9 +22,4 @@ public final class LiftMath {
     public static int snapVolume(int v) {
         return Math.max(BURNER_MIN_VOLUME, (v / BURNER_VOLUME_STEP) * BURNER_VOLUME_STEP);
     }
-
-    /** Bang-bang: lever=15 at the snapped ceiling. */
-    public static LiftSetting maxLift(int effectiveMax) {
-        return new LiftSetting(15, snapVolume(effectiveMax));
-    }
 }

@@ -19,6 +19,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+from .bridge import BridgeClient, BridgeError
 from .rcon import RconClient, RconError
 
 
@@ -32,6 +33,7 @@ _DEFAULT_LOG = (
 _LOG_PATH = Path(os.environ.get("MC_LOG_PATH", str(_DEFAULT_LOG)))
 
 _rcon = RconClient(_HOST, _PORT, _PASS)
+_bridge = BridgeClient(_HOST, int(os.environ.get("MC_BRIDGE_PORT", "25580")))
 mcp = FastMCP("mcpirates")
 
 
@@ -40,6 +42,13 @@ def _run(command: str) -> str:
         return _rcon.cmd(command)
     except (OSError, RconError) as e:
         return f"[rcon error: {e}]"
+
+
+def _bridge_call(method: str, params: dict | None = None) -> dict | str:
+    try:
+        return _bridge.call(method, params)
+    except (OSError, BridgeError) as e:
+        return f"[bridge error: {e}]"
 
 
 @mcp.tool()
@@ -186,6 +195,36 @@ def summon(entity: str, x: float, y: float, z: float, nbt: str = "") -> str:
     """`/summon ENTITY X Y Z [NBT]`. NBT is SNBT, e.g. `{NoAi:1b}`."""
     suffix = f" {nbt}" if nbt else ""
     return _run(f"summon {entity} {x} {y} {z}{suffix}")
+
+
+@mcp.tool()
+def bridge_ping() -> dict | str:
+    """Round-trip sanity check against the Java JSON-RPC bridge (:25580)."""
+    return _bridge_call("ping")
+
+
+@mcp.tool()
+def airship_brain_state(lever_x: int | None = None, lever_y: int | None = None,
+                        lever_z: int | None = None) -> dict | str:
+    """Snapshot of all registered airships (or one if lever pos given).
+
+    Returns per ship: state, ticksInState, kind, pos, linearVelocity, angularVelocity,
+    orientation (quat), mass, balloonCapacity, plateauRows, lastGoal, lastHeadingErrDeg,
+    steadyTicks, liftoffStartY, throttle/burner/clutch counts, cannoneers, etc.
+    """
+    params: dict = {}
+    if lever_x is not None and lever_y is not None and lever_z is not None:
+        params["lever"] = [lever_x, lever_y, lever_z]
+    return _bridge_call("airship_brain_state", params)
+
+
+@mcp.tool()
+def sublevel_inspect(uuid: str) -> dict | str:
+    """Inspect a Sable SubLevel by UUID across all dims.
+
+    Returns pos, orientation, linearVelocity, angularVelocity, mass, entityCount.
+    """
+    return _bridge_call("sublevel_inspect", {"uuid": uuid})
 
 
 def main() -> None:

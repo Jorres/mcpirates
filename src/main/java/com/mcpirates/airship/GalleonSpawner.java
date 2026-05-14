@@ -173,11 +173,12 @@ public final class GalleonSpawner {
         return leverWorld;
     }
 
-    /** Raw galleon NBT primary anchor: (3, 9, 14). The galleon ship NBT is just the
-     *  ship — pad is provided by the separate {@code galleon_pad} piece at worldgen
-     *  time, not baked in. The kind stores deltas <em>relative to this anchor</em>. */
+    /** Raw galleon NBT primary anchor (left throttle lever): (4, 8, 13). The galleon
+     *  ship NBT is just the ship — pad is provided by the separate {@code galleon_pad}
+     *  piece at worldgen time, not baked in. The kind stores deltas
+     *  <em>relative to this anchor</em>. */
     private static BlockPos anchorDeltaFromOrigin() {
         @SuppressWarnings("unused") String sanity = GalleonKind.INSTANCE.name();
-        return new BlockPos(3, 9, 14);
+        return new BlockPos(4, 8, 13);
     }
 }

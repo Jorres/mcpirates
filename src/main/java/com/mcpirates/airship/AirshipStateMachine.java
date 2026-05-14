@@ -23,7 +23,7 @@ public final class AirshipStateMachine {
      *  64 blocks of "ship is visible, player can appreciate it" before combat engages. */
     public static final double DISENGAGE_RANGE_SQ = (8 * 16) * (8 * 16);
     /** Considered "at airpad" (HOVER) when within this horizontal range. */
-    static final double HOVER_RADIUS_SQ = 16 * 16;
+    public static final double HOVER_RADIUS_SQ = 16 * 16;
     /** Consecutive steady-altitude ticks before LIFTOFF concludes. ~2 s at 20 tps = 40. */
     static final int LIFTOFF_STEADY_TICKS = 40;
     /** Hard floor on LIFTOFF duration so we don't bail out before the ship's even moved

@@ -134,4 +134,9 @@ public interface AirshipKind {
     default double liftoffMinRise() {
         return com.mcpirates.airship.AirshipStateMachine.LIFTOFF_MIN_RISE;
     }
+
+    /** Target altitude above {@code airpadAnchor.y} the brain aims for during LIFTOFF,
+     *  HOVER, and RETURN. The plateau lookup converges to it; the steady-altitude exit
+     *  path then concludes LIFTOFF without the ship climbing to its physical ceiling. */
+    default double cruiseRise() { return 60.0; }
 }

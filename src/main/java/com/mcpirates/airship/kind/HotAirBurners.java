@@ -5,10 +5,11 @@ import com.simibubi.create.foundation.blockEntity.behaviour.scrollValue.ScrollVa
 import dev.eriksonn.aeronautics.content.blocks.hot_air.balloon.Balloon;
 import dev.eriksonn.aeronautics.content.blocks.hot_air.hot_air_burner.HotAirBurnerBlockEntity;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.block.state.BlockState;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Read/write the "hot air amount" m³ value on a Hot Air Burner block. Paired with
@@ -54,19 +55,25 @@ public final class HotAirBurners {
         return (b != null) ? b.getCapacity() : -1;
     }
 
-    /** Find the Hot Air Burner adjacent to {@code leverPos}. Levers on the airships are
-     *  attached directly to the burner block — ceiling-attached lever → burner above,
-     *  floor-attached → burner below, wall-attached → burner behind. We try the
-     *  attachment direction first (cheap, correct for every current ship), then fall
-     *  back to a six-neighbour scan in case future designs route signal differently. */
-    public static BlockPos findAdjacentBurner(Level level, BlockPos leverPos, BlockState leverState) {
-        Direction connected = ThrottleLevers.leverConnectedDirection(leverState);
-        BlockPos attached = leverPos.relative(connected.getOpposite());
-        if (level.getBlockEntity(attached) instanceof HotAirBurnerBlockEntity) return attached;
-        for (Direction d : Direction.values()) {
-            BlockPos n = leverPos.relative(d);
-            if (level.getBlockEntity(n) instanceof HotAirBurnerBlockEntity) return n;
+    /** Every Hot Air Burner block-entity position inside the inclusive AABB. Used at
+     *  assembly to discover all burners on a ship without relying on lever→burner
+     *  adjacency (galleons run wires several blocks between control panel and burner). */
+    public static List<BlockPos> findAllInBox(
+            Level level,
+            int minX, int minY, int minZ,
+            int maxX, int maxY, int maxZ) {
+        List<BlockPos> out = new ArrayList<>();
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (int x = minX; x <= maxX; x++) {
+            for (int y = minY; y <= maxY; y++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    cursor.set(x, y, z);
+                    if (level.getBlockEntity(cursor) instanceof HotAirBurnerBlockEntity) {
+                        out.add(cursor.immutable());
+                    }
+                }
+            }
         }
-        return null;
+        return out;
     }
 }

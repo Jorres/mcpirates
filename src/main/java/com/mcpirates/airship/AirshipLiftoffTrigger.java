@@ -424,21 +424,17 @@ public final class AirshipLiftoffTrigger {
         BlockPos slLeftClutch = leftClutchPos.offset(offset);
         BlockPos slRightClutch = rightClutchPos.offset(offset);
 
-        // Step 5b: locate each throttle lever's adjacent Hot Air Burner. The brain
-        // drives the burner's m³ value (5..500) in concert with the lever (0..15) so
-        // gas output = volume * lever / 15 is near-continuous instead of in 16 steps.
-        // A missing burner is logged but non-fatal — that lever just won't get its
-        // volume tuned and the ship reverts to lever-only control of that burner.
-        List<BlockPos> slBurnerPositions = new ArrayList<>(slThrottleLevers.size());
-        for (BlockPos slLever : slThrottleLevers) {
-            BlockState ls = subLevel.getLevel().getBlockState(slLever);
-            BlockPos slBurner = HotAirBurners.findAdjacentBurner(subLevel.getLevel(), slLever, ls);
-            if (slBurner != null) {
-                slBurnerPositions.add(slBurner);
-            } else {
-                MCPirates.LOGGER.warn("({}) no Hot Air Burner adjacent to throttle lever at {}; "
-                        + "burner volume control disabled for this lever", kind.name(), slLever);
-            }
+        // Step 5b: scan the SubLevel plot for every Hot Air Burner. The brain writes the
+        // same (volume, lever) to all burners and queries any one for balloon capacity,
+        // so we don't need to pair them to specific levers.
+        var plotBox = subLevel.getPlot().getBoundingBox();
+        List<BlockPos> slBurnerPositions = HotAirBurners.findAllInBox(
+                subLevel.getLevel(),
+                plotBox.minX(), plotBox.minY(), plotBox.minZ(),
+                plotBox.maxX(), plotBox.maxY(), plotBox.maxZ());
+        if (slBurnerPositions.isEmpty()) {
+            MCPirates.LOGGER.warn("({}) no Hot Air Burners found in SubLevel plot; lift control disabled",
+                    kind.name());
         }
 
         // Step 5c: stamp kind/airpad/rotation/primary-anchor on the SubLevel's
@@ -474,7 +470,8 @@ public final class AirshipLiftoffTrigger {
         AirshipBrain.register(
                 level, subLevel, pos, kind,
                 slThrottleLevers, slBurnerPositions, slLeftClutch, slRightClutch, slCannonMounts,
-                shipLocalForward, crew.anchors(), crew.cannoneerByMount());
+                shipLocalForward, crew.anchors(), crew.cannoneerByMount(),
+                AirshipBrain.State.LIFTOFF);
     }
 
     /**

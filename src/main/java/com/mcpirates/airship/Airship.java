@@ -117,6 +117,18 @@ public final class Airship {
         this.cannoneerByMount = cannoneerByMount;
     }
 
+    /** True if at least one anchored crew member is alive in {@link #parentLevel}.
+     *  Empty {@link #anchoredEntities} reads false — rehydrated wrecks scan for surviving
+     *  pillagers and produce an empty list when none remain, which is exactly the defeat
+     *  signal the brain acts on. Live ships always register with a non-empty list. */
+    public boolean isAnyCrewAlive() {
+        for (AnchoredEntity ae : anchoredEntities) {
+            Entity e = parentLevel.getEntity(ae.uuid());
+            if (e != null && !e.isRemoved() && e.isAlive()) return true;
+        }
+        return false;
+    }
+
     /** @return true iff the bound cannoneer is alive and present in {@link #parentLevel}. */
     public boolean isMountManned(BlockPos slMount) {
         UUID uuid = cannoneerByMount.get(slMount);
