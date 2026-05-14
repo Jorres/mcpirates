@@ -11,12 +11,17 @@ import com.mcpirates.pirates.CaptainSpawner;
 import com.mcpirates.pirates.DefeatedAirships;
 import com.mcpirates.pirates.GroundCombatModule;
 import dev.ryanhcode.sable.Sable;
+import dev.ryanhcode.sable.sublevel.ServerSubLevel;
+import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.simulated_team.simulated.content.blocks.portable_engine.PortableEngineBlockEntity;
 import dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueEntity;
 import dev.simulated_team.simulated.multiloader.inventory.ItemInfoWrapper;
 import dev.simulated_team.simulated.util.SimAssemblyHelper.AssemblyResult;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.SectionPos;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.server.level.FullChunkStatus;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
@@ -43,6 +48,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -119,7 +125,7 @@ public final class AirshipLiftoffTrigger {
      *  call for the same anchor returns false immediately, so the half-second
      *  proximity scanner can't fire a second {@code activateShip} on a structure
      *  whose blocks are still being yanked into a SubLevel. */
-    private static final java.util.Set<BlockPos> ACTIVATING = ConcurrentHashMap.newKeySet();
+    private static final Set<BlockPos> ACTIVATING = ConcurrentHashMap.newKeySet();
 
     /** True iff a ground-combat engagement is currently tracked for the given anchor.
      *  Read-only view of {@link #GROUND_ENGAGEMENTS}, intended for diagnostics
@@ -403,7 +409,7 @@ public final class AirshipLiftoffTrigger {
             MCPirates.LOGGER.warn("ship assembly failed; aborting startup at {}", pos);
             return;
         }
-        dev.ryanhcode.sable.sublevel.SubLevel subLevel = result.subLevel();
+        SubLevel subLevel = result.subLevel();
         BlockPos offset = result.offset();
 
         // Step 4: locate + assemble all cannon mounts
@@ -443,10 +449,10 @@ public final class AirshipLiftoffTrigger {
         // without them, a ship that was flying at shutdown comes back un-controlled
         // (no clutch/throttle writes, no plot rebind for crew).
         BlockPos slPrimaryAnchorPos = pos.offset(offset);
-        if (subLevel instanceof dev.ryanhcode.sable.sublevel.ServerSubLevel ssl) {
-            net.minecraft.nbt.CompoundTag userTag = ssl.getUserDataTag();
-            if (userTag == null) userTag = new net.minecraft.nbt.CompoundTag();
-            net.minecraft.nbt.CompoundTag mcp = new net.minecraft.nbt.CompoundTag();
+        if (subLevel instanceof ServerSubLevel ssl) {
+            CompoundTag userTag = ssl.getUserDataTag();
+            if (userTag == null) userTag = new CompoundTag();
+            CompoundTag mcp = new CompoundTag();
             mcp.putString("kind", kind.name());
             mcp.putLong("airpad", pos.asLong());
             mcp.putInt("rotation", rotation.ordinal());
@@ -493,10 +499,10 @@ public final class AirshipLiftoffTrigger {
         HoneyGlueEntity glue = new HoneyGlueEntity(level, aabb);
         boolean added = level.addFreshEntity(glue);
         String visibilityStr = readSectionVisibility(level, glue);
-        net.minecraft.server.level.FullChunkStatus chunkStatus =
+        FullChunkStatus chunkStatus =
                 level.getChunkSource().getChunkNow(
                         glue.chunkPosition().x, glue.chunkPosition().z) instanceof
-                        net.minecraft.world.level.chunk.LevelChunk lc
+                        LevelChunk lc
                         ? lc.getFullStatus() : null;
         if ("HIDDEN".equals(visibilityStr)) {
             glue.discard();
@@ -520,7 +526,7 @@ public final class AirshipLiftoffTrigger {
      *  a HIDDEN section stores the entity but skips startTracking, so spatial queries never
      *  see it. */
     private static String readSectionVisibility(ServerLevel level,
-                                                net.minecraft.world.entity.Entity entity) {
+                                                Entity entity) {
         try {
             if (cachedEntityManagerField == null) {
                 cachedEntityManagerField = ServerLevel.class.getDeclaredField("entityManager");
@@ -532,7 +538,7 @@ public final class AirshipLiftoffTrigger {
                 cachedSectionStorageField.setAccessible(true);
             }
             Object sectionStorage = cachedSectionStorageField.get(entityManager);
-            long sectionKey = net.minecraft.core.SectionPos.asLong(entity.blockPosition());
+            long sectionKey = SectionPos.asLong(entity.blockPosition());
             if (cachedGetSectionMethod == null) {
                 cachedGetSectionMethod = sectionStorage.getClass().getDeclaredMethod("getSection", long.class);
                 cachedGetSectionMethod.setAccessible(true);

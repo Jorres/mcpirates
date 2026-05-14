@@ -12,6 +12,7 @@ import com.mcpirates.airship.kind.ClutchLevers;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.world.phys.AABB;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.EntityType;
@@ -21,7 +22,12 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.neoforge.gametest.GameTestHolder;
+import org.joml.Vector3d;
 import rbasamoyai.createbigcannons.cannon_control.cannon_mount.CannonMountBlockEntity;
+
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
 
 /**
  * GameTests for pirate-airship assembly + brain SubLevel-side effects. State-machine
@@ -113,7 +119,7 @@ public final class AirshipGameTests {
                     }
                     int hostiles = helper.getLevel()
                             .getEntitiesOfClass(Monster.class,
-                                    new net.minecraft.world.phys.AABB(anchorWorld).inflate(20))
+                                    new AABB(anchorWorld).inflate(20))
                             .size();
                     if (hostiles < 1) {
                         helper.fail("ground engagement registered but no Monster entities spawned");
@@ -161,7 +167,7 @@ public final class AirshipGameTests {
                     }
                     int hostiles = helper.getLevel()
                             .getEntitiesOfClass(Monster.class,
-                                    new net.minecraft.world.phys.AABB(anchorWorld).inflate(20))
+                                    new AABB(anchorWorld).inflate(20))
                             .size();
                     if (hostiles < 1) {
                         helper.fail("engagement registered but no defenders spawned");
@@ -172,7 +178,7 @@ public final class AirshipGameTests {
                     BlockPos anchorWorld = findAnchor(helper);
                     var captains = helper.getLevel()
                             .getEntitiesOfClass(Monster.class,
-                                    new net.minecraft.world.phys.AABB(anchorWorld).inflate(40),
+                                    new AABB(anchorWorld).inflate(40),
                                     m -> m.getTags().contains(MCPDataKeys.CAPTAIN_TAG));
                     if (captains.isEmpty()) {
                         helper.fail("no captain spawned for engagement at " + anchorWorld);
@@ -223,8 +229,8 @@ public final class AirshipGameTests {
     public static void rehydrateRestoresFlyingShipAfterBrainWipe(GameTestHelper helper) {
         TestSetup.reset(helper);
 
-        final java.util.UUID[] preWipeSubLevelId = new java.util.UUID[1];
-        final java.util.Set<java.util.UUID> preWipeCrewUuids = new java.util.HashSet<>();
+        final UUID[] preWipeSubLevelId = new UUID[1];
+        final Set<UUID> preWipeCrewUuids = new HashSet<>();
         final BlockPos[] preWipeAirpad = new BlockPos[1];
 
         helper.startSequence()
@@ -278,7 +284,7 @@ public final class AirshipGameTests {
                         helper.fail("airpad mismatch: pre=" + preWipeAirpad[0]
                                 + " post=" + ship.airpadAnchor);
                     }
-                    java.util.Set<java.util.UUID> postWipeCrewUuids = new java.util.HashSet<>();
+                    Set<UUID> postWipeCrewUuids = new HashSet<>();
                     for (var ae : ship.anchoredEntities) {
                         postWipeCrewUuids.add(ae.uuid());
                     }
@@ -348,7 +354,7 @@ public final class AirshipGameTests {
                 .thenExecute(() -> {
                     if (AirshipBrain.ships().isEmpty()) return;
                     Airship ship = AirshipBrain.ships().get(0);
-                    org.joml.Vector3d shipPos = ship.subLevel.logicalPose().position();
+                    Vector3d shipPos = ship.subLevel.logicalPose().position();
                     BlockPos zPos = BlockPos.containing(shipPos.x + 12, shipPos.y, shipPos.z);
                     Zombie zombie = EntityType.ZOMBIE.create(helper.getLevel());
                     if (zombie == null) {
@@ -386,7 +392,7 @@ public final class AirshipGameTests {
     /** Walk every BE in the test arena's bounding box, returning the world position of
      *  the first {@link MCPShipAnchorBlockEntity} encountered, or null. */
     private static BlockPos findAnchor(GameTestHelper helper) {
-        net.minecraft.world.phys.AABB bb = helper.getBounds();
+        AABB bb = helper.getBounds();
         ServerLevel level = helper.getLevel();
         for (BlockPos pos : BlockPos.betweenClosed(
                 (int) Math.floor(bb.minX), (int) Math.floor(bb.minY), (int) Math.floor(bb.minZ),
