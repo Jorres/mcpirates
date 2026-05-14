@@ -40,5 +40,16 @@ public final class MCPDataKeys {
      *  work-cycle restocks. */
     public static final String SHERIFF_SCROLLS_SOLD_NBT_KEY = "mcpirates.bounty_scrolls_sold";
 
+    /** Crew role on a spawned pillager, read by {@code AirshipRehydrator} to
+     *  reconstruct PirateRole + cannon-mount bindings on server restart.
+     *  Values: {@code "captain"}, {@code "crewmate"}, {@code "cannoneer"}. */
+    public static final String CREW_ROLE_NBT_KEY = "mcpirates.role";
+
+    /** For cannoneer crew only: the SubLevel-local position of the cannon mount
+     *  this entity is bound to (packed via {@code BlockPos.asLong}). Lets
+     *  rehydration restore {@code cannoneerByMount} without re-running the
+     *  spawner's nearest-seat matching. */
+    public static final String CREW_CANNON_MOUNT_NBT_KEY = "mcpirates.cannon_mount";
+
     private MCPDataKeys() {}
 }

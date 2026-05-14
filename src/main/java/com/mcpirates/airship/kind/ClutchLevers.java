@@ -28,4 +28,12 @@ public final class ClutchLevers {
         Direction face = ThrottleLevers.leverConnectedDirection(state);
         level.updateNeighborsAt(pos.relative(face.getOpposite()), leverBlock);
     }
+
+    /** True iff the block at {@code pos} is a vanilla lever currently engaging its clutch
+     *  (i.e. {@code POWERED=false}). False if not a lever or powered. Mirror of
+     *  {@link #setPowered}'s convention — engaged ⇔ !powered. */
+    public static boolean isEngaged(Level level, BlockPos pos) {
+        BlockState state = level.getBlockState(pos);
+        return state.getBlock() instanceof LeverBlock && !state.getValue(LeverBlock.POWERED);
+    }
 }

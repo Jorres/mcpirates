@@ -1,7 +1,7 @@
 package com.mcpirates.airship.kind;
 
 import com.mcpirates.airship.Airship;
-import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.LivingEntity;
 
 /**
  * Combat module for ships without any cannons (currently crossbow-board). The brain still
@@ -19,12 +19,12 @@ public final class NoCannonCombat implements CombatBehavior {
     }
 
     @Override
-    public void aim(Airship ship, ServerPlayer target) {
+    public void aim(Airship ship, LivingEntity target) {
         // intentional no-op
     }
 
     @Override
-    public boolean fire(Airship ship, ServerPlayer target) {
+    public boolean fire(Airship ship, LivingEntity target) {
         return false;
     }
 }

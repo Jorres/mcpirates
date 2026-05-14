@@ -166,7 +166,9 @@ public final class CaptainSpawner {
                     inner, subLevel, seatToFeetPlot(seat), leverWorldPos,
                     /*tag=*/ null,
                     /*name=*/ Component.literal("Pirate Gunner"),
-                    CannoneerRole.INSTANCE);
+                    CannoneerRole.INSTANCE,
+                    /*roleStamp=*/ "cannoneer",
+                    /*cannonMountSlPos=*/ mount);
             if (ae != null) {
                 anchors.add(ae);
                 cannoneerByMount.put(mount, ae.uuid());
@@ -178,7 +180,9 @@ public final class CaptainSpawner {
                 inner, subLevel, seatToFeetPlot(captainSeat), leverWorldPos,
                 MCPDataKeys.CAPTAIN_TAG,
                 Component.literal(FunnyNames.nextPirateCaptainName(inner.getRandom())),
-                new CrossbowmanRole(now));
+                new CrossbowmanRole(now),
+                /*roleStamp=*/ "captain",
+                /*cannonMountSlPos=*/ null);
         if (captain != null) anchors.add(captain);
 
         // Crossbowmen on remaining (unclaimed) crew seats. Stagger reloads so volleys
@@ -192,7 +196,9 @@ public final class CaptainSpawner {
                     inner, subLevel, seatToFeetPlot(seat), leverWorldPos,
                     /*tag=*/ null,
                     Component.literal("Pirate Crewmate"),
-                    role);
+                    role,
+                    /*roleStamp=*/ "crewmate",
+                    /*cannonMountSlPos=*/ null);
             if (ae != null) anchors.add(ae);
         }
 
@@ -219,7 +225,9 @@ public final class CaptainSpawner {
             BlockPos airshipAnchorWorldPos,
             String tag,
             Component customName,
-            PirateRole role) {
+            PirateRole role,
+            String roleStamp,
+            BlockPos cannonMountSlPos) {
         Vec3 initialWorldPos = subLevel.logicalPose().transformPosition(plotPos);
 
         Pillager pillager = EntityType.PILLAGER.create(inner);
@@ -248,6 +256,10 @@ public final class CaptainSpawner {
         // (their death isn't watched) — lets us later promote a crewmate to captain
         // without touching the spawn path.
         pillager.getPersistentData().putLong(MCPDataKeys.CAPTAIN_ANCHOR_NBT_KEY, airshipAnchorWorldPos.asLong());
+        pillager.getPersistentData().putString(MCPDataKeys.CREW_ROLE_NBT_KEY, roleStamp);
+        if (cannonMountSlPos != null) {
+            pillager.getPersistentData().putLong(MCPDataKeys.CREW_CANNON_MOUNT_NBT_KEY, cannonMountSlPos.asLong());
+        }
 
         boolean added = inner.addFreshEntity(pillager);
         // Bind to the SubLevel AFTER addFreshEntity so the entity's full state is in place

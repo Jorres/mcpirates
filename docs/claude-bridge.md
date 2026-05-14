@@ -1,4 +1,4 @@
-# Claude ↔ Minecraft bridge (Tier 1)
+# Claude ↔ Minecraft bridge
 
 A project-scoped MCP server (`tools/mcp_minecraft/`) gives Claude live access
 to the running mcpirates dev server: RCON commands, log scraping, block/entity
@@ -13,35 +13,6 @@ this repo.
 
 Same `mcpServers.minecraft` block in both, just a different relative `cwd`.
 Edit one → mirror the change to the other.
-
-## Is it running?
-
-The MCP server itself loads whenever Claude starts in this repo (assuming `py
--m pip install -r tools/mcp_minecraft/requirements.txt` has been run once and
-the user approved the server in `/mcp`). The **Minecraft dev server** is a
-separate process the user must launch:
-
-```
-./gradlew runServer
-```
-
-Wait for `RCON running on 0.0.0.0:25575` in the log before issuing tool calls.
-If the server is down, every RCON tool returns `[rcon error: ...]` rather than
-crashing — handy for probing.
-
-### Fast-iterate client
-
-For the testing loop, use `./gradlew runClientQuick` instead of `runClient` —
-it appends `--quickPlayMultiplayer localhost:25565` to the launcher args and
-joins the running server immediately, skipping the title screen and
-multiplayer-menu clicks. Defined in `build.gradle` alongside the regular
-`client` run config. Falls through cleanly if the server is down (you'll just
-see a "connection refused" error in the client log).
-
-Typical loop:
-1. `./gradlew runServer` (background, stays up)
-2. `./gradlew runClientQuick` (per-test; quit + relaunch on code change)
-3. Claude drives state via MCP tools (`cmd`, `summon`, `read_entities`, ...)
 
 ## The tools, and when to reach for each
 

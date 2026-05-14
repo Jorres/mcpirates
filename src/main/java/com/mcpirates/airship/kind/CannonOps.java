@@ -8,7 +8,7 @@ import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -53,7 +53,7 @@ public final class CannonOps {
      *  {@code target}, in ship-local degrees. Pure math, no side effects — kinds that
      *  need to clamp/filter the aim (e.g. broadsides limited to ±N° from rest) call this,
      *  mutate, then call {@link #applyAim}. */
-    public static Aim computeAim(Airship ship, BlockPos slMountPos, ServerPlayer target) {
+    public static Aim computeAim(Airship ship, BlockPos slMountPos, LivingEntity target) {
         Vec3 cannonWorldV = ship.subLevel.logicalPose().transformPosition(
                 new Vec3(slMountPos.getX() + 0.5,
                         slMountPos.getY() + 0.5,
@@ -90,7 +90,7 @@ public final class CannonOps {
 
     /** Convenience: aim-and-apply, no clamping. Free-tracking cannons (airship_small) use
      *  this directly. */
-    public static void aimAt(Airship ship, BlockPos slMountPos, ServerPlayer target) {
+    public static void aimAt(Airship ship, BlockPos slMountPos, LivingEntity target) {
         Level subLevelLevel = ship.subLevel.getLevel();
         if (subLevelLevel == null) return;
         if (!(subLevelLevel.getBlockEntity(slMountPos) instanceof CannonMountBlockEntity mount)) {

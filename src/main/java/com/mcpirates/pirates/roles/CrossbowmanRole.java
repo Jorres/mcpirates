@@ -5,7 +5,7 @@ import com.mcpirates.airship.Airship;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.Entity;
@@ -105,7 +105,7 @@ public final class CrossbowmanRole implements PirateRole {
 
     @Override
     public void tick(ServerLevel parentLevel, Airship ship, AnchoredEntity self, Pillager pillager,
-                     ServerPlayer target, long now) {
+                     LivingEntity target, long now) {
         if (ship.state != AirshipBrain.State.PURSUE || target == null) {
             return;
         }

@@ -1,7 +1,7 @@
 package com.mcpirates.airship.kind;
 
 import com.mcpirates.airship.Airship;
-import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.LivingEntity;
 
 /**
  * Per-kind cannon strategy. The brain calls {@link #aim} every aim tick and
@@ -19,10 +19,10 @@ public interface CombatBehavior {
 
     /** Aim every active cannon at {@code target}. Called by the brain at
      *  {@code AIM_INTERVAL} cadence. */
-    void aim(Airship ship, ServerPlayer target);
+    void aim(Airship ship, LivingEntity target);
 
     /** Fire whatever should fire this opportunity. Returns true if at least one shot was
      *  fired (the brain then resets {@link Airship#lastFireTick}); false to skip the
      *  cooldown reset (e.g., for cannonless ships, or when no side has a clear shot). */
-    boolean fire(Airship ship, ServerPlayer target);
+    boolean fire(Airship ship, LivingEntity target);
 }

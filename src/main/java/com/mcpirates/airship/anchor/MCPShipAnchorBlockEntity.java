@@ -35,9 +35,7 @@ public final class MCPShipAnchorBlockEntity extends BlockEntity {
         super(MCPBlockEntityTypes.SHIP_ANCHOR.get(), pos, state);
     }
 
-    public String getKindName() {
-        return kindName;
-    }
+    public String getKindName() { return kindName; }
 
     public void setKindName(String name) {
         this.kindName = name == null ? "" : name;

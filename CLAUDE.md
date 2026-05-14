@@ -1,3 +1,18 @@
+# Behavior
+
+You MUST use concise responses without "Ah, you are correct", "Good observation!" and similar.
+
+You MUST NOT be lazy and make shortcuts, especially ones that introduce entropy. E.g. once you tried to programmatically clean chunks of Neoforge GameTest because you couldn't configure it to spawn superflat.
+Such behavior is PROHIBITED.
+
+Do not be overly verbose writing code commentaries or docs.
+
+At all times remember - you have access to downloaded source code of your dependencies, and you always can search 
+the internet for docs on NeoForge. 
+
+Backwards compatibility does not exist. We are developing the mod and have no clients. Better ways to do stuff means 
+earlier stuff gets brutally deleted.
+
 # mcpirates — Claude orientation
 
 NeoForge addon for Create Aeronautics: pirate airships at pillager outposts,
@@ -6,8 +21,9 @@ architecture log) and `docs/design.md` (high-level intent).
 
 ## Iterating with the running game
 
-You may launch / restart both the dev server and client yourself via Gradle:
+You may launch / restart both the dev server and client yourself via helper script tools/dev_restart.sh.
 
+If necessary you may launch processes directly:
 - `./gradlew runServer` — boots the dev server.
 - `./gradlew runClientQuick` — boots the dev client AND auto-joins
   `localhost:25565` via `--quickPlayMultiplayer` (see
@@ -38,16 +54,36 @@ You may launch / restart both the dev server and client yourself via Gradle:
    mislead you. Always launch `runClientQuick` and wait until `players()`
    lists "Dev" before commanding tests.
 
-Standard restart sequence after a Java/datapack change:
-1. `cmd("stop")` over RCON (or kill the background `runServer`).
-2. `rm -rf runs/server/world` (preserve `ops.json`).
-3. `Bash("./gradlew runServer", run_in_background=true)`.
-4. Wait for `RCON running on 0.0.0.0:25575` in `runs/server/logs/latest.log`.
-5. `Bash("./gradlew runClientQuick", run_in_background=true)`.
-6. Poll `players()` until it lists "Dev".
-7. Then test.
+Standard restart sequence after a Java/datapack change — **use the script,
+don't open-code it**:
 
-A `minecraft` MCP server is wired up via `.mcp.json` for this repo. When the
+1. `cmd("stop")` over RCON (or kill the background `runServer`).
+2. `Bash("./tools/dev_restart.sh", run_in_background=true)` — add `--wipe` if
+   the change is worldgen-affecting and the user hasn't been building in the
+   dev world. The script kills stale client / gradle JVMs, polls the RCON
+   port directly (not log lines, which suffer from stale `Dev joined the
+   game` hits from earlier sessions), launches server, waits for RCON open,
+   launches client, and prints `[restart] READY` when done.
+3. Wait for Dev to join. The client window takes ~10-30 s to render + join
+   after gradle starts it; the script does NOT wait for the player to
+   actually connect, only for RCON to come up.
+   - **Call `mcp__minecraft__players` first, in the SAME turn as the post-
+     READY check.** If "Dev" is listed → proceed. Cost: one tool call.
+   - **Don't reach for `ScheduleWakeup` as a first move.** It has a 60-second
+     minimum delay — using it before even checking `players()` once burns at
+     least a minute of wall-clock when the join probably already happened.
+     Schedule a wake-up only if `players()` returned empty AND you have
+     nothing else productive to do this turn.
+   - **`mcp__minecraft__grep_log` for `Dev joined the game`** is the
+     authoritative second-precision signal. Use this if `players()` is empty
+     but the timing looks suspicious (maybe Dev joined a moment ago and the
+     RCON `list` cache is stale).
+   - **Don't fake the wait with shell tricks.** `curl http://localhost:25575`,
+     `nc -w 1 localhost 25575`, etc. cannot speak Source RCON (binary protocol
+     with handshake/auth) and silently return nothing useful.
+4. Then test.
+
+A `minecraft` MCP server is there for this repo. When the
 server is running, you can call:
 
 - `cmd(...)` — any server command via RCON
@@ -64,22 +100,41 @@ common patterns, and when to escalate to a Java-side RPC instead.
 If RCON tools return `[rcon error: ...]`, the dev server isn't running. Ask the
 user to start it.
 
+## Validating changes during iteration
+
+For changes that touch any of:
+
+- `airship/` — assembly, liftoff trigger, brain, kind dispatch, ground combat
+- `pirates/` — defender spawning, captain death, ground combat module
+- `LiftMath`, `HotAirBurners`, `ThrottleLevers`, `ClutchLevers`
+- The mixin layer (`mixin/`)
+
+run the gametest suite as the regression check:
+
+```
+./gradlew runGameTestServer
+```
+
+It takes ~30 s cold, ~5 s warm cache, and runs 6 tests covering buoyancy
+(`airshipSmallRisesUnderBuoyancy`), assembly + actuation across kinds and
+rotations, ground combat spawn, and the on-foot retreat → DORMANT → air
+arrival lifecycle. All tests are sequential (each in its own batch), isolated
+(arenas ~200 blocks apart via `StructureGridSpawnerMixin`), and the gametest
+world is wiped before every run via `build.gradle`'s `doFirst` hook — no
+state leaks between runs.
+
+Failing tests print to console with a `LogTestReporter` line; the per-tick
+state of each ship is in `runs/gametest/logs/latest.log`.
+
+The full dev-server loop (`runServer` + `runClientQuick`) remains the right
+choice for behaviour the gametest suite doesn't cover (worldgen, the
+proximity-trigger event path with a real `ServerPlayer`, anything visual). Use
+both — gametest for fast regression, dev-server for end-to-end. **A change
+that compiles is not validated until at least one of the two has been run.**
+
 ## Hard constraints
 
 - **Working dir:** `mcpirates/`. The parent `aero/` is the user's live
   `.minecraft`. Never write outside `mcpirates/`.
 - **Pinned versions:** see `gradle.properties`. NeoForge **21.1.228**,
-  Lithostitched **1.7.0** (NOT 1.7.3 — crashes Create's Registrate).
-- **NBT regen:** the structure-import scripts read raw ships from `tools/sources/`
-  and write everything to the resources tree.
-  - `tools/build_ships.py` (all airship resources, plus base_plate_with_airship)
-    — single pipeline driven by the `SHIPS` config dict at the top of the file.
-    Idempotent: strips any pre-existing keel jigsaws before injecting fresh ones.
-    Auto-backs up `src/.../structure/*.nbt` to `tools/backups/<timestamp>/`. Run
-    with no args to rebuild everything, `--ship NAME` to rebuild one.
-    To update a ship: re-save it in dev MC via structure block, copy the result
-    from `saves/<world>/generated/minecraft/structures/<name>.nbt` to
-    `tools/sources/<name>.nbt`, then re-run.
-  - `tools/import_sheriff_station.py` (sheriff station building) — idempotent
-    (strips existing jigsaws before stamping). Override entrance via
-    `--jigsaw-pos X Y Z --jigsaw-orientation <face>_up` when the layout changes.
+  Lithostitched **1.7.0**

@@ -1,7 +1,7 @@
 package com.mcpirates.airship.kind;
 
 import com.mcpirates.airship.Airship;
-import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.LivingEntity;
 
 /**
  * Combat module for ships with a single forward-mounted cannon (airship_small). Just
@@ -19,7 +19,7 @@ public final class SingleFrontCannonCombat implements CombatBehavior {
     }
 
     @Override
-    public void aim(Airship ship, ServerPlayer target) {
+    public void aim(Airship ship, LivingEntity target) {
         if (ship.slCannonMounts.isEmpty()) return;
         net.minecraft.core.BlockPos mount = ship.slCannonMounts.get(0);
         // Skip aiming when the gunner is dead — cosmetically the barrel freezes at its
@@ -29,7 +29,7 @@ public final class SingleFrontCannonCombat implements CombatBehavior {
     }
 
     @Override
-    public boolean fire(Airship ship, ServerPlayer target) {
+    public boolean fire(Airship ship, LivingEntity target) {
         if (ship.slCannonMounts.isEmpty()) return false;
         net.minecraft.core.BlockPos mount = ship.slCannonMounts.get(0);
         if (!ship.isMountManned(mount)) return false;

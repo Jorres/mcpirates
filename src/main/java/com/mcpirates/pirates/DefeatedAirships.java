@@ -38,7 +38,11 @@ import java.util.Set;
  */
 public final class DefeatedAirships extends SavedData {
 
-    public static final String SAVE_NAME = MCPirates.MOD_ID + ":defeated_airships";
+    /** Underscore-joined (not colon) because Windows file systems reject ':' in filenames
+     *  — MC writes SavedData as {@code world/data/<SAVE_NAME>.dat}. The colon-named form
+     *  that mirrored the {@code mod_id:name} ResourceLocation convention broke /save-all
+     *  on Windows ("Illegal char <:> at index 22"); underscore is a stable substitute. */
+    public static final String SAVE_NAME = MCPirates.MOD_ID + "_defeated_airships";
 
     /** All known defeated-ship anchor positions in this level. */
     private final Set<BlockPos> anchors = new HashSet<>();
@@ -63,6 +67,17 @@ public final class DefeatedAirships extends SavedData {
 
     public int defeatedCount() {
         return this.anchors.size();
+    }
+
+    /**
+     * Exact-match query: was this specific lever-world-position stamped by a dead
+     * captain? Distinct from {@link #isDefeated} which does a 3×3 chunk neighborhood
+     * lookup for bounty-map redirection. The lift-off trigger and ground-combat
+     * trigger use this strict form so they don't suppress a sibling ship in the
+     * same outpost just because one of its peers was killed.
+     */
+    public boolean containsExact(BlockPos leverWorldPos) {
+        return this.anchors.contains(leverWorldPos);
     }
 
     /** Increment and return the new value (1-based: returns 1 the first time it's called). */

@@ -1,6 +1,7 @@
 package com.mcpirates.airship;
 
 import com.mcpirates.airship.kind.AirshipKind;
+import com.mcpirates.airship.kind.PlateauTable;
 import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.core.BlockPos;
@@ -13,52 +14,40 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Mutable per-airship state, owned by {@link AirshipBrain}. One {@code Airship} = one
- * registered pirate ship in the world.
- *
- * <p>This was previously a private inner record-style class on AirshipBrain. It was lifted
- * out so per-kind {@link com.mcpirates.airship.kind.CombatBehavior} strategies (cannon
- * aim/fire) can read/mutate the per-ship cannon bookkeeping without going through the
- * brain. Fields are deliberately public so the kind subpackage can poke them; the
- * "interface" is informal but contained — only {@link AirshipBrain} constructs these and
- * only {@code airship.*} touches them.
+ * Mutable per-airship state, owned by {@link AirshipBrain}. Fields are public so
+ * per-kind {@link com.mcpirates.airship.kind.CombatBehavior} strategies can read and
+ * mutate cannon bookkeeping; only {@code airship.*} should touch them.
  */
 public final class Airship {
 
     public final ServerLevel parentLevel;
-    /** Stable identity of the airship's SubLevel across chunk unload/reload. The
-     *  {@link #subLevel} object reference is replaced when Sable rehydrates the
-     *  SubLevel into a fresh object on reload — the UUID is the only thing that
-     *  persists. Look up the live SubLevel through {@code parentLevel}'s
-     *  SubLevelContainer each tick using this id. */
+    /** UUID is the only handle that survives chunk unload/reload — Sable rehydrates the
+     *  SubLevel into a fresh object under the same UUID, so {@link #subLevel} must be
+     *  re-acquired each tick via the container. */
     public final UUID subLevelId;
     public SubLevel subLevel;
-    /** Lever world-pos at lift-off time. Also the "airpad anchor" the ship returns to. */
+    /** Liftoff-lever world-pos; also the RETURN target. */
     public final BlockPos airpadAnchor;
     public final AirshipKind kind;
 
     // SubLevel-local positions resolved at assembly time.
-    /** All throttle-equivalent levers (analog or simulated:throttle) that gate the
-     *  burner(s). Two-burner kinds keep these in lock-step. */
     public final List<BlockPos> slThrottleLevers;
+    /** Paired 1:1 with throttle levers; resolved as "the block the lever is attached to".
+     *  Levers without an adjacent burner are absent here. */
+    public final List<BlockPos> slBurnerPositions;
     public final BlockPos slLeftClutchLever;
     public final BlockPos slRightClutchLever;
-    /** All cannon mounts the kind installed at lift-off. Empty for cannonless ships. */
     public final List<BlockPos> slCannonMounts;
-    /** Ship "forward" (cannon-points-this-way, or first-listed forward for ships with
-     *  broadsides) in SubLevel-local coords. Depends on the structure rotation chosen by
-     *  jigsaw at placement time. */
+    /** Ship-local forward — for broadside kinds, the first-listed forward. Depends on
+     *  the jigsaw rotation chosen at placement time. */
     public final Vector3d shipLocalForward;
-    /** Entities (captain, crewmate) the brain re-anchors each tick when their Sable
-     *  plot-position is missing (i.e., after chunk unload/reload wiped the in-memory
-     *  anchor). */
+    /** Pillagers the brain re-anchors when their Sable plot-position is wiped by a
+     *  chunk reload (the anchor isn't serialised to NBT). */
     public final List<AnchoredEntity> anchoredEntities;
 
     /** Cannon-mount → cannoneer UUID. A mount fires only while its bound cannoneer is
-     *  alive ({@link #isMountManned}). Populated at spawn from seat→cannon proximity; if
-     *  a cannon had no nearby seat in the NBT it is simply absent from the map (which
-     *  reads as "not manned" — that cannon never fires). The map itself is unmodifiable
-     *  after construction; we don't add cannoneers mid-flight. */
+     *  alive (see {@link #isMountManned}). Cannons with no nearby seat at spawn are
+     *  absent; the map is immutable after construction. */
     public final Map<BlockPos, UUID> cannoneerByMount;
 
     public AirshipBrain.State state = AirshipBrain.State.LIFTOFF;
@@ -67,45 +56,47 @@ public final class Airship {
     public long lastFireTick = Long.MIN_VALUE / 2;
     public long lastTargetSeenTick = Long.MIN_VALUE / 2;
 
-    // Last actuator commands — debug bookkeeping only.
-    public boolean lastLeftEngaged = false;
-    public boolean lastRightEngaged = false;
-    public int lastThrottle = 0;
+    /** Aeronautics balloon capacity in m³, refreshed each decision tick. -1 until the
+     *  balloon attaches. Not block-state derivable. */
+    public int balloonCapacity = -1;
+
+    /** (volume, lever) → equilibrium-altitude rows, built once the balloon attaches.
+     *  Rebuilt on {@link #balloonCapacity} change. Mass is sampled at build time and
+     *  never refreshed — runtime mass drift biases the lookup. */
+    public PlateauTable plateauTable;
+    public int plateauTableCapacity = -1;
+
+    /** Last-tick orbit-math outputs, cached so the overlay doesn't recompute them. */
     public double lastGoalX = Double.NaN;
     public double lastGoalZ = Double.NaN;
     public double lastHeadingErrDeg = 0;
 
-    // Altitude steady-state tracking for LIFTOFF.
     public double lastSampledY = Double.NaN;
     public int steadyTicks = 0;
-
-    // Previous-tick altitude sample feeding the throttle PD's vertical-velocity estimate.
-    public double lastYSample = Double.NaN;
-    public long lastYSampleTick = Long.MIN_VALUE;
+    /** Captured at the first LIFTOFF tick from the ship's actual pose (not
+     *  {@link #airpadAnchor}, which is the lever's block pos and may sit below the keel).
+     *  Re-captured after chunk reload so the rise check has a stable baseline. */
+    public double liftoffStartY = Double.NaN;
 
     // Rate-limit aim and throttle logs to one per ~2s wall-clock.
     public long lastAimLogBucket = -1;
     public long lastThrottleLogBucket = -1;
-    /** Gate "first aim/fire" log lines so each ship emits them exactly once over its
-     *  lifetime. Per-Airship (not static) so dead ships' bookkeeping is GC'd with the ship. */
+    /** Per-ship (not static) so a dead ship's flags GC with it. */
     public boolean hasAimedOnce = false;
     public boolean hasFiredOnce = false;
 
-    /** Free-form per-ship state for the kind's combat strategy. Currently used by
-     *  {@link com.mcpirates.airship.kind.BroadsideCombat} as a "next cannon to fire"
-     *  index for rolling broadsides — the strategy itself is shared across ships of the
-     *  same kind and must stay stateless, so per-ship cursors live here. -1 = uninitialised. */
+    /** Free-form per-ship state for the kind's combat strategy (broadside uses it as a
+     *  "next cannon to fire" index). -1 = uninitialised. */
     public int combatCursor = -1;
 
-    /** Earliest game-tick at which the combat strategy is willing to fire again. The
-     *  brain owns the per-shot interval (one cannon every {@code FIRE_INTERVAL_TICKS}),
-     *  but strategies can layer extra cooldowns on top — e.g. broadside imposes a longer
-     *  silence after a full N-cannon rotation. fire() returns false when in this window. */
+    /** Strategies layer extra cooldowns on top of the brain's per-shot interval (e.g.
+     *  broadside silence after a full rotation). fire() returns false in this window. */
     public long combatNextFireTick = Long.MIN_VALUE / 2;
 
     public Airship(ServerLevel parentLevel, SubLevel subLevel, BlockPos airpadAnchor,
                    AirshipKind kind,
                    List<BlockPos> slThrottleLevers,
+                   List<BlockPos> slBurnerPositions,
                    BlockPos slLeftClutchLever, BlockPos slRightClutchLever,
                    List<BlockPos> slCannonMounts,
                    Vector3d shipLocalForward,
@@ -117,6 +108,7 @@ public final class Airship {
         this.airpadAnchor = airpadAnchor;
         this.kind = kind;
         this.slThrottleLevers = slThrottleLevers;
+        this.slBurnerPositions = slBurnerPositions;
         this.slLeftClutchLever = slLeftClutchLever;
         this.slRightClutchLever = slRightClutchLever;
         this.slCannonMounts = slCannonMounts;
@@ -125,13 +117,7 @@ public final class Airship {
         this.cannoneerByMount = cannoneerByMount;
     }
 
-    /**
-     * @return true iff this cannon mount has a bound cannoneer and that cannoneer is
-     *         alive and present in the parent level. False for cannons that never had a
-     *         bound seat (NBT designer omitted), cannons whose cannoneer died, or cannons
-     *         whose cannoneer entity was somehow removed (chunk evict + failed reload).
-     *         Combat behaviours call this before aiming/firing each mount.
-     */
+    /** @return true iff the bound cannoneer is alive and present in {@link #parentLevel}. */
     public boolean isMountManned(BlockPos slMount) {
         UUID uuid = cannoneerByMount.get(slMount);
         if (uuid == null) return false;

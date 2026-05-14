@@ -1,10 +1,12 @@
 package com.mcpirates.airship.kind;
 
+import com.mcpirates.pirates.GroundCombatModule;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Per-design constants for one kind of pirate airship. The {@link com.mcpirates.airship.AirshipBrain}
@@ -117,4 +119,19 @@ public interface AirshipKind {
      *  cannon-armed ships; override per-kind when crew weapons or stand-off behaviour
      *  changes the optimal radius. */
     default double orbitRadius() { return 25.0; }
+
+    /** Ground-side defenders that spawn next to the dormant ship when an on-foot player
+     *  approaches. Default empty: the ship is invincible from the ground (player must
+     *  arrive in the air). Early-game kinds override this to give the player a "prize
+     *  fight" path. See {@link GroundCombatModule}. */
+    default Optional<GroundCombatModule> groundCombat() { return Optional.empty(); }
+
+    /** Blocks the ship must climb above its spawn altitude to exit LIFTOFF (alongside
+     *  the steady-altitude and min-time gates). Default matches
+     *  {@link com.mcpirates.airship.AirshipStateMachine#LIFTOFF_MIN_RISE}; high-lift
+     *  kinds like the galleon override to a larger value so LIFTOFF doesn't exit
+     *  while the ship is still ascending fast. */
+    default double liftoffMinRise() {
+        return com.mcpirates.airship.AirshipStateMachine.LIFTOFF_MIN_RISE;
+    }
 }

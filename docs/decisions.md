@@ -301,3 +301,52 @@ tag append, the bounty_board POI is correctly registered (NeoForge auto-handles
 and our one entry. **This is the single most-overlooked thing about shipping a modded
 profession — easy to think "the POI is registered, why doesn't anyone claim it?" and look
 in the wrong place for hours.**
+
+---
+
+## 2026-05-14 — Mixin into `GameTestServer` to pin test arenas at world origin
+
+**Decision.** Add a tiny SpongePowered Mixin (`com.mcpirates.mixin.GameTestServerMixin`)
+that `@Redirect`s the two `RandomSource.nextIntBetweenInclusive(-14999992, 14999992)` calls
+in `net.minecraft.gametest.framework.GameTestServer#startTests` to return 0, so every
+`@GameTest` arena lands near world (0, -59, 0) instead of somewhere up to 15 million
+blocks away.
+
+**Why.** Sable's physics engine is rapier3d compiled with 32-bit (`f32`) precision. At
+world coordinates of magnitude ~10⁷ the per-tick integration `pos += vel * dt` gets
+quantised below the float step (~1.5 units), so SubLevel rigid bodies effectively cannot
+accelerate — a buoyancy test on `airship_small` will show `totalLift > mass*|gravity|`
+and a non-zero linear velocity, but `pos.y` will stubbornly stay where assembly left it.
+Sable's own `PhysicsTest.testGravity` carries the FIXME `allow manual tests to run
+automatically when rapier is set to 64-bit mode` and `testSnag` is `attempts=10,
+requiredSuccesses=10, required=false` — both are flaky-by-design under f32 quantisation.
+Without addressing this, our `airshipSmallRisesUnderBuoyancy` gametest can't be a
+CI-credible regression guard.
+
+**Alternatives.**
+- *Configure it the boring way.* Searched: `@GameTest` annotation has no position
+  parameter; NeoForge has no event hook for it (verified against `RegisterGameTestsEvent`
+  and the patches in `neoforge-21.1.228-userdev.jar`); the JVM `--spawnPos` flag and
+  `runs/gametest/server.properties` only affect the world's player-spawn, not test
+  arena placement (`GameTestServer.create` hard-codes `WorldPresets.FLAT` and
+  `startTests` uses its own random against the world seed). NeoForge's docs page on
+  Game Tests confirms it: the framework doesn't expose arena positioning. Rejected — the
+  configuration knob doesn't exist.
+- *Match Sable's `required=false` workaround.* Mark our test optional and accept that
+  CI won't catch buoyancy regressions. Rejected because the user explicitly wants
+  reliable physics tests as the foundation for future ones, and "the test runs but the
+  result is ignored" is worse than no test at all.
+- *Build Sable against `rapier3d-f64`.* The proper fix Sable points at in its FIXME.
+  Rejected as the scope is "modify and rebuild an upstream rust dependency" — much
+  larger blast radius and not under our control.
+- *Teleport the SubLevel to small coords after assembly inside the test.* Works but
+  makes the ship visibly fall for several seconds before lift catches up, which is
+  hostile to writing tests that involve "ship on solid ground" scenarios. Rejected by
+  user feedback.
+
+**Why a mixin is the smallest entropy here.** The mixin lives in one Java class + one
+`mcpirates.mixins.json` + one `[[mixins]]` line in the existing `neoforge.mods.toml`
+template. It targets Mojang's class directly (no fork of MC or NeoForge), only runs
+when `GameTestServer` is loaded (i.e. only under `runGameTestServer` — production
+`runServer` / `runClientQuick` never load that class), and the redirect is one
+six-line method. The blast radius is exactly the gametest entry point, nothing else.

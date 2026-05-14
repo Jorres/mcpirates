@@ -1,11 +1,13 @@
 package com.mcpirates.airship.kind;
 
+import com.mcpirates.pirates.GroundCombatModule;
 import com.simibubi.create.content.redstone.analogLever.AnalogLeverBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Light recon ship (NBT {@code crossbow_board}, size 6×8×16). Symmetric twin-burner
@@ -67,11 +69,14 @@ public final class CrossbowBoardKind implements AirshipKind {
         return List.of();
     }
 
-    // Hull spans NBT (0..5, 0..7, 0..15) at most. Lever at (2,3,9), so deltas:
-    //   min (0-2, 0-3, 0-9) = (-2,-3,-9)
-    //   max (5-2, 7-3, 15-9) = (+3,+4,+6)
-    @Override public BlockPos glueMin() { return new BlockPos(-2, -3, -9); }
-    @Override public BlockPos glueMax() { return new BlockPos(+3, +4, +6); }
+    // Hull spans NBT (0..5, 0..7, 1..15). Anchor at (2,3,8) so deltas:
+    //   min (0-2, 0-3, 1-8) = (-2,-3,-7)
+    //   max (5-2, 7-3, 15-8) = (+3,+4,+7)
+    // The previous z_max of +6 left the z=15 column outside the glue — those cells
+    // could remain in the world after assembly and physically block lift-off (see
+    // AirshipSmallKind.glueMin doc for the BFS reasoning).
+    @Override public BlockPos glueMin() { return new BlockPos(-2, -3, -7); }
+    @Override public BlockPos glueMax() { return new BlockPos(+3, +4, +7); }
 
     @Override public CombatBehavior combat() { return combat; }
 
@@ -79,4 +84,9 @@ public final class CrossbowBoardKind implements AirshipKind {
      *  ship well inside firing range without flying *into* the target. Brain reads this
      *  for the orbit goal during PURSUE. */
     @Override public double orbitRadius() { return 30.0; }
+
+    @Override
+    public Optional<GroundCombatModule> groundCombat() {
+        return Optional.of(GroundCombatModule.SHARED);
+    }
 }

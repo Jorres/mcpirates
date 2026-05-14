@@ -2,7 +2,7 @@ package com.mcpirates.airship.kind;
 
 import com.mcpirates.airship.Airship;
 import net.minecraft.core.BlockPos;
-import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.LivingEntity;
 import org.joml.Vector3d;
 
 import java.util.ArrayList;
@@ -126,7 +126,7 @@ public final class BroadsideCombat implements CombatBehavior {
     }
 
     @Override
-    public void aim(Airship ship, ServerPlayer target) {
+    public void aim(Airship ship, LivingEntity target) {
         Side active = activeSide(ship, target);
         if (active == null) return;
         float portRestYaw = restYawForSide(Side.LEFT, ship);
@@ -141,13 +141,13 @@ public final class BroadsideCombat implements CombatBehavior {
             if (!ship.isMountManned(slMount)) continue;
             CannonOps.Aim raw = CannonOps.computeAim(ship, slMount, target);
             float restYaw = (ms.side() == Side.LEFT) ? portRestYaw : starboardRestYaw;
-            float clampedYaw = clampYaw(raw.yaw(), restYaw);
+            float clampedYaw = AngleMath.clampYaw(raw.yaw(), restYaw, yawClampDegrees);
             CannonOps.applyAim(ship, slMount, clampedYaw, raw.pitch());
         }
     }
 
     @Override
-    public boolean fire(Airship ship, ServerPlayer target) {
+    public boolean fire(Airship ship, LivingEntity target) {
         // Strategy-owned end-of-salvo gate. The brain has already cleared its own
         // per-shot cooldown by the time it called us; this layers an additional pause
         // after the LAST cannon of a side fires. Brain's tick rate (1/tick during the
@@ -196,26 +196,9 @@ public final class BroadsideCombat implements CombatBehavior {
         return (float) Math.toDegrees(Math.atan2(-rx, rz));
     }
 
-    /** Clamp {@code yaw} to {@code restYaw ± yawClampDegrees}, both in degrees. Handles
-     *  the periodic wrap-around at ±180°. Returns {@code yaw} unchanged when
-     *  {@code yawClampDegrees <= 0} (clamp disabled). */
-    private float clampYaw(float yaw, float restYaw) {
-        if (yawClampDegrees <= 0) return yaw;
-        double delta = wrap180(yaw - restYaw);
-        if (delta >  yawClampDegrees) delta =  yawClampDegrees;
-        if (delta < -yawClampDegrees) delta = -yawClampDegrees;
-        return (float) wrap180(restYaw + delta);
-    }
-
-    /** Normalise a degree value into (-180, 180]. */
-    private static double wrap180(double deg) {
-        deg = ((deg + 180.0) % 360.0 + 360.0) % 360.0 - 180.0;
-        return deg;
-    }
-
     /** Which broadside (if any) faces the target. Null when target is dead-ahead or
      *  dead-astern within a small dead-zone (no clean shot). */
-    private Side activeSide(Airship ship, ServerPlayer target) {
+    private Side activeSide(Airship ship, LivingEntity target) {
         // World-frame ship position via SubLevel pose.
         Vector3d shipPos = ship.subLevel.logicalPose().position();
         // Target's bearing in WORLD frame.

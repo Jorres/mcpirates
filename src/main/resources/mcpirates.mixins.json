@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "com.mcpirates.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "mixins": [
+    "GameTestServerMixin",
+    "StructureGridSpawnerMixin"
+  ],
+  "client": [],
+  "server": []
+}

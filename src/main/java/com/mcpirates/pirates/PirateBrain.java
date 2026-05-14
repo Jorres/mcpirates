@@ -3,7 +3,7 @@ package com.mcpirates.pirates;
 import com.mcpirates.airship.Airship;
 import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.monster.Pillager;
 
@@ -43,7 +43,7 @@ public final class PirateBrain {
      *                {@code null} when in LIFTOFF/RETURN/HOVER or no player in range.
      * @param now     monotonic per-server tick.
      */
-    public static void tickShip(Airship ship, ServerPlayer target, long now) {
+    public static void tickShip(Airship ship, LivingEntity target, long now) {
         if (ship.anchoredEntities.isEmpty()) return;
         ServerLevel parentLevel = ship.parentLevel;
         for (AnchoredEntity ae : ship.anchoredEntities) {

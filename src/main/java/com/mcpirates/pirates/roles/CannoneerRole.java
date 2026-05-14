@@ -3,7 +3,7 @@ package com.mcpirates.pirates.roles;
 import com.mcpirates.airship.Airship;
 import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Pillager;
 import net.minecraft.world.item.ItemStack;
 
@@ -35,7 +35,7 @@ public final class CannoneerRole implements PirateRole {
 
     @Override
     public void tick(ServerLevel parentLevel, Airship ship, AnchoredEntity self, Pillager pillager,
-                     ServerPlayer target, long now) {
+                     LivingEntity target, long now) {
         // intentional no-op
     }
 }

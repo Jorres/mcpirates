@@ -44,6 +44,11 @@ public final class GalleonKind implements AirshipKind {
     @Override public Direction nbtForward() { return Direction.NORTH; }
     @Override public LeverKind throttleLeverKind() { return LeverKind.SIMULATED_THROTTLE; }
 
+    /** Galleon climbs ~100 blocks above its spawn altitude before exiting LIFTOFF —
+     *  it has much more lift than airship_small, so the 25-block default exits
+     *  while the ship is still ascending fast. */
+    @Override public double liftoffMinRise() { return 100.0; }
+
     @Override
     public boolean isPrimaryAnchorBE(BlockEntity be) {
         return be instanceof ThrottleLeverBlockEntity;

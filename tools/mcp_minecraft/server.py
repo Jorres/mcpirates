@@ -90,9 +90,14 @@ def grep_log(pattern: str, max_matches: int = 100, context: int = 0) -> str:
 def read_block(x: int, y: int, z: int) -> str:
     """Get the block state + block-entity NBT at the given world coords.
 
-    Equivalent to `/data get block X Y Z` — returns SNBT-ish text.
+    Tries `/data get block X Y Z` first (returns SNBT for block entities), and
+    falls back to `/mcpirates debug getblock X Y Z` for plain blocks — so this
+    works for every block, not just BEs.
     """
-    return _run(f"data get block {x} {y} {z}")
+    result = _run(f"data get block {x} {y} {z}")
+    if "not a block entity" in result:
+        return _run(f"mcpirates debug getblock {x} {y} {z}")
+    return result
 
 
 @mcp.tool()

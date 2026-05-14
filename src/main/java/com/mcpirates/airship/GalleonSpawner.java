@@ -155,9 +155,22 @@ public final class GalleonSpawner {
             MCPirates.LOGGER.warn("galleon placeInWorld returned false at origin={}", origin);
             return null;
         }
-        BlockPos anchorWorld = origin.offset(anchorNbtDelta);
-        MCPirates.LOGGER.info("placed galleon: origin={} primaryAnchor={}", origin, anchorWorld);
-        return anchorWorld;
+        BlockPos leverWorld = origin.offset(anchorNbtDelta);
+        // anchorToLeverDelta = (0, 0, +1) per GalleonKind: anchor = lever - delta.
+        BlockPos anchorWorld = leverWorld.subtract(GalleonKind.INSTANCE.anchorToLeverDelta());
+        MCPirates.LOGGER.info("placed galleon: origin={} lever={} anchor={}",
+                origin, leverWorld, anchorWorld);
+
+        // Immediately fire the activation pipeline. The galleon NBT ships its
+        // throttle lever already at the activated state (it's meant to be
+        // an in-flight boss, not a dormant outpost ship), so the proximity
+        // trigger by itself does nothing — assembly + crew spawn need an
+        // explicit kick from the spawner.
+        boolean activated = AirshipLiftoffTrigger.activateAnchor(level, anchorWorld);
+        if (!activated) {
+            MCPirates.LOGGER.warn("galleon spawn: activateAnchor returned false at {}", anchorWorld);
+        }
+        return leverWorld;
     }
 
     /** Raw galleon NBT primary anchor: (3, 9, 14). The galleon ship NBT is just the

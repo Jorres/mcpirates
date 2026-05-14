@@ -3,7 +3,7 @@ package com.mcpirates.pirates.roles;
 import com.mcpirates.airship.Airship;
 import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Pillager;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -56,7 +56,7 @@ public interface PirateRole {
      * @param now          {@code event.getServer().getTickCount()} — monotonic per-server tick.
      */
     void tick(ServerLevel parentLevel, Airship ship, AnchoredEntity self, Pillager pillager,
-              ServerPlayer target, long now);
+              LivingEntity target, long now);
 
     /** Short label used in spawn / re-anchor log lines. */
     String name();

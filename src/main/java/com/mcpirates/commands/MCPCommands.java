@@ -101,7 +101,17 @@ public final class MCPCommands {
                         .then(Commands.literal("spawn").executes(MCPCommands::spawnSheriff)))
 
                 .then(Commands.literal("galleon")
-                        .then(Commands.literal("spawn").executes(MCPCommands::spawnGalleon)));
+                        .then(Commands.literal("spawn").executes(MCPCommands::spawnGalleon)))
+
+                .then(Commands.literal("debug")
+                        .then(Commands.literal("activate")
+                                .then(Commands.argument("pos", net.minecraft.commands.arguments.coordinates.BlockPosArgument.blockPos())
+                                        .executes(MCPCommands::debugActivate)))
+                        .then(Commands.literal("physics")
+                                .executes(MCPCommands::debugPhysics))
+                        .then(Commands.literal("getblock")
+                                .then(Commands.argument("pos", net.minecraft.commands.arguments.coordinates.BlockPosArgument.blockPos())
+                                        .executes(MCPCommands::debugGetBlock))));
 
         event.getDispatcher().register(root);
     }
@@ -224,6 +234,98 @@ public final class MCPCommands {
             return 0;
         }
         return 1;
+    }
+
+    // ────────────────────────────── /mcpirates debug activate ──────────────────────────────
+
+    /** Invoke {@link AirshipLiftoffTrigger#activateAnchor} on the given block. Lets you
+     *  drive a placed airship through the full production startup (assembly + brain
+     *  register + crew spawn) without needing a player on a SubLevel. Pure diagnostic;
+     *  used when iterating on the gametest physics path against a known-good real run. */
+    private static int debugActivate(CommandContext<CommandSourceStack> ctx) {
+        net.minecraft.core.BlockPos pos =
+                net.minecraft.commands.arguments.coordinates.BlockPosArgument.getBlockPos(ctx, "pos");
+        boolean ok = AirshipLiftoffTrigger.activateAnchor(ctx.getSource().getLevel(), pos);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "activateAnchor at " + pos.toShortString() + " → " + ok), true);
+        return ok ? Command.SINGLE_SUCCESS : 0;
+    }
+
+    // ────────────────────────────── /mcpirates debug getblock ──────────────────────────────
+
+    /** Return the {@link BlockState} at the given position as a single text line.
+     *  Works for any block, not just block entities (vanilla {@code /data get block}
+     *  only handles BEs). The Python MCP {@code read_block} uses this as fallback. */
+    private static int debugGetBlock(CommandContext<CommandSourceStack> ctx) {
+        BlockPos pos =
+                net.minecraft.commands.arguments.coordinates.BlockPosArgument.getBlockPos(ctx, "pos");
+        BlockState state = ctx.getSource().getLevel().getBlockState(pos);
+        ctx.getSource().sendSuccess(
+                () -> Component.literal(pos.toShortString() + " " + state.toString()),
+                false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    // ────────────────────────────── /mcpirates debug physics ──────────────────────────────
+
+    /** Dump physics state for every SubLevel in the current dimension: world pose,
+     *  linear+angular velocity from rapier, plus any attached balloon's lift +
+     *  filled volume. Pure diagnostic — for finding out why ships don't fly. */
+    private static int debugPhysics(CommandContext<CommandSourceStack> ctx) {
+        net.minecraft.server.level.ServerLevel level = ctx.getSource().getLevel();
+        dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer container =
+                (dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer)
+                        dev.ryanhcode.sable.api.sublevel.SubLevelContainer.getContainer(level);
+        if (container == null) {
+            ctx.getSource().sendFailure(Component.literal("No SubLevelContainer in this level"));
+            return 0;
+        }
+        var ps = container.physicsSystem();
+        for (var sl : container.getAllSubLevels()) {
+            if (sl.isRemoved()) continue;
+            var handle = ps.getPhysicsHandle(sl);
+            var pos = sl.logicalPose().position();
+            var v = handle == null ? null : handle.getLinearVelocity(new org.joml.Vector3d());
+            var av = handle == null ? null : handle.getAngularVelocity(new org.joml.Vector3d());
+            var mt = sl.getMassTracker();
+            String msg = String.format(
+                    "[debug-physics] subLevel=%s pos=(%.2f,%.2f,%.2f) v=%s av=%s mass=%.2f invalidMass=%s",
+                    sl.getUniqueId(),
+                    pos.x, pos.y, pos.z,
+                    v == null ? "null" : String.format("(%.3f,%.3f,%.3f)", v.x, v.y, v.z),
+                    av == null ? "null" : String.format("(%.3f,%.3f,%.3f)", av.x, av.y, av.z),
+                    mt == null ? Double.NaN : mt.getMass(),
+                    mt == null ? "n/a" : String.valueOf(mt.isInvalid()));
+            MCPirates.LOGGER.info(msg);
+            ctx.getSource().sendSuccess(() -> Component.literal(msg), false);
+
+            // scan for burners in this plot, dump their balloon state
+            var pb = sl.getPlot().getBoundingBox();
+            for (BlockPos bp : BlockPos.betweenClosed(
+                    pb.minX(), pb.minY(), pb.minZ(),
+                    pb.maxX(), pb.maxY(), pb.maxZ())) {
+                var be = sl.getLevel().getBlockEntity(bp);
+                if (be instanceof dev.eriksonn.aeronautics.content.blocks.hot_air.hot_air_burner.HotAirBurnerBlockEntity burner) {
+                    var balloon = burner.getBalloon();
+                    String bmsg;
+                    if (balloon == null) {
+                        bmsg = String.format("  burner@%s: balloon=null gasOutput=%.2f signal=%d",
+                                bp.toShortString(), burner.getGasOutput(), burner.getSignalStrength());
+                    } else if (balloon instanceof dev.eriksonn.aeronautics.content.blocks.hot_air.balloon.ServerBalloon sb) {
+                        bmsg = String.format("  burner@%s: balloon cap=%d filledVolume=%.2f targetVolume=%.2f totalLift=%.3f signal=%d gasOutput=%.2f",
+                                bp.toShortString(), sb.getCapacity(), sb.getTotalFilledVolume(),
+                                sb.getTotalTargetVolume(), sb.getTotalLift(),
+                                burner.getSignalStrength(), burner.getGasOutput());
+                    } else {
+                        bmsg = String.format("  burner@%s: balloon class=%s", bp.toShortString(), balloon.getClass().getSimpleName());
+                    }
+                    MCPirates.LOGGER.info(bmsg);
+                    final String bmsgF = bmsg;
+                    ctx.getSource().sendSuccess(() -> Component.literal(bmsgF), false);
+                }
+            }
+        }
+        return Command.SINGLE_SUCCESS;
     }
 
     // ────────────────────────────── /mcpirates galleon spawn ──────────────────────────────

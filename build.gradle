@@ -102,13 +102,13 @@ neoForge {
             programArgument '--nogui'
         }
 
-        data {
-            data()
-            gameDirectory = project.file('runs/data')
-            programArguments.addAll '--mod', mod_id,
-                    '--all',
-                    '--output', file('src/generated/resources').absolutePath,
-                    '--existing', file('src/main/resources').absolutePath
+        // `./gradlew runGameTestServer` — boots a headless dedicated server, executes
+        // every @GameTest in src/main/java with namespace=mcpirates, prints a pass/fail
+        // summary and exits non-zero on failure. See AirshipGameTests for the entry
+        // points. Suitable for CI; takes ~30 s warm cache.
+        gameTestServer {
+            type = 'gameTestServer'
+            gameDirectory = project.file('runs/gametest')
         }
     }
 
@@ -159,6 +159,21 @@ dependencies {
             dir: extractedAeronauticsJarJarDir,
             include: ['*.jar']
     )
+
+    // Unit tests for pure-numeric helpers (e.g. com.mcpirates.airship.kind.LiftMath) and
+    // pure logic extracted from prod classes (e.g. AirshipBrain.decideNextState). Keep test
+    // scope narrow — anything that touches Minecraft/Sable classes needs gametest
+    // infrastructure, not JUnit. joml is pulled in because Vector3d is the natural value type
+    // for ship/target positions in extracted pure functions; matches the version moddev
+    // resolves for the main classpath.
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation 'org.joml:joml:1.10.5'
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
 }
 
 var generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
@@ -188,7 +203,6 @@ var generateModMetadata = tasks.register('generateModMetadata', ProcessResources
 }
 
 sourceSets.main.resources.srcDir generateModMetadata
-sourceSets.main.resources.srcDir 'src/generated/resources'
 
 neoForge.ideSyncTask generateModMetadata
 neoForge.ideSyncTask tasks.named("extractAeronauticsJarJar")
@@ -216,5 +230,15 @@ jar {
                 'Implementation-Vendor' : mod_author,
                 'Built-On-Minecraft'    : minecraft_version
         ])
+    }
+}
+// Wipe the gametest world before every run so SubLevels from previous gradle
+// invocations don't carry over. The gametest world is purely test-driven (no
+// hand-built scenery to preserve) — accumulated state silently caused
+// multi-SubLevel rapier panics across runs (see
+// memory/feedback_rapier_two_sublevel_window.md).
+tasks.named('runGameTestServer').configure {
+    doFirst {
+        delete project.file('runs/gametest/world')
     }
 }
