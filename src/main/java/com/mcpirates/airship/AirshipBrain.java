@@ -33,27 +33,22 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-/**
- * Per-server-tick brain for assembled pirate airships. Drives the state machine
- * (LIFTOFF → PURSUE → RETURN → HOVER), tank-steer via clutches, and altitude via a
- * precomputed {@link PlateauTable}. Ship-specific concerns live behind {@link AirshipKind}.
+/** Per-tick flight controller. State machine (LIFTOFF → PURSUE → RETURN → HOVER) +
+ *  tank-steer via clutches + altitude via {@link PlateauTable}.
  *
- * <p>Clutch lever {@code powered=true} <strong>disengages</strong> — we write
- * {@code !engaged}. Tank-steer: both engaged → straight; left only → pivot RIGHT;
- * right only → pivot LEFT.
- */
+ *  <p>Clutch lever {@code powered=true} <strong>disengages</strong> — brain writes
+ *  {@code !engaged}. Tank-steer: both engaged → straight; one only → pivot the OTHER way. */
 @EventBusSubscriber(modid = MCPirates.MOD_ID)
 public final class AirshipBrain {
 
-    /** Per-tick |Δy| below which the ship counts as "not climbing"; tuned to ignore
-     *  Sable's physics jitter while still catching real ascent. */
+    /** |Δy/tick| below this counts as "not climbing" — sized over Sable's physics jitter. */
     private static final double LIFTOFF_STEADY_DELTA = 0.05;
     private static final double ARRIVAL_RADIUS_SQ = 12 * 12;
     private static final double HEADING_TOLERANCE_DEG = 25.0;
     private static final int AIM_INTERVAL = 5;
     private static final int DECISION_INTERVAL = 10;
 
-    /** Larger = wider orbits, smoother turns. Smaller = tighter, more aggressive. */
+    /** Larger = wider orbits, smoother turns. */
     private static final double ORBIT_LOOK_AHEAD = 18.0;
     /** Fraction of look-ahead borrowed from tangent to pull back to orbit radius. */
     private static final double ORBIT_RADIAL_GAIN = 0.8;
@@ -64,8 +59,7 @@ public final class AirshipBrain {
 
     private static final boolean CANNON_AIM_ENABLED = true;
 
-    /** Runtime toggle (see {@link #setFireEnabled} / {@code /mcpirates fire on|off}).
-     *  Off by default so test sessions aren't drowned in cannonballs. */
+    /** {@code /mcpirates fire on|off}. Off by default. */
     public static volatile boolean CANNON_FIRE_ENABLED = false;
 
     public static boolean setFireEnabled(boolean enabled) {
@@ -75,15 +69,13 @@ public final class AirshipBrain {
 
     private static final List<Airship> SHIPS = new CopyOnWriteArrayList<>();
 
-    /** Test seam: when non-null, replaces {@link #findEnemyPlayerOnAirship}'s player
-     *  scan with this function. Volatile so tests can swap it without racing the tick. */
+    /** Test seam — replaces {@link #findEnemyPlayerOnAirship}'s scan. */
     public static volatile java.util.function.Function<Airship, LivingEntity> targetOverride = null;
 
-    /** Immutable snapshot; returned {@link Airship}s are live and mutable. */
+    /** Immutable snapshot of the list; the {@link Airship} instances are still live. */
     public static List<Airship> ships() { return List.copyOf(SHIPS); }
 
-    /** Drop every ship in {@code level}. GameTests share JVM static state across tests,
-     *  so test N+1 would otherwise see ships left by test N. */
+    /** Drop every ship in {@code level} — GameTests need to clear JVM static state. */
     public static void unregisterAll(ServerLevel level) {
         SHIPS.removeIf(a -> a.parentLevel == level);
     }
@@ -111,8 +103,7 @@ public final class AirshipBrain {
                 slLeftClutchLever, slRightClutchLever,
                 slCannonMounts, shipLocalForward, anchoredEntities, cannoneerByMount);
         a.state = initialState;
-        // Without this, the default 0 makes (now - stateEnteredTick) resolve to millions
-        // and the LIFTOFF_MIN_TICKS gate silently no-ops.
+        // Without this, default 0 makes (now - stateEnteredTick) huge and LIFTOFF_MIN_TICKS no-ops.
         a.stateEnteredTick = parentLevel.getGameTime();
         SHIPS.add(a);
         MCPirates.LOGGER.info(
@@ -135,12 +126,11 @@ public final class AirshipBrain {
     }
 
     private static boolean tickShip(Airship a, long now) {
-        // Re-acquire the live SubLevel by UUID each tick: Sable rehydrates a fresh
-        // SubLevel object under the same UUID after chunk unload/reload, and a cached
-        // reference becomes a frozen snapshot (logicalPose() stuck forever).
+        // Re-acquire by UUID each tick — Sable rehydrates a fresh object under the same
+        // UUID after chunk reload; a cached ref becomes a frozen logicalPose() snapshot.
         SubLevelContainer container = SubLevelContainer.getContainer(a.parentLevel);
         if (container == null) {
-            return false; // dimension is being torn down
+            return false; // dimension teardown
         }
         SubLevel live = container.getSubLevel(a.subLevelId);
         if (live == null) {
@@ -149,7 +139,7 @@ public final class AirshipBrain {
                         a.subLevelId, a.kind.name());
                 a.wasSubLevelLoaded = false;
             }
-            // Holding-chunk: persisted to disk, not yet rehydrated. Stay registered.
+            // Persisted to disk, not yet rehydrated — stay registered.
             return true;
         }
         if (!a.wasSubLevelLoaded) {
@@ -163,18 +153,14 @@ public final class AirshipBrain {
         if (subLevelLevel == null) {
             return true;
         }
-        // Crew-defeat: when every anchored pirate is dead the ship is leaderless.
-        // Cut lift + disengage clutches one final time so the wreck drifts down
-        // instead of cruising on fossilised throttle state, then deregister.
+        // Crew-defeat: shut the wreck down (clutches off, strip stamp) and deregister.
         if (!a.isAnyCrewAlive()) {
             shutdownDerelict(a, subLevelLevel);
             MCPirates.LOGGER.info("ship {} ({}): crew defeated, brain deregistering",
                     a.subLevel.getUniqueId(), a.kind.name());
             return false;
         }
-        // Sable's plot anchor lives in a @Unique mixin field that isn't serialised to
-        // entity NBT, so chunk reload wipes it and the pillager freezes in mid-air.
-        // Re-apply lazily (no-op during steady flight).
+        // Sable's @Unique plotPosition field isn't persisted; reapply on chunk-reload edges.
         reanchorEntities(a);
         Vector3d shipPos = a.subLevel.logicalPose().position();
 
@@ -183,8 +169,8 @@ public final class AirshipBrain {
             a.lastTargetSeenTick = now;
         }
 
-        // Steadiness + initial-Y: state machine needs both to distinguish "topped out"
-        // from "hasn't started rising yet" (steady-tick check alone is ambiguous).
+        // State machine distinguishes "topped out" from "hasn't started rising" via
+        // steady ticks + initial-Y rise (each alone is ambiguous).
         if (a.state == State.LIFTOFF) {
             if (Double.isNaN(a.liftoffStartY)) {
                 a.liftoffStartY = shipPos.y;
@@ -220,10 +206,8 @@ public final class AirshipBrain {
                     String.format("%.1f", Math.sqrt(horizDistSq(shipPos, a.airpadAnchor))));
             a.state = desired;
             a.stateEnteredTick = now;
-            // Disengage both on entry. PURSUE: applyMovement re-engages this tick — the
-            // off→on edge also refreshes Aeronautics' thrust contribution (props can
-            // visually spin while applying zero thrust after an idle chunk reload until
-            // the clutch is toggled). HOVER: stay disengaged.
+            // Disengage on entry. The off→on edge refreshes Aeronautics' thrust contribution —
+            // after a chunk reload props can visually spin without applying thrust until toggled.
             if (desired == State.PURSUE || desired == State.HOVER) {
                 setBothClutchesDisengaged(a);
             }

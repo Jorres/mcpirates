@@ -5,6 +5,7 @@ bin/
 .gradle/
 runs/
 src/generated/
+gradlew
 
 # IDE
 .idea/
