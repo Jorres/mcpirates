@@ -97,6 +97,14 @@ public final class Airship {
      *  broadside silence after a full rotation). fire() returns false in this window. */
     public long combatNextFireTick = Long.MIN_VALUE / 2;
 
+    /** Orbit direction during PURSUE: +1 = CCW (tangent = rot90 of ship→target), -1 = CW.
+     *  Picked on PURSUE entry from current heading; flipped mid-pursue if the ship can't
+     *  yaw to the chosen tangent — see {@link AirshipBrain#pickOrbitDir}. */
+    public int orbitDir = 1;
+    /** Consecutive {@code applyMovement} calls with sustained bad heading. Resets on
+     *  flip or when heading recovers. Crossing the threshold triggers the flip. */
+    public int orbitStuckDecisions = 0;
+
     public Airship(ServerLevel parentLevel, SubLevel subLevel, BlockPos airpadAnchor,
                    AirshipKind kind,
                    List<BlockPos> slThrottleLevers,

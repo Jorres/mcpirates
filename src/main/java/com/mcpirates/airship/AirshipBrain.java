@@ -52,6 +52,11 @@ public final class AirshipBrain {
     private static final double ORBIT_LOOK_AHEAD = 18.0;
     /** Fraction of look-ahead borrowed from tangent to pull back to orbit radius. */
     private static final double ORBIT_RADIAL_GAIN = 0.8;
+    /** Consecutive decision ticks with heading-err past {@code HEADING_TOLERANCE_DEG * 3}
+     *  before the brain flips orbit direction. 8 × DECISION_INTERVAL = 80 ticks ≈ 4 s.
+     *  Flip resets the counter; that reset is the implicit cooldown — another flip needs
+     *  another full N decisions of bad heading. */
+    private static final int ORBIT_STUCK_DECISIONS = 8;
 
     private static final boolean DEBUG_OVERLAY = true;
     private static final int OVERLAY_ACTIONBAR_INTERVAL = 10;
@@ -211,6 +216,11 @@ public final class AirshipBrain {
             if (desired == State.PURSUE || desired == State.HOVER) {
                 setBothClutchesDisengaged(a);
             }
+            if (desired == State.PURSUE && target != null) {
+                a.orbitDir = AirshipStateMachine.pickOrbitDir(shipPos.x, shipPos.z,
+                        target.getX(), target.getZ(), currentYawRadians(a));
+                a.orbitStuckDecisions = 0;
+            }
             applyMovement(a, target, shipPos, now);
             a.lastDecisionTick = now;
         } else if (now - a.lastDecisionTick >= DECISION_INTERVAL) {
@@ -272,8 +282,8 @@ public final class AirshipBrain {
                     if (r < 0.01) {
                         ftx = 1.0; ftz = 0.0; r = 1.0;
                     }
-                    double tanX = -ftz / r;
-                    double tanZ = ftx / r;
+                    double tanX = -ftz / r * a.orbitDir;
+                    double tanZ = ftx / r * a.orbitDir;
                     double radInX = -ftx / r;
                     double radInZ = -ftz / r;
                     double orbitRadius = a.kind.orbitRadius();
@@ -367,7 +377,28 @@ public final class AirshipBrain {
         a.lastGoalX = goalX;
         a.lastGoalZ = goalZ;
         a.lastHeadingErrDeg = headingErrDeg;
+
+        // Stuck detection: in PURSUE with a real goal, if the ship can't yaw to the
+        // chosen tangent within ~3× the engage tolerance, the other orbit direction
+        // is likely closer to current heading. Flip and reset; the reset is the
+        // implicit cooldown — another flip needs another full N stuck decisions.
+        if (a.state == State.PURSUE && !Double.isNaN(goalX)) {
+            if (Math.abs(headingErrDeg) > HEADING_TOLERANCE_DEG * 3.0) {
+                a.orbitStuckDecisions++;
+                if (a.orbitStuckDecisions >= ORBIT_STUCK_DECISIONS) {
+                    a.orbitDir = -a.orbitDir;
+                    a.orbitStuckDecisions = 0;
+                    MCPirates.LOGGER.info(
+                            "ship {} ({}): orbit flipped → dir={} (heading err sustained > {}° for {} decisions)",
+                            a.subLevel.getUniqueId(), a.kind.name(), a.orbitDir,
+                            HEADING_TOLERANCE_DEG * 3.0, ORBIT_STUCK_DECISIONS);
+                }
+            } else {
+                a.orbitStuckDecisions = 0;
+            }
+        }
     }
+
 
     /** PURSUE altitude = player.eye + this many blocks. */
     private static final double PURSUE_ALT_OFFSET = 12.0;
@@ -525,6 +556,10 @@ public final class AirshipBrain {
         String liftoffStr = a.state == State.LIFTOFF
                 ? String.format(" steady=%d/%d", a.steadyTicks, AirshipStateMachine.LIFTOFF_STEADY_TICKS)
                 : "";
+        String orbitStr = a.state == State.PURSUE
+                ? String.format(" orbit=%s stuck=%d/%d",
+                        a.orbitDir > 0 ? "CCW" : "CW", a.orbitStuckDecisions, ORBIT_STUCK_DECISIONS)
+                : "";
 
         ChatFormatting stateColor = switch (a.state) {
             case LIFTOFF -> ChatFormatting.YELLOW;
@@ -536,7 +571,7 @@ public final class AirshipBrain {
         Component msg = Component.empty()
                 .append(Component.literal("[" + a.state.name() + ":" + a.kind.name() + "] ").withStyle(stateColor))
                 .append(Component.literal(String.format(
-                        "pos=(%.0f,%.1f,%.0f) thr=%d vol=%dm³ cap=%s %s goal=%s yaw_err=%.0f° %s%s",
+                        "pos=(%.0f,%.1f,%.0f) thr=%d vol=%dm³ cap=%s %s goal=%s yaw_err=%.0f° %s%s%s",
                         shipPos.x, shipPos.y, shipPos.z,
                         throttle,
                         burnerVolume,
@@ -545,7 +580,8 @@ public final class AirshipBrain {
                         goalStr,
                         a.lastHeadingErrDeg,
                         targetStr,
-                        liftoffStr
+                        liftoffStr,
+                        orbitStr
                 )));
         closest.displayClientMessage(msg, /*actionBar=*/true);
     }

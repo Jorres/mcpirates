@@ -130,4 +130,30 @@ public final class AirshipStateMachine {
         double dx = a.x - bx, dz = a.z - bz;
         return dx * dx + dz * dz;
     }
+
+    /** Picks orbit direction (+1 CCW, -1 CW) whose initial tangent best matches the
+     *  ship's current world-forward — minimises the yaw the ship must perform to
+     *  start tracking the orbit. Lives here (not on {@link AirshipBrain}) so JUnit
+     *  can call it without pulling in Minecraft/Sable.
+     *
+     *  <p>{@code yawRad} must match {@code AirshipBrain.currentYawRadians} (world-forward
+     *  is {@code (-sin yaw, cos yaw)}).
+     *
+     *  <p>Degenerate input (ship overlapping target) returns +1 so callers always get a
+     *  defined direction. */
+    public static int pickOrbitDir(double shipX, double shipZ,
+                                   double targetX, double targetZ,
+                                   double yawRad) {
+        double ftx = shipX - targetX;
+        double ftz = shipZ - targetZ;
+        double r2 = ftx * ftx + ftz * ftz;
+        if (r2 < 1e-4) return 1;
+        double r = Math.sqrt(r2);
+        double tanPlusX = -ftz / r;
+        double tanPlusZ = ftx / r;
+        double fwdX = -Math.sin(yawRad);
+        double fwdZ = Math.cos(yawRad);
+        double dot = tanPlusX * fwdX + tanPlusZ * fwdZ;
+        return dot >= 0 ? 1 : -1;
+    }
 }
