@@ -250,7 +250,6 @@ public final class AirshipPhysicsTests {
                                             + "(table rows insufficiently spaced or SECOND_TARGET_Y too close)",
                                     oldExpectedPlateauY, newExpectedPlateauY));
 
-                    desiredTargetYRef.set(newDesiredTargetY);
                     expectedPlateauYRef.set(newExpectedPlateauY);
                     lastYRef.set(null);
                     stableTicks.set(0);
