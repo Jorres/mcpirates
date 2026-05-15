@@ -44,6 +44,12 @@ public final class AirshipPhysicsTests {
     private static final double MIN_RISE = 20.0;
     private static final double MAX_XZ_DRIFT = 1.0;
     private static final Vec3 FIXED_TARGET_POS = new Vec3(0.5, 80.0, 0.5);
+    private static final double SECOND_TARGET_Y = 110.0;
+    /** Minimum |Δ expectedPlateauY| between phase 1 and phase 2. Guards against
+     *  picking a {@link #SECOND_TARGET_Y} that maps to the same plateau row as the
+     *  first target — without this check phase 2 would trivially pass without
+     *  exercising re-stabilization. */
+    private static final double PLATEAU_SHIFT_MIN = 3.0;
     private static final double PURSUIT_ALT_OFFSET = 12.0;
     private static final double TARGET_ALTITUDE_TOLERANCE = 4.0;
     private static final double STABLE_Y_DELTA = 0.08;
@@ -126,7 +132,7 @@ public final class AirshipPhysicsTests {
      * origin, and assert PURSUE altitude control settles near the target-height
      * plateau selected by the brain.
      */
-    @GameTest(template = "airship_small", timeoutTicks = 1800, setupTicks = 5,
+    @GameTest(template = "airship_small", timeoutTicks = 2800, setupTicks = 5,
               batch = "airship_small_stabilizes_at_fixed_target_height", skyAccess = true)
     public static void airshipSmallStabilizesAtFixedTargetHeight(GameTestHelper helper) {
         AtomicReference<Airship> shipRef = new AtomicReference<>();
@@ -221,6 +227,68 @@ public final class AirshipPhysicsTests {
                     }
                     helper.assertTrue(stableFor >= REQUIRED_STABLE_TICKS, String.format(Locale.ROOT,
                             "waiting for altitude settle: y=%.2f expected=%.2f dy=%.2f tickDeltaY=%.3f stable=%d/%d",
+                            pos.y, expectedPlateauY, dy, tickDeltaY,
+                            stableFor, REQUIRED_STABLE_TICKS));
+                })
+                // ─── Phase 2: teleport target up; ship must re-stabilize at a higher plateau row.
+                .thenExecute(() -> {
+                    Airship ship = shipRef.get();
+                    Zombie target = targetRef.get();
+                    double oldExpectedPlateauY = expectedPlateauYRef.get();
+
+                    target.teleportTo(target.getX(), SECOND_TARGET_Y, target.getZ());
+                    target.setDeltaMovement(Vec3.ZERO);
+
+                    double newDesiredTargetY = target.getEyeY() + PURSUIT_ALT_OFFSET;
+                    double newExpectedPlateauY =
+                            ship.plateauTable.pickClosest(newDesiredTargetY).equilibriumY();
+
+                    helper.assertTrue(
+                            Math.abs(newExpectedPlateauY - oldExpectedPlateauY) >= PLATEAU_SHIFT_MIN,
+                            String.format(Locale.ROOT,
+                                    "phase-2 teleport did not change plateau target: was %.2f, now %.2f "
+                                            + "(table rows insufficiently spaced or SECOND_TARGET_Y too close)",
+                                    oldExpectedPlateauY, newExpectedPlateauY));
+
+                    desiredTargetYRef.set(newDesiredTargetY);
+                    expectedPlateauYRef.set(newExpectedPlateauY);
+                    lastYRef.set(null);
+                    stableTicks.set(0);
+
+                    MCPirates.LOGGER.info(String.format(Locale.ROOT,
+                            "[physics-test] phase-2 zombie tp'd to y=%.2f; expectedPlateauY %.2f → %.2f (Δ=%.2f)",
+                            SECOND_TARGET_Y, oldExpectedPlateauY, newExpectedPlateauY,
+                            newExpectedPlateauY - oldExpectedPlateauY));
+                })
+                .thenWaitUntil(() -> {
+                    Airship ship = shipRef.get();
+                    Zombie target = targetRef.get();
+                    helper.assertTrue(ship != null, "waiting for ship reference");
+                    helper.assertTrue(target != null && target.isAlive(),
+                            "fixed zombie target disappeared in phase 2");
+                    helper.assertTrue(ship.state == AirshipBrain.State.PURSUE,
+                            "phase-2 lost PURSUE; state=" + ship.state);
+
+                    Vector3d pos = ship.subLevel.logicalPose().position();
+                    Double lastY = lastYRef.getAndSet(pos.y);
+                    double tickDeltaY = lastY == null ? Double.POSITIVE_INFINITY : Math.abs(pos.y - lastY);
+                    double expectedPlateauY = expectedPlateauYRef.get();
+                    double dy = Math.abs(pos.y - expectedPlateauY);
+                    boolean stable = dy <= TARGET_ALTITUDE_TOLERANCE
+                            && tickDeltaY <= STABLE_Y_DELTA;
+
+                    int stableFor = stable ? stableTicks.incrementAndGet() : 0;
+                    if (!stable) {
+                        stableTicks.set(0);
+                    }
+                    if (helper.getTick() % WAIT_LOG_INTERVAL == 0) {
+                        MCPirates.LOGGER.info(String.format(Locale.ROOT,
+                                "[physics-test] phase-2 settle state=%s y=%.2f expected=%.2f dy=%.2f tickDeltaY=%.3f stable=%d/%d",
+                                ship.state, pos.y, expectedPlateauY, dy, tickDeltaY,
+                                stableFor, REQUIRED_STABLE_TICKS));
+                    }
+                    helper.assertTrue(stableFor >= REQUIRED_STABLE_TICKS, String.format(Locale.ROOT,
+                            "phase-2 waiting for altitude settle: y=%.2f expected=%.2f dy=%.2f tickDeltaY=%.3f stable=%d/%d",
                             pos.y, expectedPlateauY, dy, tickDeltaY,
                             stableFor, REQUIRED_STABLE_TICKS));
                 })
