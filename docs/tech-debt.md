@@ -115,3 +115,74 @@ between clutch-marker-block vs. clutch-positional-convention as a separate
 call. `AssemblyResult.offset()` would then survive only as a transient
 inside `activateShip` (used to find the post-assembly seed once, then
 discarded).
+
+---
+
+## `AirshipKind` interface exposes raw block-position deltas
+
+**Why it's wrong.** `AirshipKind` is supposed to be the per-kind contract
+for the brain — what role the ship plays, how it steers, what its combat
+profile looks like. Instead it currently surfaces the *implementation*: a
+flat list of NBT-frame block-pos deltas for engines, throttle levers,
+left/right clutch levers, cannon mounts, plus the hull glue bbox. Every
+new kind reimplements all of those; every consumer (assembly, rehydrator)
+threads the resolved SubLevel-frame positions onto `Airship` as `sl*`
+fields, and the brain mostly just hands those positions off to
+`ClutchLevers.setPowered` / `HotAirBurners.setVolume`.
+
+Two concrete pains:
+
+1. Adding the ramship's third clutch could not go on the interface
+   without forcing every other kind to define a `forwardClutchLeverDelta`
+   they don't have. The escape hatch — keep the delta on `RamshipKind`
+   only and have `RamMovement` look it up via SubLevel `userDataTag` +
+   the kind's delta — works fine and is what shipped, but it bypasses
+   the interface entirely. Any future kind-specific lever or block
+   wanting brain-level engagement will follow the same pattern, which
+   means `AirshipKind` keeps shrinking in relative weight as kinds grow.
+2. The shape of those deltas leaks into the brain's logging
+   (`"clutches=({},{})"`), debug overlays, and the rehydrator's
+   re-registration call — none of which actually use the positions, they
+   just thread them.
+
+**Shape of a fix.** Pull the layout out of `AirshipKind` entirely and
+move to a kind-supplied "controls" object (`ShipControls`?) that owns
+clutch / throttle / engine / cannon-mount IO. The brain talks to it
+through narrow verbs (`controls.setSteerLeftEngaged(bool)`,
+`controls.setLiftBurnerVolume(int)`) and the impl resolves block
+positions internally — possibly via a plot scan ([related debt entry
+above](#block-position-deltas-resolved-via-assemblyresultoffset-instead-of-plot-scans))
+or via `userDataTag` stamps as the ramship already does. After that,
+`AirshipKind` is left with role + behaviour (`combat()`, `movement()`,
+`orbitRadius()`, `cruiseRise()`, `groundCombat()`) — the small,
+brain-shaped surface it was meant to be.
+
+---
+
+## Ground-combat gametests bypass `processNearbyAnchors`' real entry point
+
+**Why it's wrong.** `groundCombatSpawnsForOnFootPlayer` and
+`groundCombatRetreatsToDormantThenAirArrivalLifts` both call
+`AirshipLiftoffTrigger.processNearbyAnchors` directly with a hand-supplied
+`playerOnAirship` flag and player-derived (x, z). The flag was added solely
+so the test could route without constructing a player; the production
+caller is `checkAroundPlayer`, which derives the flag from
+`Sable.HELPER.getContaining(player)` against a real `ServerPlayer`. By
+calling one layer deeper, the tests skip:
+
+- the on-airship/on-foot decision being driven by Sable's actual
+  containment lookup;
+- iteration over `level.players()` (zero-player worlds slip through
+  silently in tests but never in prod);
+- whatever future side-effects `checkAroundPlayer` accumulates.
+
+Net result: the boolean parameter exists only to satisfy these two tests,
+and the most interesting production code path is unverified.
+
+**Shape of a fix.** Spawn a mock `ServerPlayer` via
+`GameTestHelper.makeMockServerPlayerInLevel` (now used in
+`RamshipTests.ramshipInterceptsMovingTarget`), position it on or off a
+SubLevel as the test variant demands, and let the per-tick
+`checkAroundPlayer` path fire naturally. Drop `playerOnAirship` from the
+public signature of `processNearbyAnchors`; collapse the two-arg overload
+back into the original single-arg internal helper.

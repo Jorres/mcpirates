@@ -17,7 +17,8 @@ public final class AirshipKinds {
     public static final List<AirshipKind> ALL = List.of(
             AirshipSmallKind.INSTANCE,
             CrossbowBoardKind.INSTANCE,
-            GalleonKind.INSTANCE
+            GalleonKind.INSTANCE,
+            RamshipKind.INSTANCE
     );
 
     private static final Map<String, AirshipKind> BY_NAME =

@@ -220,10 +220,8 @@ public final class AirshipLiftoffTrigger {
         processNearbyAnchors(level, player.getX(), player.getZ(), playerOnAirship);
     }
 
-    /** Public so GameTests can route without a mock ServerPlayer (the join pipeline crashes
-     *  under this modpack).
-     *  TODO: investigate which mod's join-event handler crashes a mock player; getting one
-     *  to work would let gametests exercise the real {@link #checkAroundPlayer} path. */
+    /** Public so GameTests can route directly without going through
+     *  {@link #checkAroundPlayer}'s player-derived inputs. */
     public static void processNearbyAnchors(ServerLevel level, double x, double z,
                                             boolean playerOnAirship) {
         // Air arrivals also promote any already-MOORED ship within range — those have had

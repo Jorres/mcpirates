@@ -81,9 +81,9 @@ public final class AirshipGameTests {
      *       fall through to {@code activateAnchor}).</li>
      * </ol>
      *
-     * <p>Skips the join pipeline (mock ServerPlayer creation) which crashes
-     * under this modpack — drives the routing decision via an explicit boolean
-     * to {@code processNearbyAnchors} instead.
+     * <p>Drives the routing decision via an explicit boolean to
+     * {@code processNearbyAnchors} so the test doesn't need to construct a real
+     * (or mock) player for the on-foot path.
      */
     @GameTest(template = "airship_small", timeoutTicks = 400, setupTicks = 5,
               batch = "ground_combat_spawns")

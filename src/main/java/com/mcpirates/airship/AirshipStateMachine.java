@@ -126,6 +126,9 @@ public final class AirshipStateMachine {
             // Externally promoted by AirshipLiftoffTrigger when a player arrives on a
             // SubLevel — the brain itself never leaves MOORED on its own.
             case MOORED -> State.MOORED;
+            // NAVIGATE is externally driven (tests + scripted patrols); auto state
+            // machine never enters or leaves it.
+            case NAVIGATE -> State.NAVIGATE;
         };
     }
 

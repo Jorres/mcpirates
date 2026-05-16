@@ -7,6 +7,7 @@ import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
+import org.joml.Quaterniond;
 import org.joml.Vector3d;
 
 import java.util.List;
@@ -58,6 +59,11 @@ public final class Airship {
 
     public AirshipBrain.State state = AirshipBrain.State.LIFTOFF;
     public long stateEnteredTick;
+
+    /** Destination for {@link AirshipBrain.State#NAVIGATE}. Externally set; brain steers
+     *  toward (x, z) and idles within arrival radius. Y is unused — altitude tracks
+     *  cruiseRise like RETURN. Null in every other state. */
+    public Vector3d navDestination;
     public long lastDecisionTick = Long.MIN_VALUE / 2;
     public long lastFireTick = Long.MIN_VALUE / 2;
     public long lastTargetSeenTick = Long.MIN_VALUE / 2;
@@ -158,5 +164,13 @@ public final class Airship {
     public void installCrew(List<AnchoredEntity> anchors, Map<BlockPos, UUID> cannoneerByMount) {
         this.anchoredEntities = anchors;
         this.cannoneerByMount = cannoneerByMount;
+    }
+
+    /** Yaw of the ship's world-frame forward axis, in radians. Convention matches
+     *  {@code atan2(-fwd.x, fwd.z)} — i.e. zero = +Z, positive = CCW from above. */
+    public double yawRadians() {
+        Quaterniond orient = subLevel.logicalPose().orientation();
+        Vector3d worldFwd = orient.transform(new Vector3d(shipLocalForward), new Vector3d());
+        return Math.atan2(-worldFwd.x, worldFwd.z);
     }
 }

@@ -36,6 +36,7 @@ public final class TestSetup {
         AirshipBrain.unregisterAll(level);
         AirshipLiftoffTrigger.clearGroundEngagements(level);
         AirshipBrain.targetOverride = null;
+        AirshipBrain.targetShipOverride = null;
         purgeSubLevels(level);
     }
 

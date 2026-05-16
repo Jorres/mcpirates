@@ -7,6 +7,7 @@ import com.mcpirates.airship.kind.ClutchLevers;
 import com.mcpirates.airship.kind.HotAirBurners;
 import com.mcpirates.airship.kind.LiftMath;
 import com.mcpirates.airship.kind.LiftMath.LiftSetting;
+import com.mcpirates.airship.kind.MovementBehavior;
 import com.mcpirates.airship.kind.PlateauTable;
 import com.mcpirates.airship.kind.ThrottleLevers;
 import dev.eriksonn.aeronautics.index.AeroLiftingGasTypes;
@@ -44,19 +45,13 @@ public final class AirshipBrain {
     /** |Δy/tick| below this counts as "not climbing" — sized over Sable's physics jitter. */
     private static final double LIFTOFF_STEADY_DELTA = 0.05;
     private static final double ARRIVAL_RADIUS_SQ = 12 * 12;
-    private static final double HEADING_TOLERANCE_DEG = 25.0;
+    /** Yaw tolerance (degrees) below which the brain engages both clutches to drive
+     *  straight at the goal. Above it: one clutch only, pivoting the other way.
+     *  Public so {@link com.mcpirates.airship.kind.OrbitMovement} can scale it for
+     *  stuck-detect. */
+    public static final double HEADING_TOLERANCE_DEG = 25.0;
     private static final int AIM_INTERVAL = 5;
     private static final int DECISION_INTERVAL = 10;
-
-    /** Larger = wider orbits, smoother turns. */
-    private static final double ORBIT_LOOK_AHEAD = 18.0;
-    /** Fraction of look-ahead borrowed from tangent to pull back to orbit radius. */
-    private static final double ORBIT_RADIAL_GAIN = 0.8;
-    /** Consecutive decision ticks with heading-err past {@code HEADING_TOLERANCE_DEG * 3}
-     *  before the brain flips orbit direction. 8 × DECISION_INTERVAL = 80 ticks ≈ 4 s.
-     *  Flip resets the counter; that reset is the implicit cooldown — another flip needs
-     *  another full N decisions of bad heading. */
-    private static final int ORBIT_STUCK_DECISIONS = 8;
 
     private static final boolean DEBUG_OVERLAY = true;
     private static final int OVERLAY_ACTIONBAR_INTERVAL = 10;
@@ -77,12 +72,26 @@ public final class AirshipBrain {
     /** Test seam — replaces {@link #findEnemyPlayerOnAirship}'s scan. */
     public static volatile java.util.function.Function<Airship, LivingEntity> targetOverride = null;
 
+    /** Test seam — replaces {@link #findEnemyShip}'s SubLevel resolution. Lets a test
+     *  pin a specific ship as the target without spawning a player on it. */
+    public static volatile java.util.function.Function<Airship, SubLevel> targetShipOverride = null;
+
     /** Immutable snapshot of the list; the {@link Airship} instances are still live. */
     public static List<Airship> ships() { return List.copyOf(SHIPS); }
 
     /** Drop every ship in {@code level} — GameTests need to clear JVM static state. */
     public static void unregisterAll(ServerLevel level) {
         SHIPS.removeIf(a -> a.parentLevel == level);
+    }
+
+    /** Send {@code a} into {@link State#NAVIGATE} steering toward {@code (x, z)}. Y is
+     *  ignored — altitude tracks cruiseRise like RETURN. Resets clutch state so the
+     *  off→on edge re-engages Aeronautics' thrust contribution. */
+    public static void navigateTo(Airship a, double x, double z) {
+        a.navDestination = new Vector3d(x, 0.0, z);
+        a.state = State.NAVIGATE;
+        a.stateEnteredTick = a.parentLevel.getGameTime();
+        setBothClutchesDisengaged(a);
     }
 
     private AirshipBrain() {}
@@ -93,7 +102,11 @@ public final class AirshipBrain {
      *  cleanly) but skips all movement / control writes; promotion to {@link #LIFTOFF}
      *  happens when a player arrives by airship — see
      *  {@link AirshipLiftoffTrigger#promoteMooredShipsForAirArrival}. */
-    public enum State { LIFTOFF, PURSUE, RETURN, HOVER, MOORED }
+    /** {@code NAVIGATE} = brain steers toward {@link Airship#navDestination} (a fixed XZ
+     *  point) and idles on arrival. Externally entered — the auto state machine never
+     *  enters or leaves it. Used by tests as a deterministic ship controller and (future)
+     *  by scripted-patrol commands. */
+    public enum State { LIFTOFF, PURSUE, RETURN, HOVER, MOORED, NAVIGATE }
 
     public static void register(
             ServerLevel parentLevel,
@@ -181,10 +194,15 @@ public final class AirshipBrain {
         reanchorEntities(a);
         Vector3d shipPos = a.subLevel.logicalPose().position();
 
-        LivingEntity target = findEnemyPlayerOnAirship(a, shipPos);
-        if (target != null) {
+        LivingEntity targetPlayer = findEnemyPlayerOnAirship(a, shipPos);
+        SubLevel targetShip = findEnemyShip(a, targetPlayer);
+        if (targetPlayer != null) {
             a.lastTargetSeenTick = now;
         }
+        // Local alias for the rest of this method — most paths just need "is anything alive
+        // out there for me to chase / shoot at?". State machine + combat still consume the
+        // player; ram movement (and future ship-aware combat) consume the ship.
+        LivingEntity target = targetPlayer;
 
         // State machine distinguishes "topped out" from "hasn't started rising" via
         // steady ticks + initial-Y rise (each alone is ambiguous).
@@ -221,6 +239,7 @@ public final class AirshipBrain {
                     target == null ? "none" : target.getName().getString(),
                     String.format("%.1f", shipPos.y),
                     String.format("%.1f", Math.sqrt(horizDistSq(shipPos, a.airpadAnchor))));
+            State previous = a.state;
             a.state = desired;
             a.stateEnteredTick = now;
             // Disengage on entry. The off→on edge refreshes Aeronautics' thrust contribution —
@@ -228,15 +247,16 @@ public final class AirshipBrain {
             if (desired == State.PURSUE || desired == State.HOVER) {
                 setBothClutchesDisengaged(a);
             }
-            if (desired == State.PURSUE && target != null) {
-                a.orbitDir = AirshipStateMachine.pickOrbitDir(shipPos.x, shipPos.z,
-                        target.getX(), target.getZ(), currentYawRadians(a));
-                a.orbitStuckDecisions = 0;
+            if (previous == State.PURSUE) {
+                a.kind.movement().onExitPursue(a);
             }
-            applyMovement(a, target, shipPos, now);
+            if (desired == State.PURSUE) {
+                a.kind.movement().onEnterPursue(a, shipPos, targetPlayer, targetShip);
+            }
+            applyMovement(a, targetPlayer, targetShip, shipPos, now);
             a.lastDecisionTick = now;
         } else if (now - a.lastDecisionTick >= DECISION_INTERVAL) {
-            applyMovement(a, target, shipPos, now);
+            applyMovement(a, targetPlayer, targetShip, shipPos, now);
             a.lastDecisionTick = now;
         }
 
@@ -278,44 +298,37 @@ public final class AirshipBrain {
 
     // ───────────────────────────── Movement ─────────────────────────────
 
-    private static void applyMovement(Airship a, LivingEntity target, Vector3d shipPos, long now) {
+    private static void applyMovement(Airship a, LivingEntity targetPlayer, SubLevel targetShip,
+                                      Vector3d shipPos, long now) {
         Level subLevelLevel = a.subLevel.getLevel();
+        // Local alias: code below this point that doesn't distinguish player vs ship just
+        // wants "anything alive to chase" — for now that's the player target. The state
+        // machine's targetPos still consumes the player too.
+        LivingEntity target = targetPlayer;
 
         // Horizontal goal, NaN = stationary (LIFTOFF, HOVER).
         double goalX = Double.NaN, goalZ = Double.NaN;
         switch (a.state) {
             case PURSUE -> {
-                if (target != null) {
-                    // Orbit, not point-at: cannon aim is heading-independent, and a
-                    // tangent path avoids the hover-and-oscillate failure of straight pursuit.
-                    double ftx = shipPos.x - target.getX();
-                    double ftz = shipPos.z - target.getZ();
-                    double r = Math.sqrt(ftx * ftx + ftz * ftz);
-                    if (r < 0.01) {
-                        ftx = 1.0; ftz = 0.0; r = 1.0;
-                    }
-                    double tanX = -ftz / r * a.orbitDir;
-                    double tanZ = ftx / r * a.orbitDir;
-                    double radInX = -ftx / r;
-                    double radInZ = -ftz / r;
-                    double orbitRadius = a.kind.orbitRadius();
-                    double radialErr = (r - orbitRadius) / orbitRadius;
-                    double radialBlend = Math.max(-1.0, Math.min(1.0, radialErr)) * ORBIT_RADIAL_GAIN;
-                    double dirX = tanX + radInX * radialBlend;
-                    double dirZ = tanZ + radInZ * radialBlend;
-                    double dirLen = Math.sqrt(dirX * dirX + dirZ * dirZ);
-                    if (dirLen > 0.001) {
-                        dirX /= dirLen; dirZ /= dirLen;
-                    }
-                    goalX = shipPos.x + dirX * ORBIT_LOOK_AHEAD;
-                    goalZ = shipPos.z + dirZ * ORBIT_LOOK_AHEAD;
+                MovementBehavior.Goal goal = a.kind.movement()
+                        .computeGoal(a, shipPos, targetPlayer, targetShip, now);
+                if (goal != null) {
+                    goalX = goal.x();
+                    goalZ = goal.z();
                 }
             }
             case RETURN -> {
                 goalX = a.airpadAnchor.getX() + 0.5;
                 goalZ = a.airpadAnchor.getZ() + 0.5;
             }
+            case NAVIGATE -> {
+                if (a.navDestination != null) {
+                    goalX = a.navDestination.x;
+                    goalZ = a.navDestination.z;
+                }
+            }
             case LIFTOFF, HOVER -> { /* stay put */ }
+            case MOORED -> { /* unreachable: tickShip short-circuits MOORED before here */ }
         }
 
         boolean leftEngaged = false, rightEngaged = false;
@@ -326,7 +339,7 @@ public final class AirshipBrain {
             double distSq = dx * dx + dz * dz;
             if (distSq > ARRIVAL_RADIUS_SQ) {
                 double targetYaw = Math.atan2(-dx, dz);
-                double currentYaw = currentYawRadians(a);
+                double currentYaw = a.yawRadians();
                 double err = AngleMath.normalizeRadians(targetYaw - currentYaw);
                 headingErrDeg = Math.toDegrees(err);
                 double absErrDeg = Math.abs(headingErrDeg);
@@ -390,24 +403,9 @@ public final class AirshipBrain {
         a.lastGoalZ = goalZ;
         a.lastHeadingErrDeg = headingErrDeg;
 
-        // Stuck detection: in PURSUE with a real goal, if the ship can't yaw to the
-        // chosen tangent within ~3× the engage tolerance, the other orbit direction
-        // is likely closer to current heading. Flip and reset; the reset is the
-        // implicit cooldown — another flip needs another full N stuck decisions.
+        // Per-decision hook: orbit uses it for stuck-direction-flip; ram is a no-op.
         if (a.state == State.PURSUE && !Double.isNaN(goalX)) {
-            if (Math.abs(headingErrDeg) > HEADING_TOLERANCE_DEG * 3.0) {
-                a.orbitStuckDecisions++;
-                if (a.orbitStuckDecisions >= ORBIT_STUCK_DECISIONS) {
-                    a.orbitDir = -a.orbitDir;
-                    a.orbitStuckDecisions = 0;
-                    MCPirates.LOGGER.info(
-                            "ship {} ({}): orbit flipped → dir={} (heading err sustained > {}° for {} decisions)",
-                            a.subLevel.getUniqueId(), a.kind.name(), a.orbitDir,
-                            HEADING_TOLERANCE_DEG * 3.0, ORBIT_STUCK_DECISIONS);
-                }
-            } else {
-                a.orbitStuckDecisions = 0;
-            }
+            a.kind.movement().onPursueDecision(a, headingErrDeg);
         }
     }
 
@@ -463,7 +461,7 @@ public final class AirshipBrain {
         double floor = maxGround + MIN_ALT_ABOVE_GROUND + 2.0;
         double cruiseY = a.airpadAnchor.getY() + a.kind.cruiseRise();
         double targetY = switch (state) {
-            case LIFTOFF, RETURN, HOVER -> Math.max(cruiseY, floor);
+            case LIFTOFF, RETURN, HOVER, NAVIGATE -> Math.max(cruiseY, floor);
             case PURSUE -> target == null
                     ? Math.max(cruiseY, floor)
                     : Math.max(target.getEyeY() + PURSUE_ALT_OFFSET, floor);
@@ -499,12 +497,6 @@ public final class AirshipBrain {
                 String.format("%.1f", a.plateauTable.minY()),
                 String.format("%.1f", a.plateauTable.maxY()));
         return a.plateauTable;
-    }
-
-    private static double currentYawRadians(Airship a) {
-        Quaterniond orient = a.subLevel.logicalPose().orientation();
-        Vector3d worldFwd = orient.transform(new Vector3d(a.shipLocalForward), new Vector3d());
-        return Math.atan2(-worldFwd.x, worldFwd.z);
     }
 
     private static void setBothClutchesDisengaged(Airship a) {
@@ -571,17 +563,15 @@ public final class AirshipBrain {
         String liftoffStr = a.state == State.LIFTOFF
                 ? String.format(" steady=%d/%d", a.steadyTicks, AirshipStateMachine.LIFTOFF_STEADY_TICKS)
                 : "";
-        String orbitStr = a.state == State.PURSUE
-                ? String.format(" orbit=%s stuck=%d/%d",
-                        a.orbitDir > 0 ? "CCW" : "CW", a.orbitStuckDecisions, ORBIT_STUCK_DECISIONS)
-                : "";
+        String orbitStr = a.state == State.PURSUE ? a.kind.movement().debugOverlay(a) : "";
 
         ChatFormatting stateColor = switch (a.state) {
-            case LIFTOFF -> ChatFormatting.YELLOW;
-            case PURSUE  -> ChatFormatting.RED;
-            case RETURN  -> ChatFormatting.AQUA;
-            case HOVER   -> ChatFormatting.GREEN;
-            case MOORED  -> ChatFormatting.GRAY;
+            case LIFTOFF  -> ChatFormatting.YELLOW;
+            case PURSUE   -> ChatFormatting.RED;
+            case RETURN   -> ChatFormatting.AQUA;
+            case HOVER    -> ChatFormatting.GREEN;
+            case MOORED   -> ChatFormatting.GRAY;
+            case NAVIGATE -> ChatFormatting.GOLD;
         };
 
         Component msg = Component.empty()
@@ -622,6 +612,20 @@ public final class AirshipBrain {
             }
         }
         return best;
+    }
+
+    /** Resolve the SubLevel (any Sable-tracked ship — mcpirates or vanilla Aeronautics)
+     *  the target is riding. Returns null for player-on-foot or for self. */
+    private static SubLevel findEnemyShip(Airship self, LivingEntity targetPlayer) {
+        java.util.function.Function<Airship, SubLevel> override = targetShipOverride;
+        if (override != null) {
+            SubLevel s = override.apply(self);
+            return (s == null || s == self.subLevel) ? null : s;
+        }
+        if (targetPlayer == null) return null;
+        SubLevel containing = dev.ryanhcode.sable.Sable.HELPER.getContaining(targetPlayer);
+        if (containing == null || containing == self.subLevel) return null;
+        return containing;
     }
 
     // ───────────────────────────── Math + utility ─────────────────────────────

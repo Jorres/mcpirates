@@ -118,6 +118,14 @@ SHIPS: dict[str, dict] = {
         # depth bias from base_plate.
         "pad_lift": 0,
     },
+    "ramship": {
+        # Air cell NBT-north of the left analog throttle at (3,3,9); matches
+        # RamshipKind.anchorToLeverDelta() = (0,0,+1). Mirrors crossbow_board convention.
+        "anchor_src_pos": (3, 3, 8),
+        "air_above": 16,
+        "outpost_attached": True,
+        "pad_lift": 1,
+    },
 }
 
 

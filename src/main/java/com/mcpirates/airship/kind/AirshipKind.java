@@ -98,12 +98,15 @@ public interface AirshipKind {
         return new BlockPos(into.getStepX(), into.getStepY(), into.getStepZ());
     }
 
-    // ───────────── combat ─────────────
+    // ───────────── combat & movement ─────────────
 
     /** Combat strategy. {@link com.mcpirates.airship.AirshipBrain} calls
      *  {@link CombatBehavior#aim} every aim tick and
      *  {@link CombatBehavior#fire} every fire tick during PURSUE. */
     CombatBehavior combat();
+
+    /** PURSUE-time steering strategy. Default = orbit the player at {@link #orbitRadius()}. */
+    default MovementBehavior movement() { return OrbitMovement.INSTANCE; }
 
     /** Horizontal distance at which the brain strafes the target during PURSUE. Brain-level
      *  knob — different ship roles want different stand-off distances (cannon ship close
