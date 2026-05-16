@@ -123,6 +123,9 @@ public final class AirshipStateMachine {
                 if (targetPos != null && !targetTooFar) yield State.PURSUE;
                 yield State.HOVER;
             }
+            // Externally promoted by AirshipLiftoffTrigger when a player arrives on a
+            // SubLevel — the brain itself never leaves MOORED on its own.
+            case MOORED -> State.MOORED;
         };
     }
 

@@ -113,6 +113,23 @@ public final class AirshipLiftoffTrigger {
      *  returns false silently on transient miss (chunk not primed, glue section HIDDEN,
      *  ship already activating); logs WARN on configuration errors (unknown kind, no BE). */
     public static boolean activateAnchor(ServerLevel level, BlockPos anchorPos) {
+        return activateAnchor(level, anchorPos, /*dormant=*/false);
+    }
+
+    /**
+     * Variant of {@link #activateAnchor(ServerLevel, BlockPos)} that picks between a full
+     * lift-off ({@code dormant=false}) and a hull-only assembly ({@code dormant=true}).
+     *
+     * <p>{@code dormant=true} assembles the ship into a SubLevel + fuels engines + stamps
+     * the userDataTag, but skips deck-crew spawn and registers the brain in
+     * {@link AirshipBrain.State#MOORED} so the ship sits on its airpad until a player
+     * arrives by airship and {@link #promoteMooredShipsForAirArrival} flips it to LIFTOFF.
+     * Used by the on-foot ground-combat path so the structure becomes a proper Sable
+     * contraption (visible physics, glue-bound hull, rideable) before the defenders spawn
+     * around it. Engines are fuelled even in dormant mode so the LIFTOFF promotion is a
+     * pure state flip with no late block-entity writes.
+     */
+    public static boolean activateAnchor(ServerLevel level, BlockPos anchorPos, boolean dormant) {
         if (!ACTIVATING.add(anchorPos)) return false;   // already mid-assembly
         try {
             BlockEntity be = level.getBlockEntity(anchorPos);
@@ -131,20 +148,32 @@ public final class AirshipLiftoffTrigger {
             BlockPos leverPos = anchorPos.offset(kind.anchorToLeverDelta().rotate(rotation));
             BlockEntity leverBe = level.getBlockEntity(leverPos);
             if (leverBe == null) return false;
+            // Anchor block has no collision so the assembly BFS skips it — the world-side
+            // BE survives the move into the SubLevel. Without this guard the proximity
+            // scanner re-enters on a ghost lever after first liftoff.
+            for (Airship existing : AirshipBrain.ships()) {
+                if (existing.parentLevel == level && existing.airpadAnchor.equals(leverPos)) {
+                    return false;
+                }
+            }
             // Defeated ship is the player's prize — don't respawn a captain (would double-drop the seal).
             if (DefeatedAirships.get(level).containsExact(leverPos)) {
                 return false;
             }
             if (!spawnHoneyGlue(level, leverPos, rotation, kind)) return false;
             // Air takeover: drop surviving ground defenders so the deck crew doesn't double up.
-            GroundCombatModule.GroundEngagement engagement = GROUND_ENGAGEMENTS.remove(anchorPos);
-            if (engagement != null) {
-                int removed = GroundCombatModule.SHARED.despawn(level, engagement);
-                MCPirates.LOGGER.info(
-                        "ground combat: liftoff at anchor {} cleared {} surviving defender(s)",
-                        anchorPos, removed);
+            // Dormant assembly runs alongside ground combat — caller just populated
+            // GROUND_ENGAGEMENTS, so leave it intact.
+            if (!dormant) {
+                GroundCombatModule.GroundEngagement engagement = GROUND_ENGAGEMENTS.remove(anchorPos);
+                if (engagement != null) {
+                    int removed = GroundCombatModule.SHARED.despawn(level, engagement);
+                    MCPirates.LOGGER.info(
+                            "ground combat: liftoff at anchor {} cleared {} surviving defender(s)",
+                            anchorPos, removed);
+                }
             }
-            activateShip(level, leverPos, kind, rotation);
+            activateShip(level, leverPos, kind, rotation, dormant);
             return true;
         } finally {
             ACTIVATING.remove(anchorPos);
@@ -197,6 +226,14 @@ public final class AirshipLiftoffTrigger {
      *  to work would let gametests exercise the real {@link #checkAroundPlayer} path. */
     public static void processNearbyAnchors(ServerLevel level, double x, double z,
                                             boolean playerOnAirship) {
+        // Air arrivals also promote any already-MOORED ship within range — those have had
+        // their anchor BEs moved into a SubLevel by the on-foot dormant-assembly path, so
+        // the chunk-BE scan below would miss them. Order matters: promote first so a ship
+        // that's MOORED *and* still has a chunk-resident anchor (shouldn't happen but
+        // belt-and-suspenders) doesn't get a second activateAnchor call from the loop.
+        if (playerOnAirship) {
+            promoteMooredShipsForAirArrival(level, x, z);
+        }
         ChunkPos centre = new ChunkPos(((int) Math.floor(x)) >> 4, ((int) Math.floor(z)) >> 4);
         for (int dx = -PLAYER_CHUNK_RADIUS; dx <= PLAYER_CHUNK_RADIUS; dx++) {
             for (int dz = -PLAYER_CHUNK_RADIUS; dz <= PLAYER_CHUNK_RADIUS; dz++) {
@@ -219,6 +256,67 @@ public final class AirshipLiftoffTrigger {
                 }
             }
         }
+    }
+
+    /** Promote MOORED ships near (x, z) to LIFTOFF: late deck-crew spawn, drop lingering
+     *  ground defenders, hand off to the normal state machine. */
+    private static void promoteMooredShipsForAirArrival(ServerLevel level, double x, double z) {
+        for (Airship a : AirshipBrain.ships()) {
+            if (a.parentLevel != level) continue;
+            if (a.state != AirshipBrain.State.MOORED) continue;
+            BlockPos airpad = a.airpadAnchor;
+            double pdx = airpad.getX() + 0.5 - x;
+            double pdz = airpad.getZ() + 0.5 - z;
+            if (pdx * pdx + pdz * pdz > TRIGGER_DISTANCE_SQ) continue;
+            // Defeated ship is the player's prize — leave it MOORED as a captured wreck.
+            if (DefeatedAirships.get(level).containsExact(a.airpadAnchor)) continue;
+            promoteMooredToLiftoff(level, a);
+        }
+    }
+
+    private static void promoteMooredToLiftoff(ServerLevel level, Airship a) {
+        AirshipKind kind = a.kind;
+        // Rotation + SubLevel-anchor were stamped at dormant assembly; the world-side
+        // anchor BE has since moved into the SubLevel so re-detecting from chunks fails.
+        Rotation rotation;
+        BlockPos slPrimaryAnchor;
+        if (a.subLevel instanceof ServerSubLevel ssl
+                && ssl.getUserDataTag() != null
+                && ssl.getUserDataTag().contains("mcpirates")) {
+            CompoundTag mcp = ssl.getUserDataTag().getCompound("mcpirates");
+            rotation = Rotation.values()[mcp.getInt("rotation")];
+            slPrimaryAnchor = BlockPos.of(mcp.getLong("slPrimaryAnchor"));
+        } else {
+            MCPirates.LOGGER.warn(
+                    "promoteMooredToLiftoff: SubLevel {} ({}) missing mcpirates stamp — cannot spawn deck crew",
+                    a.subLevel.getUniqueId(), kind.name());
+            return;
+        }
+        GroundCombatModule.GroundEngagement engagement = GROUND_ENGAGEMENTS.remove(a.airpadAnchor);
+        if (engagement != null) {
+            int removed = GroundCombatModule.SHARED.despawn(level, engagement);
+            MCPirates.LOGGER.info(
+                    "ground combat: MOORED→LIFTOFF promotion at anchor {} cleared {} surviving defender(s)",
+                    a.airpadAnchor, removed);
+        }
+        BlockPos offset = slPrimaryAnchor.subtract(a.airpadAnchor);
+        CaptainSpawner.CrewSpawnResult crew = CaptainSpawner.spawn(
+                a.subLevel, a.airpadAnchor, offset, rotation, kind, a.slCannonMounts);
+        a.installCrew(crew.anchors(), crew.cannoneerByMount());
+        a.state = AirshipBrain.State.LIFTOFF;
+        a.stateEnteredTick = level.getGameTime();
+        // Clear MOORED stamp so a post-promotion rehydrate restores in-flight, not MOORED.
+        if (a.subLevel instanceof ServerSubLevel sslAfter && sslAfter.getUserDataTag() != null) {
+            CompoundTag userTag = sslAfter.getUserDataTag();
+            CompoundTag mcp = userTag.getCompound("mcpirates");
+            mcp.putBoolean("moored", false);
+            userTag.put("mcpirates", mcp);
+            sslAfter.setUserDataTag(userTag);
+        }
+        MCPirates.LOGGER.info(
+                "ship {} ({}): MOORED → LIFTOFF after air arrival, deck crew={} cannoneers={}",
+                a.subLevel.getUniqueId(), kind.name(),
+                crew.anchors().size(), crew.cannoneerByMount().size());
     }
 
     /** Idempotent: spawns ground defenders if the kind opts in, no engagement is tracked,
@@ -256,6 +354,20 @@ public final class AirshipLiftoffTrigger {
             return;
         }
 
+        // Assemble the ship into a SubLevel as a dormant (MOORED) contraption *before*
+        // spawning the ground crew so the defenders surround a real Sable contraption,
+        // not a static block structure. activateAnchor(dormant=true) preserves the
+        // ground-engagement map (no preempt) so the order between this call and the
+        // GROUND_ENGAGEMENTS.put below is independent. If assembly fails (chunk section
+        // HIDDEN, missing BE, ...), bail before spawning defenders — we'd otherwise
+        // get crew + a static structure with no liftoff path.
+        if (!activateAnchor(level, anchorPos, /*dormant=*/true)) {
+            MCPirates.LOGGER.info(
+                    "ground combat: dormant assembly deferred at anchor {} — retry next pass",
+                    anchorPos);
+            return;
+        }
+
         GroundCombatModule module = kind.groundCombat().get();
         GroundCombatModule.GroundEngagement engagement = module.spawn(level, leverPos, rotation, kind);
         GROUND_ENGAGEMENTS.put(anchorPos, engagement);
@@ -276,8 +388,14 @@ public final class AirshipLiftoffTrigger {
         return null;
     }
 
-    /** Full lift-off sequence — generic over {@link AirshipKind}. */
-    private static void activateShip(ServerLevel level, BlockPos pos, AirshipKind kind, Rotation rotation) {
+    /** Full assembly sequence — generic over {@link AirshipKind}.
+     *
+     *  <p>{@code dormant=true} stops short of spawning deck crew and registers the brain
+     *  in {@link AirshipBrain.State#MOORED}. Engines are still fuelled and burners are
+     *  still located so a later promotion to LIFTOFF (driven by an air-arriving player)
+     *  is a pure brain-state flip + crew spawn — no second pass over block entities. */
+    private static void activateShip(ServerLevel level, BlockPos pos, AirshipKind kind,
+                                     Rotation rotation, boolean dormant) {
         BlockState anchorState = level.getBlockState(pos);
         Direction connected = ThrottleLevers.leverConnectedDirection(anchorState);
 
@@ -343,6 +461,8 @@ public final class AirshipLiftoffTrigger {
 
         // Stamp identity + layout into userDataTag so AirshipRehydrator can re-register
         // surviving ships after restart. Sable persists this across save/load.
+        // The "moored" flag distinguishes a dormant assembly so rehydration restores it
+        // as MOORED rather than mistaking the empty-crew ship for a derelict wreck.
         BlockPos slPrimaryAnchorPos = pos.offset(offset);
         if (subLevel instanceof ServerSubLevel ssl) {
             CompoundTag userTag = ssl.getUserDataTag();
@@ -352,6 +472,7 @@ public final class AirshipLiftoffTrigger {
             mcp.putLong("airpad", pos.asLong());
             mcp.putInt("rotation", rotation.ordinal());
             mcp.putLong("slPrimaryAnchor", slPrimaryAnchorPos.asLong());
+            mcp.putBoolean("moored", dormant);
             userTag.put("mcpirates", mcp);
             ssl.setUserDataTag(userTag);
         }
@@ -360,8 +481,11 @@ public final class AirshipLiftoffTrigger {
         Vector3d shipLocalForward = new Vector3d(
                 shipForwardDir.getStepX(), shipForwardDir.getStepY(), shipForwardDir.getStepZ());
 
-        CaptainSpawner.CrewSpawnResult crew =
-                CaptainSpawner.spawn(subLevel, pos, offset, rotation, kind, slCannonMounts);
+        // Dormant ships skip deck-crew spawn — ground combat is the engagement until
+        // promoteMooredShipsForAirArrival runs CaptainSpawner.spawn at LIFTOFF promotion.
+        CaptainSpawner.CrewSpawnResult crew = dormant
+                ? CaptainSpawner.CrewSpawnResult.empty()
+                : CaptainSpawner.spawn(subLevel, pos, offset, rotation, kind, slCannonMounts);
 
         // The rehydrator's SubLevelObserver also caught this allocate; its later
         // tryRehydrate sees the UUID already registered here and skips.
@@ -369,7 +493,7 @@ public final class AirshipLiftoffTrigger {
                 level, subLevel, pos, kind,
                 slThrottleLevers, slBurnerPositions, slLeftClutch, slRightClutch, slCannonMounts,
                 shipLocalForward, crew.anchors(), crew.cannoneerByMount(),
-                AirshipBrain.State.LIFTOFF);
+                dormant ? AirshipBrain.State.MOORED : AirshipBrain.State.LIFTOFF);
     }
 
     /** Returns false if the chunk section is HIDDEN — addFreshEntity stores the entity

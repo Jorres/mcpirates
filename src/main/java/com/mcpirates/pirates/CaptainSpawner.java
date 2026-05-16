@@ -80,7 +80,14 @@ public final class CaptainSpawner {
      * {@code isMountManned} queries.
      */
     public record CrewSpawnResult(List<AnchoredEntity> anchors,
-                                  Map<BlockPos, UUID> cannoneerByMount) {}
+                                  Map<BlockPos, UUID> cannoneerByMount) {
+
+        /** Empty result, used for dormant (MOORED) ship registrations that skip
+         *  deck-crew spawn — see {@link com.mcpirates.airship.AirshipLiftoffTrigger}. */
+        public static CrewSpawnResult empty() {
+            return new CrewSpawnResult(List.of(), Map.of());
+        }
+    }
 
     /** Stagger between crossbowman firing starts (ticks). 7 ticks = 0.35 s, so a 4-crew
      *  volley spreads ~1 s from first shot to last — overlapping reloads. */

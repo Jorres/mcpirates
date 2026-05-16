@@ -46,13 +46,15 @@ public final class Airship {
      *  the jigsaw rotation chosen at placement time. */
     public final Vector3d shipLocalForward;
     /** Pillagers the brain re-anchors when their Sable plot-position is wiped by a
-     *  chunk reload (the anchor isn't serialised to NBT). */
-    public final List<AnchoredEntity> anchoredEntities;
+     *  chunk reload (the anchor isn't serialised to NBT). Replaced wholesale by
+     *  {@link #installCrew} when a MOORED ship is promoted to LIFTOFF (deck crew
+     *  spawn is deferred until promotion); never mutated in place. */
+    public List<AnchoredEntity> anchoredEntities;
 
     /** Cannon-mount → cannoneer UUID. A mount fires only while its bound cannoneer is
      *  alive (see {@link #isMountManned}). Cannons with no nearby seat at spawn are
-     *  absent; the map is immutable after construction. */
-    public final Map<BlockPos, UUID> cannoneerByMount;
+     *  absent. Replaced by {@link #installCrew} on MOORED→LIFTOFF promotion. */
+    public Map<BlockPos, UUID> cannoneerByMount;
 
     public AirshipBrain.State state = AirshipBrain.State.LIFTOFF;
     public long stateEnteredTick;
@@ -147,5 +149,14 @@ public final class Airship {
         if (uuid == null) return false;
         Entity e = parentLevel.getEntity(uuid);
         return e != null && !e.isRemoved() && e.isAlive();
+    }
+
+    /** Replace the deck-crew references after a deferred spawn — used when a MOORED
+     *  ship registered with empty crew is promoted to LIFTOFF and its deck pillagers
+     *  are spawned at that point. The brain's defeat detector ({@link #isAnyCrewAlive})
+     *  reads through these references on the next tick. */
+    public void installCrew(List<AnchoredEntity> anchors, Map<BlockPos, UUID> cannoneerByMount) {
+        this.anchoredEntities = anchors;
+        this.cannoneerByMount = cannoneerByMount;
     }
 }

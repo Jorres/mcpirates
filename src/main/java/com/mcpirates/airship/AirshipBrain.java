@@ -87,7 +87,13 @@ public final class AirshipBrain {
 
     private AirshipBrain() {}
 
-    public enum State { LIFTOFF, PURSUE, RETURN, HOVER }
+    /** {@code MOORED} = ship is fully assembled into a SubLevel but parked on the airpad
+     *  with no deck crew. Used when only the ground-combat module has fired (player on
+     *  foot). The brain still ticks the SubLevel handle (so chunk reloads re-acquire it
+     *  cleanly) but skips all movement / control writes; promotion to {@link #LIFTOFF}
+     *  happens when a player arrives by airship — see
+     *  {@link AirshipLiftoffTrigger#promoteMooredShipsForAirArrival}. */
+    public enum State { LIFTOFF, PURSUE, RETURN, HOVER, MOORED }
 
     public static void register(
             ServerLevel parentLevel,
@@ -159,11 +165,17 @@ public final class AirshipBrain {
             return true;
         }
         // Crew-defeat: shut the wreck down (clutches off, strip stamp) and deregister.
-        if (!a.isAnyCrewAlive()) {
+        // MOORED is exempt — deck crew spawns later on LIFTOFF promotion.
+        if (a.state != State.MOORED && !a.isAnyCrewAlive()) {
             shutdownDerelict(a, subLevelLevel);
             MCPirates.LOGGER.info("ship {} ({}): crew defeated, brain deregistering",
                     a.subLevel.getUniqueId(), a.kind.name());
             return false;
+        }
+        // MOORED: parked on the airpad with no deck crew. Stay registered for the
+        // eventual air-arrival promotion but skip targeting + movement writes.
+        if (a.state == State.MOORED) {
+            return true;
         }
         // Sable's @Unique plotPosition field isn't persisted; reapply on chunk-reload edges.
         reanchorEntities(a);
@@ -455,6 +467,9 @@ public final class AirshipBrain {
             case PURSUE -> target == null
                     ? Math.max(cruiseY, floor)
                     : Math.max(target.getEyeY() + PURSUE_ALT_OFFSET, floor);
+            // tickShip short-circuits for MOORED before chooseLiftSetting is called;
+            // this branch only exists to satisfy the compiler's exhaustiveness check.
+            case MOORED -> throw new IllegalStateException("chooseLiftSetting unreachable for MOORED");
         };
         return table.pickClosest(targetY).toLiftSetting();
     }
@@ -566,6 +581,7 @@ public final class AirshipBrain {
             case PURSUE  -> ChatFormatting.RED;
             case RETURN  -> ChatFormatting.AQUA;
             case HOVER   -> ChatFormatting.GREEN;
+            case MOORED  -> ChatFormatting.GRAY;
         };
 
         Component msg = Component.empty()

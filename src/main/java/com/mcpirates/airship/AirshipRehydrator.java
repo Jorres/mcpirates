@@ -213,14 +213,23 @@ public final class AirshipRehydrator {
             }
         }
 
-        // Rehydrated ships are already in-flight. Start in HOVER if at the airpad, RETURN
-        // otherwise — LIFTOFF is the "freshly climbing from the airpad" phase only and its
-        // stabilized-exit gate doesn't fire for a ship already at cruise altitude.
-        double dx = shipWorldPos.x - (airpadAnchor.getX() + 0.5);
-        double dz = shipWorldPos.z - (airpadAnchor.getZ() + 0.5);
-        AirshipBrain.State initialState = (dx * dx + dz * dz) < AirshipStateMachine.HOVER_RADIUS_SQ
-                ? AirshipBrain.State.HOVER
-                : AirshipBrain.State.RETURN;
+        // MOORED ships were never in flight to begin with — they were assembled by the
+        // on-foot ground-combat path and parked on the airpad. Bring them back as MOORED
+        // (the brain's MOORED short-circuit + defeat-gate keep an empty-crew ship from
+        // self-destructing). Otherwise: rehydrated ships are already in-flight, start in
+        // HOVER if at the airpad, RETURN otherwise — LIFTOFF is the "freshly climbing
+        // from the airpad" phase only and its stabilized-exit gate doesn't fire for a
+        // ship already at cruise altitude.
+        AirshipBrain.State initialState;
+        if (mcp.getBoolean("moored")) {
+            initialState = AirshipBrain.State.MOORED;
+        } else {
+            double dx = shipWorldPos.x - (airpadAnchor.getX() + 0.5);
+            double dz = shipWorldPos.z - (airpadAnchor.getZ() + 0.5);
+            initialState = (dx * dx + dz * dz) < AirshipStateMachine.HOVER_RADIUS_SQ
+                    ? AirshipBrain.State.HOVER
+                    : AirshipBrain.State.RETURN;
+        }
 
         AirshipBrain.register(parentLevel, ssl, airpadAnchor, kind,
                 slThrottleLevers, slBurnerPositions, slLeftClutch, slRightClutch, slCannonMounts,

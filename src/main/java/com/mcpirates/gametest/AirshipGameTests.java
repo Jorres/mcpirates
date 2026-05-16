@@ -90,6 +90,10 @@ public final class AirshipGameTests {
     public static void groundCombatSpawnsForOnFootPlayer(GameTestHelper helper) {
         TestSetup.reset(helper);
 
+        // Capture before assembly: activateAnchor moves the BE into the SubLevel, so
+        // findAnchor stops working after the dormant assembly fires.
+        final BlockPos[] anchorRef = new BlockPos[1];
+
         helper.startSequence()
                 .thenExecuteAfter(2, () -> {
                     BlockPos anchorWorld = findAnchor(helper);
@@ -97,6 +101,7 @@ public final class AirshipGameTests {
                         helper.fail("no MCPShipAnchorBlockEntity in the test arena");
                         return;
                     }
+                    anchorRef[0] = anchorWorld;
                     AirshipLiftoffTrigger.processNearbyAnchors(
                             helper.getLevel(),
                             anchorWorld.getX() + 3.5,
@@ -105,9 +110,9 @@ public final class AirshipGameTests {
                 })
                 .thenIdle(2)
                 .thenExecute(() -> {
-                    BlockPos anchorWorld = findAnchor(helper);
+                    BlockPos anchorWorld = anchorRef[0];
                     if (anchorWorld == null) {
-                        helper.fail("anchor went missing");
+                        helper.fail("anchor capture failed");
                         return;
                     }
                     if (!AirshipLiftoffTrigger.hasGroundEngagement(anchorWorld)) {
@@ -122,9 +127,21 @@ public final class AirshipGameTests {
                         helper.fail("ground engagement registered but no Monster entities spawned");
                         return;
                     }
-                    if (!AirshipBrain.ships().isEmpty()) {
-                        helper.fail("ship registered despite playerOnAirship=false (got "
-                                + AirshipBrain.ships().size() + " ships)");
+                    // Dormant assembly: exactly one MOORED ship registered with no deck crew.
+                    if (AirshipBrain.ships().size() != 1) {
+                        helper.fail("expected 1 MOORED ship after on-foot trigger, got "
+                                + AirshipBrain.ships().size());
+                        return;
+                    }
+                    Airship ship = AirshipBrain.ships().get(0);
+                    if (ship.state != State.MOORED) {
+                        helper.fail("expected ship state=MOORED after dormant assembly, got "
+                                + ship.state);
+                        return;
+                    }
+                    if (!ship.anchoredEntities.isEmpty()) {
+                        helper.fail("MOORED ship should have no deck crew, got "
+                                + ship.anchoredEntities.size());
                     }
                 })
                 .thenExecute(() -> TestSetup.reset(helper))
@@ -141,6 +158,10 @@ public final class AirshipGameTests {
     public static void groundCombatRetreatsToDormantThenAirArrivalLifts(GameTestHelper helper) {
         TestSetup.reset(helper);
 
+        // Anchor BE moves into the SubLevel during dormant assembly, so cache the world
+        // pos up front.
+        final BlockPos[] anchorRef = new BlockPos[1];
+
         helper.startSequence()
                 .thenExecuteAfter(2, () -> {
                     BlockPos anchorWorld = findAnchor(helper);
@@ -148,6 +169,7 @@ public final class AirshipGameTests {
                         helper.fail("no MCPShipAnchorBlockEntity in the test arena");
                         return;
                     }
+                    anchorRef[0] = anchorWorld;
                     AirshipLiftoffTrigger.processNearbyAnchors(
                             helper.getLevel(),
                             anchorWorld.getX() + 3.5,
@@ -156,7 +178,7 @@ public final class AirshipGameTests {
                 })
                 .thenIdle(2)
                 .thenExecute(() -> {
-                    BlockPos anchorWorld = findAnchor(helper);
+                    BlockPos anchorWorld = anchorRef[0];
                     if (!AirshipLiftoffTrigger.hasGroundEngagement(anchorWorld)) {
                         helper.fail("ground engagement did not register at " + anchorWorld);
                         return;
@@ -167,11 +189,22 @@ public final class AirshipGameTests {
                             .size();
                     if (hostiles < 1) {
                         helper.fail("engagement registered but no defenders spawned");
+                        return;
+                    }
+                    // Dormant assembly fired alongside ground combat — ship should be MOORED.
+                    if (AirshipBrain.ships().size() != 1
+                            || AirshipBrain.ships().get(0).state != State.MOORED) {
+                        helper.fail("expected 1 MOORED ship after ground trigger; got "
+                                + AirshipBrain.ships().size() + " ship(s) state="
+                                + (AirshipBrain.ships().isEmpty()
+                                    ? "—" : AirshipBrain.ships().get(0).state));
                     }
                 })
                 // Discard the captain — simulates vanilla checkDespawn firing.
+                // discard() does not fire LivingDeathEvent, so DefeatedAirships is NOT
+                // marked here; the ship stays MOORED + eligible for air-arrival promotion.
                 .thenExecute(() -> {
-                    BlockPos anchorWorld = findAnchor(helper);
+                    BlockPos anchorWorld = anchorRef[0];
                     var captains = helper.getLevel()
                             .getEntitiesOfClass(Monster.class,
                                     new AABB(anchorWorld).inflate(40),
@@ -184,15 +217,15 @@ public final class AirshipGameTests {
                 })
                 .thenIdle(2)
                 .thenExecute(() -> {
-                    BlockPos anchorWorld = findAnchor(helper);
+                    BlockPos anchorWorld = anchorRef[0];
                     if (AirshipLiftoffTrigger.hasGroundEngagement(anchorWorld)) {
                         helper.fail("engagement still tracked at " + anchorWorld
                                 + " after captain discard — leave-event handler didn't clear it");
                     }
                 })
-                // ── Step 3: return by air. ─────────────────────────────────────────
+                // ── Step 3: return by air → MOORED → LIFTOFF promotion. ───────────
                 .thenExecute(() -> {
-                    BlockPos anchorWorld = findAnchor(helper);
+                    BlockPos anchorWorld = anchorRef[0];
                     AirshipLiftoffTrigger.processNearbyAnchors(
                             helper.getLevel(),
                             anchorWorld.getX() + 3.5,
@@ -200,8 +233,9 @@ public final class AirshipGameTests {
                             /*playerOnAirship=*/ true);
                 })
                 .thenWaitUntil(() -> helper.assertTrue(
-                        !AirshipBrain.ships().isEmpty(),
-                        "waiting for AirshipBrain.register after air arrival"))
+                        !AirshipBrain.ships().isEmpty()
+                                && AirshipBrain.ships().get(0).state != State.MOORED,
+                        "waiting for MOORED → LIFTOFF promotion after air arrival"))
                 .thenExecute(() -> TestSetup.reset(helper))
                 .thenSucceed();
     }
