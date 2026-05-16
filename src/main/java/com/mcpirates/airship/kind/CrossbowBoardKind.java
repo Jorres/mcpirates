@@ -64,14 +64,16 @@ public final class CrossbowBoardKind implements AirshipKind {
         return List.of();
     }
 
-    // Hull spans NBT (0..5, 0..7, 1..15). Anchor at (2,3,8) so deltas:
-    //   min (0-2, 0-3, 1-8) = (-2,-3,-7)
-    //   max (5-2, 7-3, 15-8) = (+3,+4,+7)
-    // The previous z_max of +6 left the z=15 column outside the glue — those cells
-    // could remain in the world after assembly and physically block lift-off (see
-    // AirshipSmallKind.glueMin doc for the BFS reasoning).
-    @Override public BlockPos glueMin() { return new BlockPos(-2, -3, -7); }
-    @Override public BlockPos glueMax() { return new BlockPos(+3, +4, +7); }
+    // Hull spans NBT (0..5, 0..7, 1..15). Deltas are LEVER-relative (the lever sits at
+    // NBT (2,3,9) — see anchorToLeverDelta — and spawnHoneyGlue adds these to the lever
+    // pos, NOT the anchor pos):
+    //   min (0-2, 0-3, 1-9) = (-2,-3,-8)
+    //   max (5-2, 7-3, 15-9) = (+3,+4,+6)
+    // Earlier values were anchor-relative (anchor = lever - (0,0,1)), which shifted the
+    // glue bbox +1 in Z and left the z=1 keel layer un-stuck — visible as the assembled
+    // ship "missing" a row at the bow and grabbing an air column at the stern.
+    @Override public BlockPos glueMin() { return new BlockPos(-2, -3, -8); }
+    @Override public BlockPos glueMax() { return new BlockPos(+3, +4, +6); }
 
     @Override public CombatBehavior combat() { return combat; }
 

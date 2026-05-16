@@ -58,7 +58,8 @@ public final class AirshipSmallKind implements AirshipKind {
         return List.of(new BlockPos(0, -3, -4));
     }
 
-    // Honey-glue body bounds (inclusive, anchor-relative).
+    // Honey-glue body bounds (inclusive, LEVER-relative — spawnHoneyGlue adds these to
+    // the lever pos, NOT the anchor pos).
     //
     // CRITICAL: must enclose every occupied cell of airship_small.nbt. The BFS in
     // SimAssemblyContraption.moveBlock only crosses block-to-block if either
@@ -70,10 +71,10 @@ public final class AirshipSmallKind implements AirshipKind {
     // buoyant but won't lift off". The fix on the assembly side is to make sure
     // glueMin/glueMax cover the whole NBT footprint.
     //
-    // NBT occupied cells: x=0..6, y=0..8, z=0..11 (anchor at (3,3,5) in NBT).
-    // Bounds below give exactly that range with a 0-cell margin on every face.
-    @Override public BlockPos glueMin() { return new BlockPos(-3, -3, -5); }
-    @Override public BlockPos glueMax() { return new BlockPos(+3, +5, +6); }
+    // NBT occupied cells: x=0..6, y=0..8, z=0..11 (lever at (3,3,6) in NBT).
+    // Lever-relative: min=(0-3,0-3,0-6)=(-3,-3,-6); max=(6-3,8-3,11-6)=(+3,+5,+5).
+    @Override public BlockPos glueMin() { return new BlockPos(-3, -3, -6); }
+    @Override public BlockPos glueMax() { return new BlockPos(+3, +5, +5); }
 
     @Override public CombatBehavior combat() { return combat; }
 
