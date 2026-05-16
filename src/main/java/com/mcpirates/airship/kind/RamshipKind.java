@@ -1,11 +1,13 @@
 package com.mcpirates.airship.kind;
 
+import com.mcpirates.pirates.GroundCombatModule;
 import com.simibubi.create.content.redstone.analogLever.AnalogLeverBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Ramming attacker (NBT {@code ramship}, hull 9×10×22). Two outboard propellers driven
@@ -73,4 +75,9 @@ public final class RamshipKind implements AirshipKind {
 
     @Override public CombatBehavior combat() { return combat; }
     @Override public MovementBehavior movement() { return RamMovement.INSTANCE; }
+
+    @Override
+    public Optional<GroundCombatModule> groundCombat() {
+        return Optional.of(GroundCombatModule.SHARED);
+    }
 }
