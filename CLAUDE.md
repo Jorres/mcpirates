@@ -6,8 +6,8 @@ You MUST NOT be lazy and make shortcuts, especially ones that introduce entropy.
 
 You MUST NOT overly verbose writing code commentaries or docs.
 
-At all times remember - you have access to downloaded source code of your dependencies, and you always can search the internet for docs on NeoForge. 
+You have access to ./sources of your dependencies, and you always can search the internet for docs on NeoForge or modding in general!
 
-Backwards compatibility does not exist. We are developing the mod and have no clients. Better ways to do stuff means earlier stuff gets brutally deleted.
+We do not respect backwards compatibility. We are developing the mod and have NO consumers. If we find better ways, we brutally delete old ways.
 
 Remember you have ./docs folder and consult it when needed.

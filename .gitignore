@@ -28,3 +28,7 @@ libs/*.jar
 
 # Cloned upstream sources, kept local for reference only
 sources/
+
+*.pyc
+.venv
+.claude

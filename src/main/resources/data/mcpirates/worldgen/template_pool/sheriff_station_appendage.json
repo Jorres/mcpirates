@@ -1,0 +1,16 @@
+{
+  "_comment": "Single-element pool for the sheriff_station's appendage. The station's south-facing jigsaw targets this pool; with one element and fallback=empty, the appendage is selected 100% of the time and only fails to appear if it physically can't fit.",
+  "name": "mcpirates:sheriff_station_appendage",
+  "fallback": "minecraft:empty",
+  "elements": [
+    {
+      "weight": 1,
+      "element": {
+        "element_type": "minecraft:single_pool_element",
+        "location": "mcpirates:village/common/sheriff_station_appendage",
+        "processors": { "processors": [] },
+        "projection": "rigid"
+      }
+    }
+  ]
+}
