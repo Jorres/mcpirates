@@ -77,13 +77,19 @@ public final class RamshipTests {
                         helper.fail("no ramship anchor BE in arena");
                         return;
                     }
-                    // Force-load a generous chunk region around the test arena. Both ships
-                    // will drift up to ~50 blocks during interception; without this they
-                    // unload mid-flight.
-                    ChunkPos centre = new ChunkPos(ramshipAnchor);
-                    for (int dx = -4; dx <= 4; dx++) {
-                        for (int dz = -4; dz <= 4; dz++) {
-                            level.setChunkForced(centre.x + dx, centre.z + dz, true);
+                    // Force-load a generous chunk region around BOTH ship positions.
+                    // The victim is VICTIM_OFFSET_X east of the ramship anchor — large
+                    // enough to push the victim's anchor chunk to the edge of a ring
+                    // centred only on the ramship. Center one ring on each anchor and
+                    // make it wide enough to cover orbit / chase drift.
+                    ChunkPos ramshipChunk = new ChunkPos(ramshipAnchor);
+                    BlockPos victimAnchorEstimate = ramshipAnchor.offset(VICTIM_OFFSET_X, 0, 0);
+                    ChunkPos victimChunk = new ChunkPos(victimAnchorEstimate);
+                    for (ChunkPos centre : new ChunkPos[]{ramshipChunk, victimChunk}) {
+                        for (int dx = -6; dx <= 6; dx++) {
+                            for (int dz = -6; dz <= 6; dz++) {
+                                level.setChunkForced(centre.x + dx, centre.z + dz, true);
+                            }
                         }
                     }
 
@@ -127,14 +133,57 @@ public final class RamshipTests {
                         helper.fail("could not identify both ships by kind: "
                                 + AirshipBrain.ships().stream()
                                 .map(a -> a.kind.name()).toList());
+                        return;
                     }
+                    // Post-assembly leftover scan: anything non-air inside the ramship's
+                    // glue bbox (parent-world frame) is a hull cell BFS missed — it stays
+                    // in the world and the SubLevel rigid body collides with it on rise.
+                    Airship ramship = ramshipRef.get();
+                    BlockPos lever = ramship.airpadAnchor;
+                    BlockPos gMin = RamshipKind.INSTANCE.glueMin();
+                    BlockPos gMax = RamshipKind.INSTANCE.glueMax();
+                    int x0 = lever.getX() + gMin.getX(), x1 = lever.getX() + gMax.getX();
+                    int y0 = lever.getY() + gMin.getY(), y1 = lever.getY() + gMax.getY();
+                    int z0 = lever.getZ() + gMin.getZ(), z1 = lever.getZ() + gMax.getZ();
+                    int leftover = 0;
+                    for (BlockPos p : BlockPos.betweenClosed(x0, y0, z0, x1, y1, z1)) {
+                        if (!level.getBlockState(p).isAir()) {
+                            if (leftover < 10) {
+                                MCPirates.LOGGER.info(
+                                        "[ramship-test] leftover in glue bbox: {} = {}",
+                                        p, level.getBlockState(p));
+                            }
+                            leftover++;
+                        }
+                    }
+                    MCPirates.LOGGER.info(
+                            "[ramship-test] post-assembly leftover-non-air count in ramship glue bbox ({},{},{})..({},{},{}): {}",
+                            x0, y0, z0, x1, y1, z1, leftover);
                 })
                 // Wait for both ships to clear LIFTOFF (steady at cruise altitude).
-                .thenWaitUntil(() -> helper.assertTrue(
-                        ramshipRef.get() != null && victimRef.get() != null
-                                && ramshipRef.get().state != AirshipBrain.State.LIFTOFF
-                                && victimRef.get().state != AirshipBrain.State.LIFTOFF,
-                        "waiting for both ships to clear LIFTOFF"))
+                .thenWaitUntil(() -> {
+                    Airship ramship = ramshipRef.get();
+                    Airship victim = victimRef.get();
+                    long gt = level.getGameTime();
+                    if (gt % 40 == 0) {  // log every 2s gametime
+                        Vector3d rPos = ramship == null ? null : ramship.subLevel.logicalPose().position();
+                        Vector3d vPos = victim == null ? null : victim.subLevel.logicalPose().position();
+                        MCPirates.LOGGER.info(String.format(
+                                "[ramship-test] t=%d ramship={state=%s, y=%.2f, sl=%s} victim={state=%s, y=%.2f, sl=%s}",
+                                gt,
+                                ramship == null ? "—" : ramship.state.name(),
+                                rPos == null ? Double.NaN : rPos.y,
+                                ramship == null ? "—" : (ramship.subLevel.getLevel() == null ? "null-level" : "live"),
+                                victim == null ? "—" : victim.state.name(),
+                                vPos == null ? Double.NaN : vPos.y,
+                                victim == null ? "—" : (victim.subLevel.getLevel() == null ? "null-level" : "live")));
+                    }
+                    helper.assertTrue(
+                            ramship != null && victim != null
+                                    && ramship.state != AirshipBrain.State.LIFTOFF
+                                    && victim.state != AirshipBrain.State.LIFTOFF,
+                            "waiting for both ships to clear LIFTOFF");
+                })
                 .thenExecute(() -> {
                     // Drive the victim along -X (back toward the ramship) so paths cross.
                     // Destination chosen far past the ramship so victim never "arrives"

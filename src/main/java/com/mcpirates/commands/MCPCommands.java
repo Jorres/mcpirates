@@ -95,7 +95,9 @@ public final class MCPCommands {
                                 .then(Commands.literal("airship_small")
                                         .executes(ctx -> spawnOutpost(ctx, "airship_small")))
                                 .then(Commands.literal("crossbow_board")
-                                        .executes(ctx -> spawnOutpost(ctx, "crossbow_board")))))
+                                        .executes(ctx -> spawnOutpost(ctx, "crossbow_board")))
+                                .then(Commands.literal("ramship")
+                                        .executes(ctx -> spawnOutpost(ctx, "ramship")))))
 
                 .then(Commands.literal("sheriff")
                         .then(Commands.literal("spawn").executes(MCPCommands::spawnSheriff)))

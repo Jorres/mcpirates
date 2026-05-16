@@ -232,16 +232,23 @@ def build_ship(name: str, cfg: dict) -> None:
                 else:
                     out_blocks.append(make_block(air_idx, x, y, z))
 
+    # Strip source entities: in-game saves often capture leftover mobs (bats, items)
+    # and create-system entities (seat passengers, pre-baked honey_glue with wrong AABB).
+    # The runtime liftoff path spawns its own honey_glue covering the full hull bbox; any
+    # pre-baked glue here just confuses assembly. Ships should not carry runtime entities.
+    src_entities = src.get("entities", List[Compound]())
+    stripped = len(src_entities)
     write_nbt(File(Compound({
         "size": List[Int]([Int(out_sx), Int(out_sy), Int(out_sz)]),
         "palette": List[Compound](palette),
         "blocks": List[Compound](out_blocks),
-        "entities": src.get("entities", List[Compound]()),
+        "entities": List[Compound]([]),
         "DataVersion": src.get("DataVersion", Int(3955)),
     })), OUT_DIR / f"{name}.nbt")
 
     print(f"  [{name}] wrote bare ship {out_sx}x{out_sy}x{out_sz} "
-          f"(hull y=0..{sy-1}, buffer y={sy}..{out_sy-1}, anchor at {tuple(anchor_pos)})")
+          f"(hull y=0..{sy-1}, buffer y={sy}..{out_sy-1}, anchor at {tuple(anchor_pos)}"
+          f"{f', stripped {stripped} entities' if stripped else ''})")
 
 
 def build_pad(name: str, cfg: dict) -> None:
