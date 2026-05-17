@@ -5,7 +5,6 @@ import com.mcpirates.MCPirates;
 import com.mcpirates.airship.Airship;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
-import com.mcpirates.airship.anchor.MCPShipAnchorBlockEntity;
 import com.mcpirates.airship.kind.RamshipKind;
 import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
 import dev.ryanhcode.sable.companion.math.BoundingBox3dc;
@@ -17,64 +16,28 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 import org.joml.Vector3d;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * End-to-end ramship behaviour: place a ramship and a victim {@code airship_small}
- * orthogonally, drive the victim in a straight line across the ramship's path, point
- * the ramship's brain at the victim's own captain, and assert the two SubLevel
- * bounding boxes intersect (impact) within the timeout.
- *
- * <p>Geometry (top-down, Minecraft NORTH = -Z, EAST = +X):
- * <pre>
- *       victim start -------------- victim end
- *                       (+X path)
- *                            ▲ ramship nose (NORTH/-Z)
- *                            │
- *                            │
- *                          ramship
- * </pre>
- * The victim's east-west path runs at Z = ramshipZ - PERP_DISTANCE (NORTH of the
- * ramship); it starts WEST of the ramship's X and is navigated far past the ramship's
- * X. The ramship's nose points NORTH, so it must turn out of bay and intercept the
- * crossing victim — exercising lead/intercept rather than a tail chase.
- *
- * <p>Target seam: {@link AirshipBrain#targetOverride} — the victim's own captain
- * (a {@code Pillager} stuck to the victim's SubLevel via {@code sable$setPlotPosition}).
- * Captain rides the SubLevel, so {@code captain.getX/Y/Z()} reports the victim's
- * live world position and {@code Sable.HELPER.getContaining(captain)} resolves to the
- * victim's SubLevel — both pieces the brain needs in one entity, no mock player needed,
- * no separate ship override, no proximity-scanner side-effects.
- *
- * <p>Pass condition: ramship and victim SubLevel bounding boxes intersect at any tick.
- * Fail condition: the GameTest global timeout elapses without intersection.
+ * Ramship intercept: victim airship_small crosses orthogonal to the ramship's nose,
+ * brain targets the victim's captain, pass = SubLevel AABBs overlap. Forces a real
+ * lead/intercept rather than a tail chase.
  */
 @GameTestHolder(MCPirates.MOD_ID)
 @PrefixGameTestTemplate(false)
 public final class RamshipTests {
 
-    /** Z gap between the ramship's nose row and the victim's east-west path. Large
-     *  enough that the orthogonal geometry forces a real intercept (not a placement
-     *  overlap or immediate point-blank hit); small enough to close within timeout. */
     private static final int PERP_DISTANCE = 45;
-    /** How far WEST of the ramship's X the victim is placed at spawn. */
     private static final int VICTIM_WEST_OFFSET = 25;
-    /** How far EAST of the ramship's X the victim is navigated to. Picked far past the
-     *  ramship's X so the victim keeps moving for the whole intercept window instead of
-     *  arriving and stopping mid-test. */
     private static final int VICTIM_EAST_DESTINATION = 200;
-    /** Hard ceiling on the test duration. The GameTest will succeed earlier on the
-     *  first tick the SubLevel AABBs overlap. */
     private static final int TIMEOUT_TICKS = 2600;
 
     private RamshipTests() {}
@@ -95,20 +58,13 @@ public final class RamshipTests {
                         helper.fail("no ramship anchor BE in arena");
                         return;
                     }
-                    // Place victim NORTH of the ramship and WEST of its X. Its origin
-                    // is the airship_small NBT min corner; airship_small NBT is 7×9×12,
-                    // forward = NORTH (nose at NBT z=0). With PERP_DISTANCE = 45 we
-                    // leave a clear gap of ~33 blocks between the airship_small tail
-                    // and the ramship nose, so the placement never drops blocks on the
-                    // ramship hull.
                     BlockPos victimOrigin = new BlockPos(
                             ramshipAnchor.getX() - VICTIM_WEST_OFFSET,
                             ramshipAnchor.getY(),
                             ramshipAnchor.getZ() - PERP_DISTANCE);
 
-                    // Force-load chunks around both ships AND the victim's eastward
-                    // destination so the SubLevel rigid bodies keep ticking as they drift
-                    // past the arena bounds. See [[sable-chunk-ticket-mechanism]].
+                    // Force-load so SubLevels keep ticking past arena bounds.
+                    // See [[sable-chunk-ticket-mechanism]].
                     ChunkPos ramshipChunk = new ChunkPos(ramshipAnchor);
                     ChunkPos victimChunk = new ChunkPos(victimOrigin);
                     BlockPos destinationEstimate = new BlockPos(
@@ -133,8 +89,7 @@ public final class RamshipTests {
                     tplOpt.get().placeInWorld(level, victimOrigin, victimOrigin,
                             new StructurePlaceSettings(), level.getRandom(), 2);
 
-                    // Activate both ships.
-                    List<BlockPos> anchors = findAnchorsInRadius(helper, ramshipAnchor, 96);
+                    List<BlockPos> anchors = TestSetup.findAnchorsInRadius(helper, ramshipAnchor, 96);
                     if (anchors.size() < 2) {
                         helper.fail("expected 2 anchors (ramship + victim), found " + anchors.size());
                         return;
@@ -160,9 +115,8 @@ public final class RamshipTests {
                                 .map(a -> a.kind.name()).toList());
                         return;
                     }
-                    // Post-assembly leftover scan: anything non-air inside the ramship's
-                    // glue bbox (parent-world frame) is a hull cell BFS missed — it stays
-                    // in the world and the SubLevel rigid body collides with it on rise.
+                    // Anything non-air left in the glue bbox is a hull cell BFS missed —
+                    // it stays in the world and blocks the SubLevel from rising.
                     Airship ramship = ramshipRef.get();
                     BlockPos lever = ramship.airpadAnchor;
                     BlockPos gMin = RamshipKind.INSTANCE.glueMin();
@@ -185,12 +139,12 @@ public final class RamshipTests {
                             "[ramship-test] post-assembly leftover-non-air count in ramship glue bbox ({},{},{})..({},{},{}): {}",
                             x0, y0, z0, x1, y1, z1, leftover);
                 })
-                // Wait for both ships to clear LIFTOFF (steady at cruise altitude).
+                // Wait for both ships to clear LIFTOFF.
                 .thenWaitUntil(() -> {
                     Airship ramship = ramshipRef.get();
                     Airship victim = victimRef.get();
                     long gt = level.getGameTime();
-                    if (gt % 40 == 0) {  // log every 2s gametime
+                    if (gt % 40 == 0) {
                         Vector3d rPos = ramship == null ? null : ramship.subLevel.logicalPose().position();
                         Vector3d vPos = victim == null ? null : victim.subLevel.logicalPose().position();
                         MCPirates.LOGGER.info(String.format(
@@ -210,18 +164,14 @@ public final class RamshipTests {
                             "waiting for both ships to clear LIFTOFF");
                 })
                 .thenExecute(() -> {
-                    // Drive the victim east along +X, staying on the same Z line. The
-                    // destination is far past the ramship's X so the victim never
-                    // "arrives" and stops mid-window.
                     Airship victim = victimRef.get();
                     Vector3d vPos = victim.subLevel.logicalPose().position();
                     double destX = vPos.x + (VICTIM_WEST_OFFSET + VICTIM_EAST_DESTINATION);
                     AirshipBrain.navigateTo(victim, destX, vPos.z);
 
-                    // Target = victim's captain. Captain is a Pillager stuck to the victim
-                    // SubLevel via sable$setPlotPosition, so its world-frame position tracks
-                    // the SubLevel automatically and Sable.HELPER.getContaining(captain)
-                    // resolves to the victim SubLevel — no mock player, no second override.
+                    // Captain rides victim's SubLevel; its world pos tracks the ship and
+                    // Sable.HELPER.getContaining resolves to the victim SubLevel — both
+                    // pieces the brain needs from one entity.
                     LivingEntity captain = findCaptain(level, victim);
                     if (captain == null) {
                         helper.fail("no captain found among victim's anchoredEntities (size="
@@ -234,8 +184,7 @@ public final class RamshipTests {
                             destX, vPos.z, captain.getUUID(),
                             captain.getX(), captain.getY(), captain.getZ());
                 })
-                // Poll AABB intersection every tick. First overlap = impact = pass.
-                // The GameTest global timeout caps the wait if no overlap ever occurs.
+                // First AABB overlap = impact = pass.
                 .thenWaitUntil(() -> {
                     Airship ramship = ramshipRef.get();
                     Airship victim = victimRef.get();
@@ -255,13 +204,9 @@ public final class RamshipTests {
 
                     long gt = level.getGameTime();
                     if (gt % 40 == 0 || overlap) {
-                        // Yaw is derived from the SubLevel's logical orientation quaternion
-                        // (pure Java math), so it's safe to sample mid-tick. We deliberately
-                        // do NOT call Sable's RigidBodyHandle.getLinearVelocity /
-                        // getAngularVelocity from this poll loop — they go straight into
-                        // native Rapier and panic if Rapier's body lookup misses (which can
-                        // happen during SubLevel assembly/teardown ticks). See
-                        // [[feedback_rapier_two_sublevel_window]].
+                        // Don't call Sable's RigidBodyHandle velocity getters from this
+                        // poll — native Rapier panics if body lookup misses mid-assembly.
+                        // See [[feedback_rapier_two_sublevel_window]].
                         String rState = ramship.state.name();
                         String rCtrl = ramship.controls == null ? "—" : ramship.controls.diagnostics(ramship);
                         double yawDeg = Math.toDegrees(ramship.yawRadians());
@@ -282,8 +227,6 @@ public final class RamshipTests {
                 .thenSucceed();
     }
 
-    /** Find the captain pillager among the victim's anchored crew. Captain is the only
-     *  member tagged with {@link MCPDataKeys#CAPTAIN_TAG}. */
     private static LivingEntity findCaptain(ServerLevel level, Airship victim) {
         for (AnchoredEntity ae : victim.anchoredEntities) {
             Entity e = level.getEntity(ae.uuid());
@@ -294,17 +237,4 @@ public final class RamshipTests {
         return null;
     }
 
-    private static List<BlockPos> findAnchorsInRadius(GameTestHelper helper, BlockPos centre, int radius) {
-        List<BlockPos> anchors = new ArrayList<>();
-        ServerLevel level = helper.getLevel();
-        for (BlockPos pos : BlockPos.betweenClosed(
-                centre.getX() - radius, centre.getY() - radius, centre.getZ() - radius,
-                centre.getX() + radius, centre.getY() + radius, centre.getZ() + radius)) {
-            BlockEntity be = level.getBlockEntity(pos);
-            if (be instanceof MCPShipAnchorBlockEntity) {
-                anchors.add(pos.immutable());
-            }
-        }
-        return anchors;
-    }
 }

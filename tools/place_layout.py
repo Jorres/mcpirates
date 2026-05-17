@@ -10,7 +10,7 @@ Reads:
 
 Emits commands to stdout. Caller pipes lines into RCON.
 """
-import gzip, json, struct, sys
+import argparse, gzip, json, struct, sys
 from io import BytesIO
 from pathlib import Path
 
@@ -75,11 +75,14 @@ def parse_structure(path):
     palette = root.get("palette", [])
     jigsaws = []
     for b in root.get("blocks", []):
+        state_idx = b["state"]
+        palette_entry = palette[state_idx]
+        # Identify by palette block name (matches MC's own behavior) — some structure_block
+        # saves omit nbt.id even though the BE data (name/target/pool/joint) is present.
+        if palette_entry.get("Name") != "minecraft:jigsaw": continue
         nbt = b.get("nbt")
         if not nbt: continue
-        if nbt.get("id") != "minecraft:jigsaw": continue
-        state_idx = b["state"]
-        props = palette[state_idx].get("Properties", {})
+        props = palette_entry.get("Properties", {})
         jigsaws.append({
             "pos": tuple(b["pos"]),
             "name": nbt.get("name"),
@@ -267,52 +270,55 @@ def simulate_group_bbox(root_id, structures, root_origin, edges):
 
 # ---------- Main ----------
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ships-only", action="store_true",
+                        help="Emit only the ships-alone row (skip pads, assemblies, sheriff).")
+    args = parser.parse_args()
+
     structures, pools = load_all()
     pads, ships, sheriff_root = classify(structures, pools)
     commands = []
-    # Forceload up front so /place template doesn't drop blocks into unloaded chunks.
-    # Layout spans roughly X=-1..100, Z=-1..160. Round to chunk granularity.
     commands.append("# === pre-layout: forceload ===")
     commands.append("forceload add -16 -16 128 192")
     z_cursor = 0
 
-    # Row 1: pads + non-ship appendages (exclude airships_* pools)
-    row1_groups = []
-    for pad in pads:
-        edges = walk_appendages(pad, structures, pools, exclude_pool_prefixes=(f"{NS}:airships",))
-        row1_groups.append((pad, pad, edges))
-    commands.append(f"# === ROW 1: pads + appendages, z={z_cursor} ===")
-    depth1 = build_row(commands, "row1-pad+appendages", row1_groups, z_cursor, structures)
-    z_cursor += depth1 + ROW_GUTTER
+    if not args.ships_only:
+        # Row 1: pads + non-ship appendages (exclude airships_* pools)
+        row1_groups = []
+        for pad in pads:
+            edges = walk_appendages(pad, structures, pools, exclude_pool_prefixes=(f"{NS}:airships",))
+            row1_groups.append((pad, pad, edges))
+        commands.append(f"# === ROW 1: pads + appendages, z={z_cursor} ===")
+        depth1 = build_row(commands, "row1-pad+appendages", row1_groups, z_cursor, structures)
+        z_cursor += depth1 + ROW_GUTTER
 
-    # Row 2: ships alone (no appendages)
-    row2_groups = [(ship, ship, []) for ship in ships]
-    commands.append(f"# === ROW 2: ships alone, z={z_cursor} ===")
-    depth2 = build_row(commands, "row2-ships", row2_groups, z_cursor, structures)
-    z_cursor += depth2 + ROW_GUTTER
+    # Ships alone (only row in --ships-only; row 2 otherwise)
+    ships_groups = [(ship, ship, []) for ship in ships]
+    label = "ROW: ships" if args.ships_only else "ROW 2: ships alone"
+    commands.append(f"# === {label}, z={z_cursor} ===")
+    depth_ships = build_row(commands, "ships", ships_groups, z_cursor, structures)
+    z_cursor += depth_ships + ROW_GUTTER
 
-    # Row 3: assembled = pad + all appendages (including ship via airships_* pool)
-    row3_groups = []
-    for pad in pads:
-        edges = walk_appendages(pad, structures, pools)  # no exclusion
-        row3_groups.append((pad + " (assembled)", pad, edges))
-    commands.append(f"# === ROW 3: full assemblies, z={z_cursor} ===")
-    depth3 = build_row(commands, "row3-assembled", row3_groups, z_cursor, structures)
-    z_cursor += depth3 + ROW_GUTTER
+    if not args.ships_only:
+        row3_groups = []
+        for pad in pads:
+            edges = walk_appendages(pad, structures, pools)
+            row3_groups.append((pad + " (assembled)", pad, edges))
+        commands.append(f"# === ROW 3: full assemblies, z={z_cursor} ===")
+        depth3 = build_row(commands, "row3-assembled", row3_groups, z_cursor, structures)
+        z_cursor += depth3 + ROW_GUTTER
 
-    # Row 4: sheriff
-    if sheriff_root:
-        edges = walk_appendages(sheriff_root, structures, pools)
-        row4_groups = [(sheriff_root, sheriff_root, edges)]
-        commands.append(f"# === ROW 4: sheriff, z={z_cursor} ===")
-        depth4 = build_row(commands, "row4-sheriff", row4_groups, z_cursor, structures)
-        z_cursor += depth4 + ROW_GUTTER
+        if sheriff_root:
+            edges = walk_appendages(sheriff_root, structures, pools)
+            row4_groups = [(sheriff_root, sheriff_root, edges)]
+            commands.append(f"# === ROW 4: sheriff, z={z_cursor} ===")
+            depth4 = build_row(commands, "row4-sheriff", row4_groups, z_cursor, structures)
+            z_cursor += depth4 + ROW_GUTTER
 
-    # Trailing setworldspawn + tp
     commands.append(f"# === post-layout: spawn + tp ===")
     centre_z = z_cursor // 2
-    commands.append(f"setworldspawn 0 -59 {centre_z}")
-    commands.append(f"tp Dev 0 -59 {centre_z}")
+    commands.append(f"setworldspawn 0 -57 {centre_z}")
+    commands.append(f"tp Dev 0 -57 {centre_z}")
     commands.append("kill @e[type=item]")
 
     sys.stdout.write("\n".join(commands) + "\n")

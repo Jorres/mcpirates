@@ -1,15 +1,20 @@
 {
-  "_comment": "Single-element pool for the sheriff_station's appendage. The station's south-facing jigsaw targets this pool; with one element and fallback=empty, the appendage is selected 100% of the time and only fails to appear if it physically can't fit.",
+  "_comment": "Single-element pool for the sheriff_station's appendage. Wrapped in lithostitched:guaranteed so worldgen reserves a slot for it (count=1, min_depth=0); without this, fallback=empty silently drops the appendage on any bbox/depth failure. Same pattern the station itself uses to inject into vanilla houses pools.",
   "name": "mcpirates:sheriff_station_appendage",
   "fallback": "minecraft:empty",
   "elements": [
     {
       "weight": 1,
       "element": {
-        "element_type": "minecraft:single_pool_element",
-        "location": "mcpirates:village/common/sheriff_station_appendage",
-        "processors": { "processors": [] },
-        "projection": "rigid"
+        "element_type": "lithostitched:guaranteed",
+        "delegate": {
+          "element_type": "minecraft:single_pool_element",
+          "location": "mcpirates:village/common/sheriff_station_appendage",
+          "processors": { "processors": [] },
+          "projection": "rigid"
+        },
+        "count": 1,
+        "min_depth": 0
       }
     }
   ]

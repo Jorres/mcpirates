@@ -7,7 +7,6 @@ import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipBrain.State;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
 import com.mcpirates.airship.AirshipRehydrator;
-import com.mcpirates.airship.anchor.MCPShipAnchorBlockEntity;
 import com.mcpirates.airship.kind.ClutchLevers;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
@@ -29,74 +28,41 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 
-/**
- * GameTests for pirate-airship assembly + brain SubLevel-side effects. State-machine
- * transition logic is JUnit-covered in {@code AirshipBrainStateMachineTest}; these
- * tests cover what JUnit can't: the activation pipeline against
- * Create + Aeronautics + Sable + CBC, the lever writes {@code applyMovement} performs
- * in PURSUE, and lever-block resolution across NBT rotations.
- *
- * <p>All tests assign {@link Airship#state} directly to drive the brain past LIFTOFF
- * (arena is too small for physical liftoff) and call
- * {@link AirshipLiftoffTrigger#activateAnchor} to bypass the proximity scan.
- */
 @GameTestHolder(MCPirates.MOD_ID)
 @PrefixGameTestTemplate(false)
 public final class AirshipGameTests {
 
     private AirshipGameTests() {}
 
-    /** Baseline: airship_small at rotation NONE, single cannon mount. */
     @GameTest(template = "airship_small", timeoutTicks = 400, setupTicks = 5,
               batch = "assembles_and_actuates_on_pursue")
     public static void assemblesAndActuatesOnPursue(GameTestHelper helper) {
-        runAssemblyAndPursueTest(helper, "airship_small", /*expectCannonMounts=*/ true);
+        runAssemblyAndPursueTest(helper, "airship_small", true);
     }
 
-    /** Same NBT placed at rotation=CLOCKWISE_90. Verifies
-     *  {@code detectRotationFromAnchor} picks the right rotation so the
-     *  anchor-to-lever delta still resolves to the primary lever BE. */
     @GameTest(template = "airship_small", timeoutTicks = 400, setupTicks = 5,
               batch = "assembles_and_actuates_rotated_90", rotationSteps = 1)
     public static void assemblesAndActuatesRotated90(GameTestHelper helper) {
-        runAssemblyAndPursueTest(helper, "airship_small", /*expectCannonMounts=*/ true);
+        runAssemblyAndPursueTest(helper, "airship_small", true);
     }
 
-    /** Different kind: crossbow_board. Primary anchor is a Create analog_lever
-     *  (vs vanilla lever on airship_small), zero cannon mounts. Exercises the
-     *  kind-dispatch path. */
     @GameTest(template = "crossbow_board", timeoutTicks = 400, setupTicks = 5,
               batch = "assembles_crossbow_board")
     public static void assemblesCrossbowBoardKindAndActuates(GameTestHelper helper) {
-        runAssemblyAndPursueTest(helper, "crossbow_board", /*expectCannonMounts=*/ false);
+        runAssemblyAndPursueTest(helper, "crossbow_board", false);
     }
 
-    /**
-     * On-foot routing: call {@code processNearbyAnchors} with
-     * {@code playerOnAirship=false} 3 blocks east of the anchor. Asserts:
-     * <ol>
-     *   <li>Ground engagement registered for the anchor.</li>
-     *   <li>At least one {@link Monster} spawned within 20 blocks.</li>
-     *   <li>{@link AirshipBrain#ships()} stays empty (on-foot branch did NOT
-     *       fall through to {@code activateAnchor}).</li>
-     * </ol>
-     *
-     * <p>Drives the routing decision via an explicit boolean to
-     * {@code processNearbyAnchors} so the test doesn't need to construct a real
-     * (or mock) player for the on-foot path.
-     */
     @GameTest(template = "airship_small", timeoutTicks = 400, setupTicks = 5,
               batch = "ground_combat_spawns")
     public static void groundCombatSpawnsForOnFootPlayer(GameTestHelper helper) {
         TestSetup.reset(helper);
 
-        // Capture before assembly: activateAnchor moves the BE into the SubLevel, so
-        // findAnchor stops working after the dormant assembly fires.
+        // activateAnchor moves the BE into the SubLevel — capture pos before that fires.
         final BlockPos[] anchorRef = new BlockPos[1];
 
         helper.startSequence()
                 .thenExecuteAfter(2, () -> {
-                    BlockPos anchorWorld = findAnchor(helper);
+                    BlockPos anchorWorld = TestSetup.findAnchor(helper);
                     if (anchorWorld == null) {
                         helper.fail("no MCPShipAnchorBlockEntity in the test arena");
                         return;
@@ -106,7 +72,7 @@ public final class AirshipGameTests {
                             helper.getLevel(),
                             anchorWorld.getX() + 3.5,
                             anchorWorld.getZ() + 3.5,
-                            /*playerOnAirship=*/ false);
+                            false);
                 })
                 .thenIdle(2)
                 .thenExecute(() -> {
@@ -127,7 +93,6 @@ public final class AirshipGameTests {
                         helper.fail("ground engagement registered but no Monster entities spawned");
                         return;
                     }
-                    // Dormant assembly: exactly one MOORED ship registered with no deck crew.
                     if (AirshipBrain.ships().size() != 1) {
                         helper.fail("expected 1 MOORED ship after on-foot trigger, got "
                                 + AirshipBrain.ships().size());
@@ -148,23 +113,17 @@ public final class AirshipGameTests {
                 .thenSucceed();
     }
 
-    /**
-     * Lifecycle: on-foot trigger → engagement registers → captain discarded →
-     * engagement clears via {@link AirshipLiftoffTrigger#onEngagementMobLeave} →
-     * return by air lifts the ship.
-     */
+    /** On-foot trigger → captain discarded → engagement clears → air return lifts. */
     @GameTest(template = "airship_small", timeoutTicks = 600, setupTicks = 5,
               batch = "ground_combat_retreats_to_dormant")
     public static void groundCombatRetreatsToDormantThenAirArrivalLifts(GameTestHelper helper) {
         TestSetup.reset(helper);
 
-        // Anchor BE moves into the SubLevel during dormant assembly, so cache the world
-        // pos up front.
         final BlockPos[] anchorRef = new BlockPos[1];
 
         helper.startSequence()
                 .thenExecuteAfter(2, () -> {
-                    BlockPos anchorWorld = findAnchor(helper);
+                    BlockPos anchorWorld = TestSetup.findAnchor(helper);
                     if (anchorWorld == null) {
                         helper.fail("no MCPShipAnchorBlockEntity in the test arena");
                         return;
@@ -174,7 +133,7 @@ public final class AirshipGameTests {
                             helper.getLevel(),
                             anchorWorld.getX() + 3.5,
                             anchorWorld.getZ() + 3.5,
-                            /*playerOnAirship=*/ false);
+                            false);
                 })
                 .thenIdle(2)
                 .thenExecute(() -> {
@@ -191,7 +150,6 @@ public final class AirshipGameTests {
                         helper.fail("engagement registered but no defenders spawned");
                         return;
                     }
-                    // Dormant assembly fired alongside ground combat — ship should be MOORED.
                     if (AirshipBrain.ships().size() != 1
                             || AirshipBrain.ships().get(0).state != State.MOORED) {
                         helper.fail("expected 1 MOORED ship after ground trigger; got "
@@ -200,9 +158,8 @@ public final class AirshipGameTests {
                                     ? "—" : AirshipBrain.ships().get(0).state));
                     }
                 })
-                // Discard the captain — simulates vanilla checkDespawn firing.
-                // discard() does not fire LivingDeathEvent, so DefeatedAirships is NOT
-                // marked here; the ship stays MOORED + eligible for air-arrival promotion.
+                // discard() doesn't fire LivingDeathEvent, so DefeatedAirships isn't marked
+                // and the ship stays MOORED + eligible for air-arrival promotion.
                 .thenExecute(() -> {
                     BlockPos anchorWorld = anchorRef[0];
                     var captains = helper.getLevel()
@@ -223,14 +180,13 @@ public final class AirshipGameTests {
                                 + " after captain discard — leave-event handler didn't clear it");
                     }
                 })
-                // ── Step 3: return by air → MOORED → LIFTOFF promotion. ───────────
                 .thenExecute(() -> {
                     BlockPos anchorWorld = anchorRef[0];
                     AirshipLiftoffTrigger.processNearbyAnchors(
                             helper.getLevel(),
                             anchorWorld.getX() + 3.5,
                             anchorWorld.getZ() + 3.5,
-                            /*playerOnAirship=*/ true);
+                            true);
                 })
                 .thenWaitUntil(() -> helper.assertTrue(
                         !AirshipBrain.ships().isEmpty()
@@ -240,33 +196,17 @@ public final class AirshipGameTests {
                 .thenSucceed();
     }
 
-    /**
-     * Simulates the server-restart path: assemble a ship, snapshot its identity,
-     * wipe the brain registry as a restart would, then run the rehydrator and
-     * assert the ship is back with the same SubLevel and crew UUIDs.
-     *
-     * <p>This is a *partial* simulation — gametests can't force an actual NBT
-     * save/load cycle. What it does cover: ({@link MCPShipAnchorBlockEntity}'s
-     * airpad+rotation stamps are present after assembly, the rehydrator's
-     * delta-from-anchor formulas reproduce {@code activateShip}'s SL-local
-     * positions, crew is found by airpad-anchor stamp, plot positions are
-     * recomputable from {@code logicalPose}). It does NOT cover Sable's own
-     * SubLevel save/load — that's outside the gametest framework's reach.
-     */
     @GameTest(template = "airship_small", timeoutTicks = 400, setupTicks = 5,
               batch = "rehydrate_after_restart_hover")
     public static void rehydrateAtAirpadPicksHover(GameTestHelper helper) {
-        // Ship hasn't moved since assembly → still at airpad → HOVER.
         runRehydrateTest(helper, ship -> {}, State.HOVER);
     }
 
-    /** Move the SubLevel far from the airpad before unregister, so the rehydrator's
-     *  airpad-proximity check picks RETURN over HOVER. */
     @GameTest(template = "airship_small", timeoutTicks = 400, setupTicks = 5,
               batch = "rehydrate_after_restart_return")
     public static void rehydrateAwayFromAirpadPicksReturn(GameTestHelper helper) {
         runRehydrateTest(helper, ship -> {
-            // 32 blocks horizontal > HOVER_RADIUS (16) → rehydrator picks RETURN.
+            // 32 > HOVER_RADIUS (16) → rehydrator picks RETURN.
             Vector3d pos = ship.subLevel.logicalPose().position();
             pos.set(pos.x + 32, pos.y, pos.z);
         }, State.RETURN);
@@ -283,7 +223,7 @@ public final class AirshipGameTests {
 
         helper.startSequence()
                 .thenExecuteAfter(2, () -> {
-                    BlockPos anchorWorld = findAnchor(helper);
+                    BlockPos anchorWorld = TestSetup.findAnchor(helper);
                     if (anchorWorld == null) {
                         helper.fail("no MCPShipAnchorBlockEntity in arena");
                         return;
@@ -350,11 +290,6 @@ public final class AirshipGameTests {
                 .thenSucceed();
     }
 
-    /**
-     * Activate a ship, kill every anchored pillager, then assert on the next tick the
-     * brain has deregistered the ship and disengaged both clutches (without touching
-     * the throttle — defeated wreckage drifts on whatever lift it had).
-     */
     @GameTest(template = "airship_small", timeoutTicks = 400, setupTicks = 5,
               batch = "crew_defeat_shutdown")
     public static void crewDefeatShutdownDisengagesAndDeregisters(GameTestHelper helper) {
@@ -364,7 +299,7 @@ public final class AirshipGameTests {
 
         helper.startSequence()
                 .thenExecuteAfter(2, () -> {
-                    BlockPos anchorWorld = findAnchor(helper);
+                    BlockPos anchorWorld = TestSetup.findAnchor(helper);
                     if (anchorWorld == null) {
                         helper.fail("no MCPShipAnchorBlockEntity in arena");
                         return;
@@ -383,7 +318,6 @@ public final class AirshipGameTests {
                         helper.fail("expected non-empty crew pre-kill");
                         return;
                     }
-                    // Kill every anchored pillager — captain + crew.
                     for (var ae : ship.anchoredEntities) {
                         var e = helper.getLevel().getEntity(ae.uuid());
                         if (e instanceof net.minecraft.world.entity.LivingEntity le) {
@@ -391,7 +325,7 @@ public final class AirshipGameTests {
                         }
                     }
                 })
-                .thenIdle(2) // brain ticks once, detects no crew, disengages + deregisters
+                .thenIdle(2)
                 .thenExecute(() -> {
                     if (!AirshipBrain.ships().isEmpty()) {
                         helper.fail("expected ships() empty after crew defeat, got "
@@ -410,11 +344,7 @@ public final class AirshipGameTests {
                 .thenSucceed();
     }
 
-    /**
-     * Defeat strips the mcpirates user-data stamp from the SubLevel, so the rehydrator
-     * skips it entirely on a subsequent run — the wreck survives as a vanilla Sable
-     * contraption with no further mcpirates control. Verifies that one-line cleanup.
-     */
+    /** Defeat strips the mcpirates stamp; rehydrator must skip the wreck. */
     @GameTest(template = "airship_small", timeoutTicks = 400, setupTicks = 5,
               batch = "rehydrate_skips_defeated_ship")
     public static void rehydrateSkipsDefeatedShip(GameTestHelper helper) {
@@ -422,7 +352,7 @@ public final class AirshipGameTests {
 
         helper.startSequence()
                 .thenExecuteAfter(2, () -> {
-                    BlockPos anchorWorld = findAnchor(helper);
+                    BlockPos anchorWorld = TestSetup.findAnchor(helper);
                     if (anchorWorld == null) {
                         helper.fail("no MCPShipAnchorBlockEntity in arena");
                         return;
@@ -443,8 +373,6 @@ public final class AirshipGameTests {
                         }
                     }
                 })
-                // Brain's defeat path strips the stamp + deregisters. Now run the rehydrator:
-                // it should find no eligible SubLevels (stamp gone) and register nothing.
                 .thenIdle(2)
                 .thenExecute(() -> AirshipBrain.unregisterAll(helper.getLevel()))
                 .thenExecute(() -> {
@@ -460,12 +388,6 @@ public final class AirshipGameTests {
                 .thenSucceed();
     }
 
-    /**
-     * Spawn two airship_smalls in the same arena (the second placed manually via
-     * StructureTemplateManager 20 blocks offset), activate both, unregister all,
-     * rehydrate. Asserts both ships come back with distinct SubLevel UUIDs and
-     * the brain holds them independently.
-     */
     @GameTest(template = "airship_small", timeoutTicks = 400, setupTicks = 5,
               batch = "multi_ship_rehydrate")
     public static void multiShipRehydrate(GameTestHelper helper) {
@@ -475,12 +397,11 @@ public final class AirshipGameTests {
 
         helper.startSequence()
                 .thenExecuteAfter(2, () -> {
-                    BlockPos firstAnchor = findAnchor(helper);
+                    BlockPos firstAnchor = TestSetup.findAnchor(helper);
                     if (firstAnchor == null) {
                         helper.fail("no MCPShipAnchorBlockEntity in arena");
                         return;
                     }
-                    // Place a SECOND airship_small structure 20 blocks east of the arena.
                     ServerLevel level = helper.getLevel();
                     var templateOpt = level.getStructureManager().get(
                             net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(
@@ -489,18 +410,15 @@ public final class AirshipGameTests {
                         helper.fail("airship_small template not loaded");
                         return;
                     }
-                    BlockPos secondOrigin = firstAnchor.offset(20, -firstAnchor.getY() - 56, 0); // align Y to airpad
-                    // Cleaner: just offset X; keep same Y/Z as the original template's bbox base.
                     AABB bb = helper.getBounds();
-                    secondOrigin = new BlockPos(
+                    BlockPos secondOrigin = new BlockPos(
                             (int) Math.ceil(bb.maxX) + 5,
                             (int) Math.floor(bb.minY),
                             (int) Math.floor(bb.minZ));
                     templateOpt.get().placeInWorld(level, secondOrigin, secondOrigin,
                             new net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings(),
                             level.getRandom(), 2);
-                    // Activate both anchors.
-                    java.util.List<BlockPos> anchors = findAnchorsInRadius(helper, firstAnchor, 64);
+                    java.util.List<BlockPos> anchors = TestSetup.findAnchorsInRadius(helper, firstAnchor, 64);
                     if (anchors.size() < 2) {
                         helper.fail("expected 2 anchors after manual placement, found " + anchors.size());
                         return;
@@ -538,12 +456,6 @@ public final class AirshipGameTests {
                 .thenSucceed();
     }
 
-    /**
-     * Shared body: activate via the production trigger, drive RETURN→PURSUE with
-     * a faked target, assert PURSUE engaged and at least one clutch lever flipped.
-     * Proves production-resolved SubLevel positions are valid blocks after
-     * assembly and that {@code applyMovement} actually writes to them.
-     */
     private static void runAssemblyAndPursueTest(GameTestHelper helper,
                                                  String expectedKindName,
                                                  boolean expectCannonMounts) {
@@ -551,7 +463,7 @@ public final class AirshipGameTests {
 
         helper.startSequence()
                 .thenExecuteAfter(2, () -> {
-                    BlockPos anchorWorld = findAnchor(helper);
+                    BlockPos anchorWorld = TestSetup.findAnchor(helper);
                     if (anchorWorld == null) {
                         helper.fail("no MCPShipAnchorBlockEntity in the " + expectedKindName + " arena");
                         return;
@@ -590,8 +502,7 @@ public final class AirshipGameTests {
                         return;
                     }
                 })
-                // Inject a faked target. The zombie is never added to the world —
-                // the brain only reads getX/Y/Z/isAlive, all valid on a fresh entity.
+                // Zombie is never added to the world — brain only reads getX/Y/Z/isAlive.
                 .thenExecute(() -> {
                     if (AirshipBrain.ships().isEmpty()) return;
                     Airship ship = AirshipBrain.ships().get(0);
@@ -630,36 +541,4 @@ public final class AirshipGameTests {
                 .thenSucceed();
     }
 
-    /** Walk every BE in the test arena's bounding box, returning the world position of
-     *  the first {@link MCPShipAnchorBlockEntity} encountered, or null. */
-    private static BlockPos findAnchor(GameTestHelper helper) {
-        AABB bb = helper.getBounds();
-        ServerLevel level = helper.getLevel();
-        for (BlockPos pos : BlockPos.betweenClosed(
-                (int) Math.floor(bb.minX), (int) Math.floor(bb.minY), (int) Math.floor(bb.minZ),
-                (int) Math.ceil(bb.maxX) - 1, (int) Math.ceil(bb.maxY) - 1, (int) Math.ceil(bb.maxZ) - 1)) {
-            BlockEntity be = level.getBlockEntity(pos);
-            if (be instanceof MCPShipAnchorBlockEntity) {
-                return pos.immutable();
-            }
-        }
-        return null;
-    }
-
-    /** Find all MCPShipAnchorBlockEntity instances in the level near {@code centre},
-     *  within {@code radius}. Used by multi-ship tests that place a second template
-     *  outside the gametest arena bounds. */
-    private static java.util.List<BlockPos> findAnchorsInRadius(GameTestHelper helper, BlockPos centre, int radius) {
-        java.util.List<BlockPos> anchors = new java.util.ArrayList<>();
-        ServerLevel level = helper.getLevel();
-        for (BlockPos pos : BlockPos.betweenClosed(
-                centre.getX() - radius, centre.getY() - radius, centre.getZ() - radius,
-                centre.getX() + radius, centre.getY() + radius, centre.getZ() + radius)) {
-            BlockEntity be = level.getBlockEntity(pos);
-            if (be instanceof MCPShipAnchorBlockEntity) {
-                anchors.add(pos.immutable());
-            }
-        }
-        return anchors;
-    }
 }

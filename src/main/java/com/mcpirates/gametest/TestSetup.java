@@ -13,8 +13,6 @@ import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.gametest.framework.GameTestInfo;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.AABB;
@@ -25,28 +23,17 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 
+
+
 /**
- * Per-test reset + shared helpers. Wipes JVM-static registries (brain ships,
- * ground engagements) and removes any SubLevels still in the parent container
- * from a prior test, and exposes the mock-player / extended-helper utilities
- * we use across the gametest suite.
- *
- * <p>Cross-arena interference is handled by {@code StructureGridSpawnerMixin},
- * which widens the gap between test arenas past
- * {@code AirshipLiftoffTrigger}'s 160-block trigger radius — so no test's
- * production proximity scan reaches into a neighbour arena. This reset only
- * needs to clear the in-JVM state that lives outside the level.
- *
- * <p>SubLevel removal: Sable's {@code GameTestInfoMixin.succeed} cleans
- * SubLevels intersecting the test bbox, but airships that flew past the arena
- * ceiling escape it. We re-sweep here for completeness.
+ * Per-test reset + shared helpers. Clears JVM-static registries and purges any
+ * SubLevels that escaped Sable's bbox sweep (e.g. ships that flew past the arena
+ * ceiling). Cross-arena spacing is handled by {@code StructureGridSpawnerMixin}.
  */
 public final class TestSetup {
 
-    /** Simulation distance bumped during mock-player tests so the PLAYER ticket
-     *  block-ticks chunks around the player (gametest-server defaults to 0,
-     *  which only ticks the chunk the player is standing in). N=4 covers
-     *  reasonable orbit/chase bboxes. See [[sable-chunk-ticket-mechanism]]. */
+    /** Gametest-server sim distance defaults to 0 (only the player's chunk ticks).
+     *  N=4 covers reasonable orbit/chase bboxes. [[sable-chunk-ticket-mechanism]]. */
     public static final int MOCK_PLAYER_SIM_DISTANCE = 4;
 
     private TestSetup() {}
@@ -64,14 +51,9 @@ public final class TestSetup {
         purgeSubLevels(level);
     }
 
-    /**
-     * Wrap a plain {@link GameTestHelper} into an {@link ExtendedGameTestHelper}
-     * so we can call {@link ExtendedGameTestHelper#makeTickingMockServerPlayerInLevel}.
-     * NeoForge's {@code @GameTestHolder} hands tests the vanilla helper; the
-     * extended subclass is normally only handed out by {@code @TestHolder},
-     * which is a bigger surface change. This reflection mirrors the same trick
-     * the testframework uses internally in {@code AbstractTest.onGameTest}.
-     */
+    /** Wrap a vanilla {@link GameTestHelper} into an {@link ExtendedGameTestHelper}
+     *  for access to {@code makeTickingMockServerPlayerInLevel}. Mirrors the
+     *  reflection trick the testframework uses internally in {@code AbstractTest.onGameTest}. */
     public static ExtendedGameTestHelper extend(GameTestHelper helper) {
         try {
             Field f = GameTestHelper.class.getDeclaredField("testInfo");
@@ -82,21 +64,10 @@ public final class TestSetup {
         }
     }
 
-    /**
-     * Spawn a {@link GameTestPlayer} (testframework's mock {@link ServerPlayer}
-     * subclass), pin it at {@code (x, y, z)}, and configure it to behave as a
-     * passive position-proxy: no gravity, invulnerable, silent, zero velocity.
-     *
-     * <p>Uses the 3-arg {@code moveTo(x, y, z)} that {@link GameTestPlayer}
-     * overrides to call {@code ServerChunkCache.move(player)} — this refreshes
-     * the player's chunk-ticket region, which the 5-arg
-     * {@code moveTo(x, y, z, yaw, pitch)} skips. For per-tick re-pinning use
-     * {@code player.setPos(x, y, z)} (cheap, no chunk-ticket churn).
-     *
-     * <p>Caller is responsible for bumping sim/view distance via
-     * {@link MinecraftServer#getPlayerList()}'s setters if the brain or any
-     * ship physics needs chunks outside the player's immediate cell to tick.
-     */
+    /** Pin a {@link GameTestPlayer} at (x,y,z) as a passive position proxy. Uses the
+     *  3-arg {@code moveTo} so chunk tickets refresh; the 5-arg variant skips that.
+     *  For per-tick re-pinning use {@code setPos} to avoid chunk-ticket churn.
+     *  Caller bumps sim/view distance if the brain needs chunks outside the player cell. */
     public static GameTestPlayer spawnPinnedMockPlayer(
             ExtendedGameTestHelper ext, double x, double y, double z) {
         GameTestPlayer player = ext.makeTickingMockServerPlayerInLevel(GameType.SURVIVAL);
@@ -108,9 +79,6 @@ public final class TestSetup {
         return player;
     }
 
-    /** Locate the {@link MCPShipAnchorBlockEntity} inside the test arena bounds.
-     *  Returns the first anchor found (template-based tests have exactly one
-     *  in the source NBT, so order doesn't matter). */
     public static BlockPos findAnchor(GameTestHelper helper) {
         AABB bb = helper.getBounds();
         ServerLevel level = helper.getLevel();
@@ -123,6 +91,20 @@ public final class TestSetup {
             }
         }
         return null;
+    }
+
+    public static List<BlockPos> findAnchorsInRadius(GameTestHelper helper, BlockPos centre, int radius) {
+        List<BlockPos> anchors = new ArrayList<>();
+        ServerLevel level = helper.getLevel();
+        for (BlockPos pos : BlockPos.betweenClosed(
+                centre.getX() - radius, centre.getY() - radius, centre.getZ() - radius,
+                centre.getX() + radius, centre.getY() + radius, centre.getZ() + radius)) {
+            BlockEntity be = level.getBlockEntity(pos);
+            if (be instanceof MCPShipAnchorBlockEntity) {
+                anchors.add(pos.immutable());
+            }
+        }
+        return anchors;
     }
 
     private static void purgeSubLevels(ServerLevel level) {

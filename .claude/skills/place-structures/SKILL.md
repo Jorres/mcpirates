@@ -28,7 +28,8 @@ Via RCON:
 - `gamemode creative Dev`
 - `give Dev minecraft:jigsaw 16`
 - `give Dev minecraft:structure_block 8`
-- `give Dev create:goggles 1` — Create's "Engineer's Goggles" (the Create item the user calls "architect goggles"); wear to read structure block info / kinetic stats. If Create renames the item, search `item.create.*goggles` in sources.
+- `item replace entity Dev armor.head with create:goggles 1` — equips Create's Engineer's Goggles (the Create item the user calls "architect goggles") directly to the head slot so Dev is wearing them on load, not holding them. If Create renames the item, search `item.create.*goggles` in sources.
+- `gamerule doDaylightCycle false` and `time set day` — pin the world to noon so the bbox overlays read cleanly and structures aren't reviewed in the dark.
 
 ## 3. Discover structures
 

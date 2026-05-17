@@ -124,21 +124,21 @@ final class StructureBundle {
                 int[] p = { ((Number) pos.get(0)).intValue(), ((Number) pos.get(1)).intValue(), ((Number) pos.get(2)).intValue() };
                 Map<String, Object> nbt = (Map<String, Object>) b.get("nbt");
                 bRefs.add(new BlockRef(stateIdx, p, nbt));
-                if (nbt != null) {
-                    Object bid = nbt.get("id");
-                    if (bid instanceof String s && s.equals("minecraft:jigsaw")) {
-                        Map<String, Object> stateEntry = palette.get(stateIdx);
-                        Map<String, Object> props = (Map<String, Object>) stateEntry.getOrDefault("Properties", Map.of());
-                        jigs.add(new Jigsaw(
-                                p,
-                                str(nbt, "name"),
-                                str(nbt, "target"),
-                                str(nbt, "pool"),
-                                str(nbt, "final_state"),
-                                str(nbt, "joint"),
-                                props.get("orientation") == null ? null : props.get("orientation").toString()
-                        ));
-                    }
+                // Identify jigsaws by palette block name (matches MC's own behavior), not by
+                // nbt.id — some structure_block saves omit the id field on the BE NBT even
+                // though the BE data (name/target/pool/joint) is present.
+                Map<String, Object> stateEntry = palette.get(stateIdx);
+                if ("minecraft:jigsaw".equals(stateEntry.get("Name")) && nbt != null) {
+                    Map<String, Object> props = (Map<String, Object>) stateEntry.getOrDefault("Properties", Map.of());
+                    jigs.add(new Jigsaw(
+                            p,
+                            str(nbt, "name"),
+                            str(nbt, "target"),
+                            str(nbt, "pool"),
+                            str(nbt, "final_state"),
+                            str(nbt, "joint"),
+                            props.get("orientation") == null ? null : props.get("orientation").toString()
+                    ));
                 }
             }
             return new ParsedStructure(id, file, sx, sy, sz, dv, palette, jigs, bRefs);
@@ -201,7 +201,12 @@ final class StructureBundle {
                 for (var elJson : obj.getAsJsonArray("elements")) {
                     JsonObject element = elJson.getAsJsonObject().getAsJsonObject("element");
                     if (element == null) continue;
+                    // Unwrap lithostitched:guaranteed -> delegate before checking element_type.
                     String type = element.has("element_type") ? element.get("element_type").getAsString() : "";
+                    if (type.equals("lithostitched:guaranteed") && element.has("delegate")) {
+                        element = element.getAsJsonObject("delegate");
+                        type = element.has("element_type") ? element.get("element_type").getAsString() : "";
+                    }
                     if (!type.equals("minecraft:single_pool_element")) continue;
                     if (element.has("location")) locs.add(element.get("location").getAsString());
                 }
