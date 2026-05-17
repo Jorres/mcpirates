@@ -12,10 +12,10 @@ import java.util.Optional;
 /**
  * Light recon ship (NBT {@code crossbow_board}, size 6×8×16). Symmetric twin-burner
  * platform with no cannon — currently a flying observation post. Two Create analog
- * levers side-by-side at NBT (2,3,9) and (3,3,9), each gating its own portable engine.
+ * levers side-by-side, each gating its own portable engine.
  *
- * <p>Primary anchor: the left lever at NBT (2,3,9), face=ceiling, facing=SOUTH. All
- * deltas are taken from that pos.
+ * <p>Primary anchor: the left lever (face=ceiling, facing=SOUTH). Absolute coords in
+ * {@link AnchorNbtPositions}; all in-class deltas are anchor-relative.
  *
  * <p>Combat is currently {@link NoCannonCombat} — placeholder until a turret-crossbow
  * block exists.
@@ -40,16 +40,12 @@ public final class CrossbowBoardKind implements AirshipKind {
 
     @Override
     public BlockPos anchorToLeverDelta() {
-        // anchor at source (2, 3, 8) — air cell NBT-north of the left primary lever
-        // at source (2, 3, 9). Delta = (0, 0, +1).
+        // Lever sits one block NBT-south (+Z) of the anchor. Anchor coords in AnchorNbtPositions.
         return new BlockPos(0, 0, +1);
     }
 
-    // NBT-frame deltas from the left analog lever at (2,3,9):
-    //   engines (1,2,6),(4,2,6) → (-1,-1,-3),(+2,-1,-3)
-    //   right throttle (3,3,9)  → (+1,0,0)
-    //   left clutch  (1,3,5)    → (-1,0,-4)   — vanilla lever on top of create:clutch
-    //   right clutch (4,3,5)    → (+2,0,-4)
+    // NBT-frame deltas from the left analog lever (two engines, right throttle, two
+    // vanilla clutch levers on top of create:clutch blocks).
     @Override public List<BlockPos> engineDeltas() {
         return List.of(
                 new BlockPos(-1, -1, -3),
@@ -64,14 +60,11 @@ public final class CrossbowBoardKind implements AirshipKind {
         return List.of();
     }
 
-    // Hull spans NBT (0..5, 0..7, 1..15). Deltas are LEVER-relative (the lever sits at
-    // NBT (2,3,9) — see anchorToLeverDelta — and spawnHoneyGlue adds these to the lever
-    // pos, NOT the anchor pos):
-    //   min (0-2, 0-3, 1-9) = (-2,-3,-8)
-    //   max (5-2, 7-3, 15-9) = (+3,+4,+6)
-    // Earlier values were anchor-relative (anchor = lever - (0,0,1)), which shifted the
-    // glue bbox +1 in Z and left the z=1 keel layer un-stuck — visible as the assembled
-    // ship "missing" a row at the bow and grabbing an air column at the stern.
+    // Hull spans NBT (0..5, 0..7, 1..15). Deltas are LEVER-relative — spawnHoneyGlue adds
+    // these to the lever pos (NOT the anchor pos; see anchorToLeverDelta). Earlier
+    // values were anchor-relative, which shifted the glue bbox +1 in Z and left the
+    // keel layer un-stuck — visible as the assembled ship "missing" a row at the bow
+    // and grabbing an air column at the stern.
     @Override public BlockPos glueMin() { return new BlockPos(-2, -3, -8); }
     @Override public BlockPos glueMax() { return new BlockPos(+3, +4, +6); }
 

@@ -53,10 +53,9 @@ public interface AirshipKind {
      *  uses when reading the actual lever pointed at by the anchor block. */
     boolean isPrimaryAnchorBE(BlockEntity be);
 
-    /** NBT-frame delta from the ship's metadata anchor block (placed by build_ships.py)
-     *  to the primary lever (this kind's identity for layout purposes). Must match the
-     *  {@code anchor_nbt_pos} vs primary-lever-pos defined in the build_ships.py SHIPS
-     *  config for this ship. */
+    /** NBT-frame delta from the ship's metadata anchor block to the primary lever.
+     *  The absolute anchor coordinates live in {@link AnchorNbtPositions}; this method
+     *  describes the relative position of the lever w.r.t. that anchor. */
     BlockPos anchorToLeverDelta();
 
     // ───────────── layout (NBT-frame deltas from the primary anchor) ─────────────

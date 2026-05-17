@@ -246,7 +246,7 @@ public final class RamshipTests {
      *   <li>Spawn a mock player <em>inside</em> the assembled SubLevel's world bounding
      *       box — emulates a real player standing on their own contraption.</li>
      *   <li>Let {@code AirshipLiftoffTrigger.onServerTick} discover the player-on-SubLevel
-     *       via {@code findContainingSubLevel}, fire {@code activateAnchor} on the
+     *       via {@code findSubLevelByWorldBounds}, fire {@code activateAnchor} on the
      *       ramship, and let the brain transition all the way to PURSUE on its own.</li>
      * </ol>
      *

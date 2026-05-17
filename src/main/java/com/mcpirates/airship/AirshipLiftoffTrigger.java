@@ -222,37 +222,8 @@ public final class AirshipLiftoffTrigger {
         // returns null for any player riding a SubLevel that has moved since assembly.
         // Instead, point-test the player's world coords against every SubLevel's
         // (world-frame) boundingBox in the parent's container.
-        SubLevel containing = findContainingSubLevel(level, player.getX(), player.getY(), player.getZ());
+        SubLevel containing = findSubLevelByWorldBounds(level, player.getX(), player.getY(), player.getZ());
         boolean playerOnAirship = containing != null;
-        // TEMP DEBUG: once per 100 ticks (5 s) emit gate state + nearest MOORED info.
-        long now = level.getServer().getTickCount();
-        if (now % 100 == 0) {
-            int mooredInRange = 0;
-            double nearestSq = Double.POSITIVE_INFINITY;
-            String nearestKind = "—";
-            for (Airship a : AirshipBrain.ships()) {
-                if (a.parentLevel != level) continue;
-                if (a.state != AirshipBrain.State.MOORED) continue;
-                BlockPos airpad = a.airpadAnchor;
-                double pdx = airpad.getX() + 0.5 - player.getX();
-                double pdz = airpad.getZ() + 0.5 - player.getZ();
-                double d2 = pdx * pdx + pdz * pdz;
-                if (d2 <= TRIGGER_DISTANCE_SQ) mooredInRange++;
-                if (d2 < nearestSq) {
-                    nearestSq = d2;
-                    nearestKind = a.kind.name();
-                }
-            }
-            MCPirates.LOGGER.info(
-                    "[liftoff-debug] player {} chunk=({},{}) onAirship={} containing={} nearestMoored={}@{}b mooredInRange={}",
-                    player.getName().getString(),
-                    player.chunkPosition().x, player.chunkPosition().z,
-                    playerOnAirship,
-                    containing == null ? "null" : containing.getUniqueId(),
-                    nearestKind,
-                    Double.isInfinite(nearestSq) ? "∞" : String.format(java.util.Locale.ROOT, "%.1f", Math.sqrt(nearestSq)),
-                    mooredInRange);
-        }
         processNearbyAnchors(level, player.getX(), player.getZ(), playerOnAirship);
     }
 
@@ -602,11 +573,32 @@ public final class AirshipLiftoffTrigger {
         }
     }
 
-    /** Find the SubLevel whose world-frame bounding box contains (x, y, z), or null.
-     *  Replacement for Sable.HELPER.getContaining(Entity), which keys off the SubLevel's
-     *  static plot chunk rather than its flying world position — useless for detecting
-     *  whether a player is riding a moving contraption. */
-    private static SubLevel findContainingSubLevel(ServerLevel level, double x, double y, double z) {
+    /**
+     * Find the SubLevel whose <em>world-frame</em> bounding box contains (x, y, z), or
+     * null. Used to detect "is this entity physically inside a flying contraption right
+     * now?" — i.e., rider detection.
+     *
+     * <p><b>Do not confuse with {@link dev.ryanhcode.sable.Sable#HELPER Sable.HELPER}'s
+     * {@code getContaining(Entity)}.</b> They look similar and both return a
+     * {@link SubLevel}, but they answer different questions:
+     *
+     * <ul>
+     *   <li>{@code Sable.HELPER.getContaining(entity)} keys off
+     *       {@code entity.chunkPosition()} and consults Sable's plot table — the static
+     *       parent-level chunks that store the SubLevel's source blocks far off-gameplay.
+     *       Useful for "whose source-chunk owns this entity?", e.g. chunk-load
+     *       orchestration. Returns null for any rider of a moving SubLevel because their
+     *       flying chunk doesn't match the SubLevel's fixed plot chunk.</li>
+     *   <li>This method walks every SubLevel and checks each one's current
+     *       {@code boundingBox()}, which tracks the contraption as it flies. Returns the
+     *       SubLevel the rider is physically inside.</li>
+     * </ul>
+     *
+     * <p>O(N) over loaded SubLevels — fine while N is small (handful of pirate ships).
+     * If we ever scale, switch to {@code SubLevelContainer.queryIntersecting(bounds)}
+     * which uses Sable's BVH (O(log N)).
+     */
+    private static SubLevel findSubLevelByWorldBounds(ServerLevel level, double x, double y, double z) {
         SubLevelContainer container = SubLevelContainer.getContainer(level);
         if (container == null) return null;
         for (SubLevel sl : container.getAllSubLevels()) {

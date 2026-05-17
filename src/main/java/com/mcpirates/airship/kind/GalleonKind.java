@@ -17,8 +17,9 @@ import java.util.List;
  * have identical 0..15 semantics but different BE classes; {@link ThrottleLevers}
  * dispatches by BE type at write time.
  *
- * <p>Primary anchor: the leftmost throttle lever at NBT (3,9,14), face=floor,
- * facing=NORTH. The other throttle is at (8,9,14); both are written in lock-step.
+ * <p>Primary anchor: the leftmost throttle lever (face=floor, facing=NORTH). Absolute
+ * anchor coords in {@link AnchorNbtPositions}; the right throttle is at
+ * {@link #throttleLeverDeltas()} offset from the primary, written in lock-step.
  */
 public final class GalleonKind implements AirshipKind {
 
@@ -60,9 +61,9 @@ public final class GalleonKind implements AirshipKind {
 
     @Override
     public BlockPos anchorToLeverDelta() {
-        // ship_anchor at NBT (3, 9, 13), left throttle at NBT (4, 8, 13).
-        // Delta = (+1, -1, 0). Unambiguously points at the LEFT throttle of the pair
-        // — the right throttle is at (4, 8, 13)+(+3,0,0).
+        // Left throttle is +X, -Y of the anchor. Unambiguously the LEFT of the pair —
+        // the right throttle is at anchorToLeverDelta + (+3,0,0). Anchor coords in
+        // AnchorNbtPositions.
         return new BlockPos(+1, -1, 0);
     }
 
@@ -95,9 +96,7 @@ public final class GalleonKind implements AirshipKind {
                 new BlockPos(+4, -7, +6));
     }
 
-    // Hull spans NBT (0..11, 0..14, 0..27). Left throttle at (4, 8, 13), so deltas
-    // (preserving the same absolute hull region as before):
-    //   min (-4,-8,-13)  max (+7,+6,+14)
+    // Glue bbox covering the full hull, expressed as lever-relative min/max.
     @Override public BlockPos glueMin() { return new BlockPos(-4, -8, -13); }
     @Override public BlockPos glueMax() { return new BlockPos(+7, +6, +14); }
 

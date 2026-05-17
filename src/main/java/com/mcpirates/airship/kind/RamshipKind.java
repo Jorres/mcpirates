@@ -14,8 +14,9 @@ import java.util.Optional;
  * by the standard left/right clutches steer; a third center propeller — aligned on the
  * movement axis — provides constant forward thrust during PURSUE via {@link #forwardClutchLeverDelta}.
  *
- * <p>Primary anchor: the left Create analog lever at NBT (3, 3, 9), face=ceiling,
- * facing=NORTH. Ship-forward is NORTH (props face SOUTH, push NORTH).
+ * <p>Primary anchor: the left Create analog lever (face=ceiling, facing=NORTH).
+ * Absolute coords in {@link AnchorNbtPositions}. Ship-forward is NORTH
+ * (props face SOUTH, push NORTH).
  *
  * <p>Combat: none — the ramship's payload is its hull, not cannons.
  * Movement: {@link RamMovement} (constant-bearing intercept).
@@ -49,16 +50,12 @@ public final class RamshipKind implements AirshipKind {
 
     @Override
     public BlockPos anchorToLeverDelta() {
-        // anchor at source (3,3,8); primary lever at (3,3,9). Delta = (0,0,+1).
+        // Lever sits one block NBT-south (+Z) of the anchor. Anchor coords in AnchorNbtPositions.
         return new BlockPos(0, 0, +1);
     }
 
-    // NBT-frame deltas from the left analog lever at (3,3,9):
-    //   right throttle (5,3,9)            → (+2, 0, 0)
-    //   engine          (3,2,13)          → ( 0,-1,+4)   sole portable engine, drives all three props
-    //   left  clutch lever (vanilla) (2,3,18) → (-1, 0,+9)
-    //   right clutch lever (vanilla) (6,3,18) → (+3, 0,+9)
-    //   forward clutch lever (vanilla) (4,2,18) → (+1,-1,+9)
+    // NBT-frame deltas from the left analog lever (right throttle, sole portable engine
+    // driving all three props, three vanilla clutch levers — port/starboard/forward).
     @Override public List<BlockPos> engineDeltas() {
         return List.of(new BlockPos(0, -1, +4));
     }
@@ -72,13 +69,9 @@ public final class RamshipKind implements AirshipKind {
     // Hardware deltas the ramship needs *beyond* the two outboard clutch levers
     // every kind has. Kept private (this is implementation detail) — they're
     // only consumed by {@link #makeControls} below, never exposed to the brain.
-    // Measured from the primary anchor lever at NBT (3,2,9):
-    //   forward clutch lever (4,1,18) → (+1,-1,+9)
-    //   port  outboard prop  (2,1,19) → (-1,-1,+10)
-    //   star  outboard prop  (6,1,19) → (+3,-1,+10)
-    //   forward center prop  (4,0,21) → (+1,-2,+12)  (diagnostic only — RamControls
-    //                                                  doesn't reverse it, the clutch
-    //                                                  lever above gates its drive)
+    // All deltas are anchor-relative (see anchorToLeverDelta + AnchorNbtPositions).
+    // FORWARD_PROPELLER_DELTA is diagnostic only — RamControls doesn't reverse it;
+    // the forward clutch lever above gates its drive.
     private static final BlockPos FORWARD_CLUTCH_LEVER_DELTA = new BlockPos(+1, -1, +9);
     private static final BlockPos LEFT_PROPELLER_DELTA       = new BlockPos(-1, -1, +10);
     private static final BlockPos RIGHT_PROPELLER_DELTA      = new BlockPos(+3, -1, +10);

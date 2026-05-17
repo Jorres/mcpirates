@@ -13,8 +13,8 @@ import java.util.Optional;
  * Original pirate ship (NBT {@code airship_small}): one envelope, one cannon at the bow,
  * one Create analog lever burner, two propeller clutches.
  *
- * <p>All deltas are taken relative to the analog lever, which sits at NBT (8,5,6) with
- * face=ceiling, facing=EAST. The lever is the trigger anchor.
+ * <p>All deltas are taken relative to the analog lever (face=ceiling, facing=EAST),
+ * which is the trigger anchor. Absolute anchor coords in {@link AnchorNbtPositions}.
  */
 public final class AirshipSmallKind implements AirshipKind {
 
@@ -36,16 +36,11 @@ public final class AirshipSmallKind implements AirshipKind {
 
     @Override
     public BlockPos anchorToLeverDelta() {
-        // anchor sits at source (3, 3, 5) — air cell immediately NBT-north of the lever
-        // at source (3, 3, 6). Delta from anchor to lever = (0, 0, +1).
+        // Lever sits one block NBT-south (+Z) of the anchor. Anchor coords in AnchorNbtPositions.
         return new BlockPos(0, 0, +1);
     }
 
-    // NBT-frame deltas from the analog lever at (8,5,6):
-    //   engine (8,4,6) → (0,-1,0)
-    //   cannon mount (8,2,2) → (0,-3,-4)
-    //   left clutch lever (6,4,8) → (-2,-1,2)
-    //   right clutch lever (10,4,8) → (+2,-1,2)
+    // NBT-frame deltas from the analog lever (engine, cannon mount, clutch levers).
     @Override public List<BlockPos> engineDeltas() {
         return List.of(new BlockPos(0, -1, 0));
     }

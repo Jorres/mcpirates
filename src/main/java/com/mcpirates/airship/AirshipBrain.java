@@ -96,13 +96,6 @@ public final class AirshipBrain {
         SHIPS.removeIf(a -> a.parentLevel == level);
     }
 
-    /** Drop a single ship from the brain registry without touching Sable / SubLevel.
-     *  Used by GameTest scaffolding that activates a ship via the production path to
-     *  get a SubLevel, then demotes it to a passive target by stripping brain control. */
-    public static void unregister(Airship a) {
-        SHIPS.remove(a);
-    }
-
     /** Send {@code a} into {@link State#NAVIGATE} steering toward {@code (x, z)}. Y is
      *  ignored — altitude tracks cruiseRise like RETURN. Releases steering so the
      *  off→on edge re-engages Aeronautics' thrust contribution. */
@@ -639,12 +632,14 @@ public final class AirshipBrain {
         if (override != null) {
             return override.isAlive() ? override : null;
         }
+        // Distance-only filter — any player within DISENGAGE_RANGE counts as a target,
+        // regardless of whether they're on a SubLevel, on foot, or creative-flying.
+        // The on-SubLevel-only predicate is enforced upstream at activation time by
+        // AirshipLiftoffTrigger; by the time we're here, the ship is already in
+        // LIFTOFF/PURSUE and should pursue whoever's nearest until they leave range.
         ServerPlayer best = null;
         double bestSq = AirshipStateMachine.DISENGAGE_RANGE_SQ;
         for (ServerPlayer player : a.parentLevel.players()) {
-            // TEMP: SubLevel filter disabled for creative-mode testing. Re-enable before ship.
-            // SubLevel containing = dev.ryanhcode.sable.Sable.HELPER.getContaining(player);
-            // if (containing == null || containing == a.subLevel) continue;
             double d2 = horizDistSq(shipPos, player.getX(), player.getZ());
             if (d2 < bestSq) {
                 bestSq = d2;
