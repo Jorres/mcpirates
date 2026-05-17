@@ -96,6 +96,13 @@ public final class AirshipBrain {
         SHIPS.removeIf(a -> a.parentLevel == level);
     }
 
+    /** Drop a single ship from the brain registry without touching Sable / SubLevel.
+     *  Used by GameTest scaffolding that activates a ship via the production path to
+     *  get a SubLevel, then demotes it to a passive target by stripping brain control. */
+    public static void unregister(Airship a) {
+        SHIPS.remove(a);
+    }
+
     /** Send {@code a} into {@link State#NAVIGATE} steering toward {@code (x, z)}. Y is
      *  ignored — altitude tracks cruiseRise like RETURN. Releases steering so the
      *  off→on edge re-engages Aeronautics' thrust contribution. */
@@ -252,8 +259,10 @@ public final class AirshipBrain {
                 a.kind.liftoffMinRise());
         if (desired != a.state) {
             MCPirates.LOGGER.info(
-                    "ship {} ({}): state {} → {} (target={}, y={}, distAirpad={})",
-                    a.subLevel.getUniqueId(), a.kind.name(), a.state, desired,
+                    "ship {} ({}): state {} → {}",
+                    a.subLevel.getUniqueId(), a.kind.name(), a.state, desired);
+            MCPirates.LOGGER.info(
+                    "  └ target={} y={} distAirpad={}",
                     target == null ? "none" : target.getName().getString(),
                     String.format("%.1f", shipPos.y),
                     String.format("%.1f", Math.sqrt(horizDistSq(shipPos, a.airpadAnchor))));

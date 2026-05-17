@@ -11,6 +11,7 @@ import com.mcpirates.pirates.CaptainSpawner;
 import com.mcpirates.pirates.DefeatedAirships;
 import com.mcpirates.pirates.GroundCombatModule;
 import dev.ryanhcode.sable.Sable;
+import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.simulated_team.simulated.content.blocks.portable_engine.PortableEngineBlockEntity;
@@ -216,7 +217,42 @@ public final class AirshipLiftoffTrigger {
 
     private static void checkAroundPlayer(ServerLevel level, ServerPlayer player) {
         // On-SubLevel = air combat (full liftoff); on-foot = ground combat (prize fight).
-        boolean playerOnAirship = Sable.HELPER.getContaining(player) != null;
+        // We can't use Sable.HELPER.getContaining(player) — its chunk-based lookup keys
+        // off the SubLevel's static plot position, not its flying world position, so it
+        // returns null for any player riding a SubLevel that has moved since assembly.
+        // Instead, point-test the player's world coords against every SubLevel's
+        // (world-frame) boundingBox in the parent's container.
+        SubLevel containing = findContainingSubLevel(level, player.getX(), player.getY(), player.getZ());
+        boolean playerOnAirship = containing != null;
+        // TEMP DEBUG: once per 100 ticks (5 s) emit gate state + nearest MOORED info.
+        long now = level.getServer().getTickCount();
+        if (now % 100 == 0) {
+            int mooredInRange = 0;
+            double nearestSq = Double.POSITIVE_INFINITY;
+            String nearestKind = "—";
+            for (Airship a : AirshipBrain.ships()) {
+                if (a.parentLevel != level) continue;
+                if (a.state != AirshipBrain.State.MOORED) continue;
+                BlockPos airpad = a.airpadAnchor;
+                double pdx = airpad.getX() + 0.5 - player.getX();
+                double pdz = airpad.getZ() + 0.5 - player.getZ();
+                double d2 = pdx * pdx + pdz * pdz;
+                if (d2 <= TRIGGER_DISTANCE_SQ) mooredInRange++;
+                if (d2 < nearestSq) {
+                    nearestSq = d2;
+                    nearestKind = a.kind.name();
+                }
+            }
+            MCPirates.LOGGER.info(
+                    "[liftoff-debug] player {} chunk=({},{}) onAirship={} containing={} nearestMoored={}@{}b mooredInRange={}",
+                    player.getName().getString(),
+                    player.chunkPosition().x, player.chunkPosition().z,
+                    playerOnAirship,
+                    containing == null ? "null" : containing.getUniqueId(),
+                    nearestKind,
+                    Double.isInfinite(nearestSq) ? "∞" : String.format(java.util.Locale.ROOT, "%.1f", Math.sqrt(nearestSq)),
+                    mooredInRange);
+        }
         processNearbyAnchors(level, player.getX(), player.getZ(), playerOnAirship);
     }
 
@@ -564,6 +600,24 @@ public final class AirshipLiftoffTrigger {
         } catch (ReflectiveOperationException e) {
             return "(reflect-failed: " + e.getClass().getSimpleName() + ")";
         }
+    }
+
+    /** Find the SubLevel whose world-frame bounding box contains (x, y, z), or null.
+     *  Replacement for Sable.HELPER.getContaining(Entity), which keys off the SubLevel's
+     *  static plot chunk rather than its flying world position — useless for detecting
+     *  whether a player is riding a moving contraption. */
+    private static SubLevel findContainingSubLevel(ServerLevel level, double x, double y, double z) {
+        SubLevelContainer container = SubLevelContainer.getContainer(level);
+        if (container == null) return null;
+        for (SubLevel sl : container.getAllSubLevels()) {
+            var b = sl.boundingBox();
+            if (x >= b.minX() && x < b.maxX()
+                    && y >= b.minY() && y < b.maxY()
+                    && z >= b.minZ() && z < b.maxZ()) {
+                return sl;
+            }
+        }
+        return null;
     }
 
     private static void insertCoalIntoEngine(ServerLevel level, BlockPos enginePos) {

@@ -198,12 +198,17 @@ public final class ShipLog {
                         targetY, pos.y - targetY);
 
         String diag = a.controls == null ? "" : a.controls.diagnostics(a);
+        // Two-line emission: line 1 = identity/pose, line 2 = physics/lift/diag.
+        // Easier to scan in a tailing log; line 1 alone is enough to locate a ship,
+        // line 2 holds the per-tick varying values worth diffing across snapshots.
         MCPirates.LOGGER.info(
-                "ship {} ({}) {}: state={} pos=({}) yaw={}° yawRate={}°/tick v=({}) hSpeed={}b/tick mass={} balloonVol={} {} lift={} {} {} {} {}",
+                "ship {} ({}) {}: state={} pos=({}) yaw={}° yawRate={}°/tick",
                 a.subLevel.getUniqueId(), a.kind.name(), event, a.state,
                 fmt3(pos, 1),
                 String.format(Locale.ROOT, "%.1f", yawDeg),
-                String.format(Locale.ROOT, "%.3f", yawRateDegPerTick),
+                String.format(Locale.ROOT, "%.3f", yawRateDegPerTick));
+        MCPirates.LOGGER.info(
+                "  └ v=({}) hSpeed={}b/tick mass={} balloonVol={} {} lift={} {} {} {} {}",
                 fmt3(vel, 3),
                 String.format(Locale.ROOT, "%.3f", hSpeed),
                 mass(massKg), balloonVol(a.balloonCapacity), plateau,

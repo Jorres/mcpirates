@@ -4,17 +4,25 @@ import com.mcpirates.MCPirates;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
 import com.mcpirates.airship.anchor.MCPShipAnchorBlockEntity;
+import com.mcpirates.airship.kind.AnchorNbtPositions;
 import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.ryanhcode.sable.sublevel.storage.SubLevelRemovalReason;
+import dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueEntity;
+import dev.simulated_team.simulated.util.SimAssemblyHelper;
+import dev.simulated_team.simulated.util.SimAssemblyHelper.AssemblyResult;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.gametest.framework.GameTestInfo;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
+import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import net.minecraft.world.phys.AABB;
 import net.neoforged.testframework.gametest.ExtendedGameTestHelper;
 import net.neoforged.testframework.gametest.GameTestPlayer;
@@ -77,6 +85,99 @@ public final class TestSetup {
         player.setSilent(true);
         player.setDeltaMovement(0, 0, 0);
         return player;
+    }
+
+    /**
+     * Drop a ship template, strip its mcpirates anchor, glue it, and have Sable
+     * assemble the result into a {@link SubLevel} — all *without* going through any
+     * mcpirates code. The resulting SubLevel is a plain Sable contraption with no
+     * brain, no crew, no captain — exactly what a real player riding their own
+     * (non-pirate) airship looks like to {@code AirshipLiftoffTrigger}.
+     *
+     * <p>Sequence:
+     * <ol>
+     *   <li>{@code template.placeInWorld} drops the structure.</li>
+     *   <li>Set the {@code mcpirates:ship_anchor} block to air, so neither
+     *       {@code AirshipLiftoffTrigger}'s chunk scan nor any later trigger
+     *       claims this ship as a pirate.</li>
+     *   <li>Spawn a {@link HoneyGlueEntity} covering the structure's bbox.</li>
+     *   <li>Call {@link SimAssemblyHelper#assembleFromSingleBlock} on a known
+     *       solid cell of the structure. Sable walks the glue, gathers blocks,
+     *       and produces a {@link SubLevel}.</li>
+     * </ol>
+     *
+     * <p>Bypassing mcpirates entirely is deliberate: this helper exists to provide
+     * an inert SubLevel platform for test players. Going through
+     * {@code activateAnchor} would also register a pirate brain + spawn a captain
+     * that would attack the test player — fighting the very thing we want to test.
+     *
+     * @return the assembled SubLevel, or null on failure (helper called {@code fail}).
+     */
+    public static SubLevel placeAndAssembleAsPassiveTarget(
+            GameTestHelper helper, BlockPos origin, String shipName) {
+        ServerLevel level = helper.getLevel();
+        java.util.Optional<StructureTemplate> tplOpt = level.getStructureManager()
+                .get(ResourceLocation.fromNamespaceAndPath(MCPirates.MOD_ID, shipName));
+        if (tplOpt.isEmpty()) {
+            helper.fail("structure template not loaded: " + shipName);
+            return null;
+        }
+        StructureTemplate tpl = tplOpt.get();
+        tpl.placeInWorld(level, origin, origin,
+                new StructurePlaceSettings(), level.getRandom(), 2);
+
+        // Strip the ship_anchor so mcpirates ignores this contraption entirely.
+        int[] anchorRel = AnchorNbtPositions.BY_NAME.get(shipName);
+        if (anchorRel == null) {
+            helper.fail("no AnchorNbtPositions entry for " + shipName);
+            return null;
+        }
+        BlockPos anchorWorld = origin.offset(anchorRel[0], anchorRel[1], anchorRel[2]);
+        level.setBlock(anchorWorld, Blocks.AIR.defaultBlockState(), 3);
+
+        // Glue + Sable assembly. The glue defines the volume Sable will gather.
+        // assembleFromSingleBlock walks glue connectivity from the seed and produces
+        // a SubLevel containing every reachable block in that volume.
+        net.minecraft.core.Vec3i size = tpl.getSize();
+        AABB glueAabb = new AABB(
+                origin.getX(), origin.getY(), origin.getZ(),
+                origin.getX() + size.getX(), origin.getY() + size.getY(), origin.getZ() + size.getZ());
+        level.addFreshEntity(new HoneyGlueEntity(level, glueAabb));
+
+        // Find a non-air seed in the placed structure. assembleFromSingleBlock returns
+        // null if toAssemble is air, so we can't reuse the (now-air) anchor cell.
+        BlockPos seed = null;
+        outer:
+        for (int dy = 0; dy < size.getY(); dy++) {
+            for (int dx = 0; dx < size.getX(); dx++) {
+                for (int dz = 0; dz < size.getZ(); dz++) {
+                    BlockPos p = origin.offset(dx, dy, dz);
+                    if (!level.getBlockState(p).isAir()) {
+                        seed = p;
+                        break outer;
+                    }
+                }
+            }
+        }
+        if (seed == null) {
+            helper.fail("no non-air block in placed " + shipName + " to seed assembly from");
+            return null;
+        }
+        try {
+            AssemblyResult result = SimAssemblyHelper.assembleFromSingleBlock(
+                    level, seed, seed,
+                    /*includeStart=*/true,
+                    /*includeEncasingGlue=*/true);
+            if (result == null || result.subLevel() == null) {
+                helper.fail("SimAssemblyHelper.assembleFromSingleBlock returned null for "
+                        + shipName + " — glue or block layout invalid");
+                return null;
+            }
+            return result.subLevel();
+        } catch (Exception e) {
+            helper.fail("SimAssemblyHelper.assembleFromSingleBlock threw " + e);
+            return null;
+        }
     }
 
     public static BlockPos findAnchor(GameTestHelper helper) {

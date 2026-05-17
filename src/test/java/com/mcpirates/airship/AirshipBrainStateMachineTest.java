@@ -181,6 +181,28 @@ class AirshipBrainStateMachineTest {
     }
 
     @Test
+    void pursue_disengagesWhenShipStraysTooFarFromAirpad() {
+        // 250-block ship displacement from airpad > LEASH_FROM_AIRPAD_SQ (200²) — even
+        // though target is still in close range relative to ship, the brain breaks off
+        // and heads home rather than letting the chase drag the ship across the map.
+        Vector3d shipFarFromAirpad = new Vector3d(0, 200, 250);
+        Vector3d targetCloseToShip = new Vector3d(shipFarFromAirpad.x + 12, 0, shipFarFromAirpad.z);
+        assertEquals(State.RETURN, decideNextState(
+                State.PURSUE, ENTERED_LONG_AGO, 0, Double.NaN, NOW,
+                shipFarFromAirpad, AIRPAD_X, AIRPAD_Z, targetCloseToShip, NOW));
+    }
+
+    @Test
+    void pursue_staysWhenWithinLeashEvenIfShipMovedSome() {
+        // 100-block displacement is well inside the 200-block leash — keep chasing.
+        Vector3d shipNearAirpad = new Vector3d(0, 200, 100);
+        Vector3d targetCloseToShip = new Vector3d(shipNearAirpad.x + 12, 0, shipNearAirpad.z);
+        assertEquals(State.PURSUE, decideNextState(
+                State.PURSUE, ENTERED_LONG_AGO, 0, Double.NaN, NOW,
+                shipNearAirpad, AIRPAD_X, AIRPAD_Z, targetCloseToShip, NOW));
+    }
+
+    @Test
     void pursue_targetLostTakesPriorityOverNullTarget() {
         // targetLost is computed from lastTargetSeenTick alone — a null target with a stale
         // lastTargetSeenTick still triggers RETURN (which is what happens after the brain

@@ -18,12 +18,19 @@ import org.joml.Vector3d;
 public final class AirshipStateMachine {
 
     /** Engage/disengage PURSUE if a target enters/leaves this horizontal radius. Was
-     *  12 chunks (192 blocks = exactly vanilla render distance) — ship started pursuing
-     *  the instant it rendered, which felt sudden. 8 chunks (128 blocks) gives roughly
-     *  64 blocks of "ship is visible, player can appreciate it" before combat engages. */
-    public static final double DISENGAGE_RANGE_SQ = (8 * 16) * (8 * 16);
+     *  12 chunks (192) → 8 chunks (128) → 100 blocks. Each step trimmed how soon the
+     *  ship starts chasing; 100 keeps it inside player render distance while leaving
+     *  enough closing distance for the cannon arc and the ramming run-up. */
+    public static final double DISENGAGE_RANGE_SQ = 100 * 100;
     /** Considered "at airpad" (HOVER) when within this horizontal range. */
     public static final double HOVER_RADIUS_SQ = 16 * 16;
+    /** Max horizontal distance the ship will pursue from its airpad before giving up and
+     *  RETURNing. Without this leash, a chase that drifts past DISENGAGE_RANGE only
+     *  re-engages when the target re-enters ship-relative range — and since the ship
+     *  itself moves toward the player, the pair can drift arbitrarily far from the
+     *  ship's home. 200 blocks ≈ 12 chunks; generous enough to chase a fleeing player
+     *  but tight enough to keep outposts feeling territorial. */
+    public static final double LEASH_FROM_AIRPAD_SQ = 200 * 200;
     /** Consecutive steady-altitude ticks before LIFTOFF concludes. ~2 s at 20 tps = 40. */
     static final int LIFTOFF_STEADY_TICKS = 40;
     /** Hard floor on LIFTOFF duration so we don't bail out before the ship's even moved
@@ -113,6 +120,7 @@ public final class AirshipStateMachine {
             }
             case PURSUE -> {
                 if (targetLost || targetTooFar) yield State.RETURN;
+                if (horizDistSq(shipPos, airpadX, airpadZ) > LEASH_FROM_AIRPAD_SQ) yield State.RETURN;
                 yield State.PURSUE;
             }
             case RETURN -> {

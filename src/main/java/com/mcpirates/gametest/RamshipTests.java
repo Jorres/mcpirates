@@ -7,7 +7,12 @@ import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
 import com.mcpirates.airship.kind.RamshipKind;
 import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
+import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;
 import dev.ryanhcode.sable.companion.math.BoundingBox3dc;
+import dev.ryanhcode.sable.sublevel.ServerSubLevel;
+import dev.ryanhcode.sable.sublevel.SubLevel;
+import net.neoforged.testframework.gametest.GameTestPlayer;
+import org.joml.Quaterniond;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
@@ -20,6 +25,7 @@ import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlac
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
+import net.neoforged.testframework.gametest.ExtendedGameTestHelper;
 import org.joml.Vector3d;
 
 import java.util.List;
@@ -227,6 +233,124 @@ public final class RamshipTests {
                 .thenSucceed();
     }
 
+    /**
+     * Natural-detection counterpart to {@link #ramshipInterceptsMovingTarget}. Where that
+     * test uses {@code targetOverride} to bypass the player-on-airship pipeline (so it can
+     * use the victim's captain as a target), this one exercises the real pipeline:
+     *
+     * <ol>
+     *   <li>Place an airship_small NORTH of the ramship, assemble it as a Sable SubLevel
+     *       via {@link TestSetup#placeAndAssembleAsPassiveTarget} (uses the production
+     *       activateAnchor path, then strips brain control + crew so it acts as a passive
+     *       platform).</li>
+     *   <li>Spawn a mock player <em>inside</em> the assembled SubLevel's world bounding
+     *       box — emulates a real player standing on their own contraption.</li>
+     *   <li>Let {@code AirshipLiftoffTrigger.onServerTick} discover the player-on-SubLevel
+     *       via {@code findContainingSubLevel}, fire {@code activateAnchor} on the
+     *       ramship, and let the brain transition all the way to PURSUE on its own.</li>
+     * </ol>
+     *
+     * <p>Spawn order is intentionally reversed vs the captain test (player ship first, then
+     * arming the ramship via the natural trigger) so the path under test is "player arrives
+     * in a SubLevel near an inert anchor", not "two anchors activated simultaneously."
+     */
+    @GameTest(template = "ramship", timeoutTicks = 2400, setupTicks = 5,
+              batch = "ramship_pursues_mock_player_on_airship", skyAccess = true)
+    public static void ramshipPursuesMockPlayerOnAirship(GameTestHelper helper) {
+        AtomicReference<Airship> ramshipRef = new AtomicReference<>();
+        AtomicReference<BlockPos> airshipOriginRef = new AtomicReference<>();
+        AtomicReference<SubLevel> airshipSubLevelRef = new AtomicReference<>();
+        ServerLevel level = helper.getLevel();
+
+        helper.startSequence()
+                .thenExecuteAfter(2, () -> {
+                    TestSetup.reset(helper);
+                    BlockPos ramshipAnchor = TestSetup.findAnchor(helper);
+                    if (ramshipAnchor == null) {
+                        helper.fail("no ramship anchor BE in arena");
+                        return;
+                    }
+
+                    BlockPos airshipOrigin = new BlockPos(
+                            ramshipAnchor.getX() - 3,
+                            ramshipAnchor.getY(),
+                            ramshipAnchor.getZ() - 50);
+                    airshipOriginRef.set(airshipOrigin);
+
+                    ChunkPos ramshipChunk = new ChunkPos(ramshipAnchor);
+                    ChunkPos airshipChunk = new ChunkPos(airshipOrigin);
+                    for (ChunkPos centre : new ChunkPos[]{ramshipChunk, airshipChunk}) {
+                        for (int dx = -4; dx <= 4; dx++) {
+                            for (int dz = -4; dz <= 4; dz++) {
+                                level.setChunkForced(centre.x + dx, centre.z + dz, true);
+                            }
+                        }
+                    }
+
+                    // Assemble the airship_small as a passive target via the production
+                    // activateAnchor path, then strip its brain control + crew. The SubLevel
+                    // it leaves behind is exactly what a real player would be standing on.
+                    SubLevel sub = TestSetup.placeAndAssembleAsPassiveTarget(
+                            helper, airshipOrigin, "airship_small");
+                    if (sub == null) return;  // helper called helper.fail already
+                    airshipSubLevelRef.set(sub);
+                })
+                .thenExecuteAfter(5, () -> {
+                    // Plant the mock player INSIDE the airship's SubLevel bbox (post-assembly
+                    // — Sable may shift it during pose evaluation).
+                    SubLevel sub = airshipSubLevelRef.get();
+                    BoundingBox3dc bb = sub.boundingBox();
+                    double cx = (bb.minX() + bb.maxX()) * 0.5;
+                    double cy = (bb.minY() + bb.maxY()) * 0.5;
+                    double cz = (bb.minZ() + bb.maxZ()) * 0.5;
+                    ExtendedGameTestHelper ext = TestSetup.extend(helper);
+                    var player = TestSetup.spawnPinnedMockPlayer(ext, cx, cy, cz);
+                    MCPirates.LOGGER.info(
+                            "[test] spawned mock player at ({}, {}, {}); airship_small bbox = ({}..{}, {}..{}, {}..{})",
+                            player.getX(), player.getY(), player.getZ(),
+                            bb.minX(), bb.maxX(), bb.minY(), bb.maxY(), bb.minZ(), bb.maxZ());
+                    level.getServer().getPlayerList().setSimulationDistance(TestSetup.MOCK_PLAYER_SIM_DISTANCE);
+                    level.getServer().getPlayerList().setViewDistance(TestSetup.MOCK_PLAYER_SIM_DISTANCE);
+                })
+                // AirshipLiftoffTrigger runs every 10 ticks; with the player inside the
+                // airship's SubLevel bbox + within 160 blocks of the ramship anchor,
+                // activateAnchor(non-dormant) fires → ramship registered in LIFTOFF.
+                .thenWaitUntil(() -> helper.assertTrue(
+                        !AirshipBrain.ships().isEmpty()
+                                && AirshipBrain.ships().get(0).state == AirshipBrain.State.LIFTOFF,
+                        "waiting for ramship to assemble in LIFTOFF state; ships()="
+                                + AirshipBrain.ships().size()))
+                .thenExecute(() -> ramshipRef.set(AirshipBrain.ships().get(0)))
+                // LIFTOFF → PURSUE requires rise ≥ 25, ticksInState ≥ 60, target in 100-block
+                // range. Mock player satisfies range; rise comes from natural buoyancy with
+                // the brain commanding lift. Times out at 2400 ticks (120 s) if the brain
+                // never gets there.
+                .thenWaitUntil(() -> {
+                    Airship a = ramshipRef.get();
+                    helper.assertTrue(a != null && a.state == AirshipBrain.State.PURSUE,
+                            "waiting for ramship → PURSUE; current state="
+                                    + (a == null ? "—" : a.state));
+                })
+                .thenExecute(() -> {
+                    // Release chunk-force tickets + reset.
+                    BlockPos airshipOrigin = airshipOriginRef.get();
+                    BlockPos ramshipAnchor = TestSetup.findAnchor(helper);
+                    if (airshipOrigin != null && ramshipAnchor != null) {
+                        ChunkPos ramshipChunk = new ChunkPos(ramshipAnchor);
+                        ChunkPos airshipChunk = new ChunkPos(airshipOrigin);
+                        for (ChunkPos centre : new ChunkPos[]{ramshipChunk, airshipChunk}) {
+                            for (int dx = -4; dx <= 4; dx++) {
+                                for (int dz = -4; dz <= 4; dz++) {
+                                    level.setChunkForced(centre.x + dx, centre.z + dz, false);
+                                }
+                            }
+                        }
+                    }
+                    TestSetup.reset(helper);
+                })
+                .thenSucceed();
+    }
+
     private static LivingEntity findCaptain(ServerLevel level, Airship victim) {
         for (AnchoredEntity ae : victim.anchoredEntities) {
             Entity e = level.getEntity(ae.uuid());
@@ -235,6 +359,145 @@ public final class RamshipTests {
             }
         }
         return null;
+    }
+
+    /**
+     * Like {@link #ramshipPursuesMockPlayerOnAirship} but the target platform MOVES.
+     * Verifies that the ramship actually intercepts a moving target rather than just
+     * waiting for one stuck in place. Differences from the existing
+     * {@link #ramshipInterceptsMovingTarget}:
+     *
+     * <ul>
+     *   <li>Victim is a brainless Sable contraption assembled directly via
+     *       {@link TestSetup#placeAndAssembleAsPassiveTarget} — no mcpirates registration,
+     *       no auto-pursuit AI.</li>
+     *   <li>Target is a synthetic player; no captain trick needed.</li>
+     *   <li>Movement is driven by manually teleporting the SubLevel's rigid body each
+     *       tick (no AirshipBrain.navigateTo, which would need a registered brain).</li>
+     * </ul>
+     */
+    @GameTest(template = "ramship", timeoutTicks = 3000, setupTicks = 5,
+              batch = "ramship_intercepts_moving_synthetic_target", skyAccess = true)
+    public static void ramshipInterceptsMovingSyntheticAirship(GameTestHelper helper) {
+        AtomicReference<SubLevel> targetSubRef = new AtomicReference<>();
+        AtomicReference<GameTestPlayer> playerRef = new AtomicReference<>();
+        AtomicReference<Airship> ramshipRef = new AtomicReference<>();
+        AtomicReference<Double> closestApproach = new AtomicReference<>(Double.POSITIVE_INFINITY);
+        ServerLevel level = helper.getLevel();
+
+        helper.startSequence()
+                .thenExecuteAfter(2, () -> {
+                    TestSetup.reset(helper);
+                    BlockPos ramshipAnchor = TestSetup.findAnchor(helper);
+                    if (ramshipAnchor == null) {
+                        helper.fail("no ramship anchor BE in arena");
+                        return;
+                    }
+                    BlockPos airshipOrigin = new BlockPos(
+                            ramshipAnchor.getX() - 3,
+                            ramshipAnchor.getY(),
+                            ramshipAnchor.getZ() - 50);
+                    ChunkPos centre = new ChunkPos(ramshipAnchor);
+                    BlockPos targetDest = new BlockPos(
+                            ramshipAnchor.getX() + 100, ramshipAnchor.getY(), ramshipAnchor.getZ() - 50);
+                    for (ChunkPos c : new ChunkPos[]{centre, new ChunkPos(airshipOrigin), new ChunkPos(targetDest)}) {
+                        for (int dx = -5; dx <= 5; dx++) {
+                            for (int dz = -5; dz <= 5; dz++) {
+                                level.setChunkForced(c.x + dx, c.z + dz, true);
+                            }
+                        }
+                    }
+                    SubLevel sub = TestSetup.placeAndAssembleAsPassiveTarget(helper, airshipOrigin, "airship_small");
+                    if (sub == null) return;
+                    targetSubRef.set(sub);
+                })
+                .thenExecuteAfter(5, () -> {
+                    SubLevel sub = targetSubRef.get();
+                    BoundingBox3dc bb = sub.boundingBox();
+                    double cx = (bb.minX() + bb.maxX()) * 0.5;
+                    double cy = (bb.minY() + bb.maxY()) * 0.5;
+                    double cz = (bb.minZ() + bb.maxZ()) * 0.5;
+                    ExtendedGameTestHelper ext = TestSetup.extend(helper);
+                    playerRef.set(TestSetup.spawnPinnedMockPlayer(ext, cx, cy, cz));
+                    level.getServer().getPlayerList().setSimulationDistance(TestSetup.MOCK_PLAYER_SIM_DISTANCE);
+                    level.getServer().getPlayerList().setViewDistance(TestSetup.MOCK_PLAYER_SIM_DISTANCE);
+                })
+                .thenWaitUntil(() -> helper.assertTrue(
+                        !AirshipBrain.ships().isEmpty()
+                                && AirshipBrain.ships().get(0).state == AirshipBrain.State.LIFTOFF,
+                        "waiting for ramship to assemble in LIFTOFF state"))
+                .thenExecute(() -> ramshipRef.set(AirshipBrain.ships().get(0)))
+                // Phase 1: wait for ramship to clear LIFTOFF on its own (rise ≥ 25 +
+                // ticksInState ≥ 60). Target is stationary, so it stays in range and the
+                // brain promotes LIFTOFF → PURSUE. This wait is the long part of the test
+                // — ramship rises at ~0.04 b/tick under buoyancy → ~625 ticks to clear.
+                .thenWaitUntil(() -> {
+                    Airship ramship = ramshipRef.get();
+                    helper.assertTrue(ramship != null && ramship.state == AirshipBrain.State.PURSUE,
+                            "waiting for ramship → PURSUE; state="
+                                    + (ramship == null ? "—" : ramship.state));
+                })
+                // Phase 2: now that the ramship is actively chasing, drift the target
+                // away each tick + verify the ramship eventually catches up. Movement
+                // rate (0.1 b/tick = 2 m/s) is slow enough that the ramship's propellers
+                // can close the gap.
+                .thenWaitUntil(() -> {
+                    SubLevel target = targetSubRef.get();
+                    GameTestPlayer player = playerRef.get();
+                    Airship ramship = ramshipRef.get();
+                    helper.assertTrue(target != null && player != null && ramship != null,
+                            "test state lost");
+
+                    if (target instanceof ServerSubLevel ssl) {
+                        RigidBodyHandle handle = RigidBodyHandle.of(ssl);
+                        if (handle != null) {
+                            Vector3d curPos = new Vector3d(target.logicalPose().position());
+                            Quaterniond curOri = new Quaterniond(target.logicalPose().orientation());
+                            handle.teleport(curPos.add(0.1, 0, 0), curOri);
+                        }
+                    }
+
+                    BoundingBox3dc tbb = target.boundingBox();
+                    double tcx = (tbb.minX() + tbb.maxX()) * 0.5;
+                    double tcy = (tbb.minY() + tbb.maxY()) * 0.5;
+                    double tcz = (tbb.minZ() + tbb.maxZ()) * 0.5;
+                    player.setPos(tcx, tcy, tcz);
+
+                    BoundingBox3dc rbb = ramship.subLevel.boundingBox();
+                    double rcx = (rbb.minX() + rbb.maxX()) * 0.5;
+                    double rcz = (rbb.minZ() + rbb.maxZ()) * 0.5;
+                    double dx = rcx - tcx;
+                    double dz = rcz - tcz;
+                    double horizDist = Math.sqrt(dx * dx + dz * dz);
+                    closestApproach.updateAndGet(prev -> Math.min(prev, horizDist));
+                    boolean overlap = rbb.intersects(tbb);
+                    long gt = level.getGameTime();
+                    if (gt % 40 == 0 || overlap) {
+                        MCPirates.LOGGER.info(
+                                "[ramship-mock-test] t={} state={} ramship c=({},{}) target c=({},{}) dist={} closest={} overlap={}",
+                                gt, ramship.state,
+                                String.format("%.1f", rcx), String.format("%.1f", rcz),
+                                String.format("%.1f", tcx), String.format("%.1f", tcz),
+                                String.format("%.2f", horizDist),
+                                String.format("%.2f", closestApproach.get()),
+                                overlap);
+                    }
+                    helper.assertTrue(overlap,
+                            "waiting for ramship/target overlap; closest=" + closestApproach.get());
+                })
+                .thenExecute(() -> {
+                    BlockPos rsAnchor = TestSetup.findAnchor(helper);
+                    if (rsAnchor != null) {
+                        ChunkPos centre = new ChunkPos(rsAnchor);
+                        for (int dx = -5; dx <= 5; dx++) {
+                            for (int dz = -5; dz <= 5; dz++) {
+                                level.setChunkForced(centre.x + dx, centre.z + dz, false);
+                            }
+                        }
+                    }
+                    TestSetup.reset(helper);
+                })
+                .thenSucceed();
     }
 
 }
