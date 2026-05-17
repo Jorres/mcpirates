@@ -5,7 +5,6 @@ import com.mcpirates.airship.Airship;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
 import com.mcpirates.airship.anchor.MCPShipAnchorBlockEntity;
-import dev.eriksonn.aeronautics.content.blocks.hot_air.balloon.ServerBalloon;
 import dev.eriksonn.aeronautics.content.blocks.hot_air.hot_air_burner.HotAirBurnerBlockEntity;
 import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;
 import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
@@ -180,7 +179,7 @@ public final class AirshipPhysicsTests {
                     target.setDeltaMovement(Vec3.ZERO);
                     targetRef.set(target);
 
-                    AirshipBrain.targetOverride = ignored -> target.isAlive() ? target : null;
+                    AirshipBrain.targetOverride = target;
                     desiredTargetYRef.set(target.getEyeY() + PURSUIT_ALT_OFFSET);
                 })
                 .thenWaitUntil(() -> {
@@ -312,45 +311,13 @@ public final class AirshipPhysicsTests {
     }
 
 
-    /** Snapshot ship Y + linear velocity + balloon state to the log so a failure
-     *  leaves enough trail to triage from `runs/gametest/logs/latest.log` alone. */
+    /** Snapshot ship state to the log so a failure leaves enough trail to triage
+     *  from {@code runs/gametest/logs/latest.log} alone. Delegated to
+     *  {@link com.mcpirates.airship.ShipLog#snapshot} so the format stays in
+     *  lockstep with the brain's own throttle / plateau logs. */
     private static void sample(ServerLevel parentLevel, Airship a, String phase) {
         if (a == null) return;
-        Vector3d p = a.subLevel.logicalPose().position();
-        Vector3d v = readVelocity(parentLevel, a.subLevel);
-        double mass = (a.subLevel instanceof ServerSubLevel ssl && ssl.getMassTracker() != null)
-                ? ssl.getMassTracker().getMass() : Double.NaN;
-        String balloonStr = readBalloonState(a);
-        MCPirates.LOGGER.info(String.format(
-                "[physics-test] %s pos=(%.2f,%.2f,%.2f) v=(%.3f,%.3f,%.3f) mass=%.2f %s",
-                phase, p.x, p.y, p.z, v.x, v.y, v.z, mass, balloonStr));
-    }
-
-    private static String readBalloonState(Airship a) {
-        if (a.slBurnerPositions == null || a.slBurnerPositions.isEmpty()) return "no-burner-pos";
-        BlockPos slBurner = a.slBurnerPositions.get(0);
-        BlockEntity be = a.subLevel.getLevel().getBlockEntity(slBurner);
-        if (!(be instanceof HotAirBurnerBlockEntity burner)) {
-            return "burner-be-missing";
-        }
-        var balloon = burner.getBalloon();
-        if (balloon == null) return String.format("balloon=null signal=%d", burner.getSignalStrength());
-        if (balloon instanceof ServerBalloon sb) {
-            return String.format("balloon cap=%d filled=%.1f target=%.1f totalLift=%.2f signal=%d",
-                    sb.getCapacity(), sb.getTotalFilledVolume(), sb.getTotalTargetVolume(),
-                    sb.getTotalLift(), burner.getSignalStrength());
-        }
-        return "balloon class=" + balloon.getClass().getSimpleName();
-    }
-
-    private static Vector3d readVelocity(ServerLevel parentLevel, SubLevel sl) {
-        if (!(sl instanceof ServerSubLevel ssl)) return new Vector3d();
-        ServerSubLevelContainer container =
-                (ServerSubLevelContainer) SubLevelContainer.getContainer(parentLevel);
-        if (container == null || container.physicsSystem() == null) return new Vector3d();
-        RigidBodyHandle handle = container.physicsSystem().getPhysicsHandle(ssl);
-        if (handle == null) return new Vector3d();
-        return handle.getLinearVelocity(new Vector3d());
+        com.mcpirates.airship.ShipLog.snapshot(a, "physics-test " + phase);
     }
 
     /** First {@link MCPShipAnchorBlockEntity} in the arena, or null. The

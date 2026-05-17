@@ -290,8 +290,11 @@ public final class MCPCommands {
             var v = handle == null ? null : handle.getLinearVelocity(new org.joml.Vector3d());
             var av = handle == null ? null : handle.getAngularVelocity(new org.joml.Vector3d());
             var mt = sl.getMassTracker();
+            // v / av come straight off Sable's RigidBodyHandle so they're in
+            // SI units (m/s, rad/s) — labelled explicitly. Per-tick figures
+            // are emitted by ShipLog.snapshot via the brain.
             String msg = String.format(
-                    "[debug-physics] subLevel=%s pos=(%.2f,%.2f,%.2f) v=%s av=%s mass=%.2f invalidMass=%s",
+                    "[debug-physics] subLevel=%s pos=(%.2f,%.2f,%.2f) v_mPerSec=%s av_radPerSec=%s mass=%.2fkg invalidMass=%s",
                     sl.getUniqueId(),
                     pos.x, pos.y, pos.z,
                     v == null ? "null" : String.format("(%.3f,%.3f,%.3f)", v.x, v.y, v.z),
@@ -308,19 +311,8 @@ public final class MCPCommands {
                     pb.maxX(), pb.maxY(), pb.maxZ())) {
                 var be = sl.getLevel().getBlockEntity(bp);
                 if (be instanceof dev.eriksonn.aeronautics.content.blocks.hot_air.hot_air_burner.HotAirBurnerBlockEntity burner) {
-                    var balloon = burner.getBalloon();
-                    String bmsg;
-                    if (balloon == null) {
-                        bmsg = String.format("  burner@%s: balloon=null gasOutput=%.2f signal=%d",
-                                bp.toShortString(), burner.getGasOutput(), burner.getSignalStrength());
-                    } else if (balloon instanceof dev.eriksonn.aeronautics.content.blocks.hot_air.balloon.ServerBalloon sb) {
-                        bmsg = String.format("  burner@%s: balloon cap=%d filledVolume=%.2f targetVolume=%.2f totalLift=%.3f signal=%d gasOutput=%.2f",
-                                bp.toShortString(), sb.getCapacity(), sb.getTotalFilledVolume(),
-                                sb.getTotalTargetVolume(), sb.getTotalLift(),
-                                burner.getSignalStrength(), burner.getGasOutput());
-                    } else {
-                        bmsg = String.format("  burner@%s: balloon class=%s", bp.toShortString(), balloon.getClass().getSimpleName());
-                    }
+                    String bmsg = "  burner@" + bp.toShortString() + ": "
+                            + com.mcpirates.airship.ShipLog.describe(burner);
                     MCPirates.LOGGER.info(bmsg);
                     final String bmsgF = bmsg;
                     ctx.getSource().sendSuccess(() -> Component.literal(bmsgF), false);

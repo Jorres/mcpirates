@@ -232,7 +232,9 @@ public final class AirshipRehydrator {
         }
 
         AirshipBrain.register(parentLevel, ssl, airpadAnchor, kind,
-                slThrottleLevers, slBurnerPositions, slLeftClutch, slRightClutch, slCannonMounts,
+                slThrottleLevers, slBurnerPositions, slLeftClutch, slRightClutch,
+                slPrimaryAnchor, rotation,
+                slCannonMounts,
                 shipLocalForward, anchors, cannoneerByMount, initialState);
         MCPirates.LOGGER.info("rehydrate: re-registered {} (subLevel={}, airpad={}, rotation={}, crew={}, state={})",
                 kind.name(), ssl.getUniqueId(), airpadAnchor, rotation, anchors.size(), initialState);

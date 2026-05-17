@@ -69,13 +69,40 @@ public interface AirshipKind {
      *  stay in lock-step. */
     List<BlockPos> throttleLeverDeltas();
 
-    /** Vanilla {@code minecraft:lever} that the brain flips to engage/disengage the
-     *  port-side propeller clutch. */
+    /** Vanilla {@code minecraft:lever} the port-side propeller clutch reads.
+     *  Driven by the kind's {@link ShipControls}. */
     BlockPos leftClutchLeverDelta();
 
-    /** Vanilla {@code minecraft:lever} that the brain flips to engage/disengage the
-     *  starboard-side propeller clutch. */
+    /** Vanilla {@code minecraft:lever} the starboard-side propeller clutch reads.
+     *  Driven by the kind's {@link ShipControls}. */
     BlockPos rightClutchLeverDelta();
+
+    /** Construct steering controls for this assembly. The kind owns the NBT-frame
+     *  deltas of every hardware block it interacts with (clutch levers, propellers,
+     *  …); it resolves those deltas through {@code rotation} and the SubLevel
+     *  offset, and hands the resulting {@link ShipControls} a set of fixed
+     *  world-frame positions to drive. Nothing outside the kind needs to know
+     *  what hardware is there — the brain only ever talks to the returned
+     *  {@code ShipControls}.
+     *
+     *  <p>Default: {@link TankSteerControls} bound to the (already-resolved)
+     *  left/right clutch levers carried on {@code airship}. Kinds with extra
+     *  hardware (forward propeller, counter-rotatable side props) override and
+     *  build a richer controls instance — see {@link RamshipKind}.
+     *
+     *  @param airship                the Airship just registered with the brain;
+     *                                its {@code slLeftClutchLever}/{@code slRightClutchLever}
+     *                                are already resolved.
+     *  @param slPrimaryAnchor        SubLevel-frame position of the primary
+     *                                anchor lever — the basis the kind's other
+     *                                NBT deltas are measured from.
+     *  @param rotation               rotation applied to the structure at placement.
+     */
+    default ShipControls makeControls(com.mcpirates.airship.Airship airship,
+                                      BlockPos slPrimaryAnchor,
+                                      net.minecraft.world.level.block.Rotation rotation) {
+        return new TankSteerControls(airship.slLeftClutchLever, airship.slRightClutchLever);
+    }
 
     /** CBC cannon-mount positions to assemble + register for the combat module. May be
      *  empty for cannonless ships. */
@@ -134,4 +161,22 @@ public interface AirshipKind {
      *  HOVER, and RETURN. The plateau lookup converges to it; the steady-altitude exit
      *  path then concludes LIFTOFF without the ship climbing to its physical ceiling. */
     default double cruiseRise() { return 60.0; }
+
+    /** Vertical offset above the target player the brain aims for during PURSUE.
+     *  Default 12 blocks of clearance keeps the cannon arc / line-of-sight unobstructed
+     *  for ranged ships. Ramships override to 0 — the ram is the whole interaction,
+     *  and any vertical gap means it flies over the victim. */
+    default double pursueAltOffset() { return 12.0; }
+
+    /** Safety floor the altitude controller enforces above the highest terrain ahead
+     *  (max of heightmap samples along the ship's forward axis). Applied uniformly to
+     *  all states: in LIFTOFF / HOVER / RETURN / NAVIGATE the target altitude is at
+     *  least {@code maxGroundAhead + minAltAboveGround() + 2}; in PURSUE the target is
+     *  the larger of (target.eyeY + pursueAltOffset()) and that same ground floor.
+     *
+     *  <p>Default 30 — keeps the cannon arc clear of terrain for ranged ships, and
+     *  prevents the ship from chasing a low-altitude target straight into a hill.
+     *  Ramships override to a small value: their goal is to physically hit a
+     *  same-altitude target, so any positive ground bias prevents the actual ram. */
+    default double minAltAboveGround() { return 30.0; }
 }

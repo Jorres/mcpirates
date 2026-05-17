@@ -1,13 +1,8 @@
 package com.mcpirates.airship.kind;
 
 import com.mcpirates.airship.Airship;
-import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
-import net.minecraft.core.BlockPos;
-import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
 
@@ -19,6 +14,11 @@ import org.joml.Vector3d;
  *
  * <p>Targets the ship first ({@code targetShip}), falls back to the player target —
  * lets the ramship engage a moving SubLevel directly when one is present.
+ *
+ * <p>Pure positioner. All hardware actuation (forward clutch, counter-rotation,
+ * propeller reversal) lives in {@link RamControls}, which the brain calls each
+ * decision tick once it has converted this movement's {@link Goal} into a
+ * signed heading error.
  */
 public final class RamMovement implements MovementBehavior {
 
@@ -37,18 +37,19 @@ public final class RamMovement implements MovementBehavior {
     @Override
     public Goal computeGoal(Airship ship, Vector3d shipPos,
                             LivingEntity targetPlayer, SubLevel targetShip, long now) {
-        // Forward propeller: engaged whenever we're trying to ram. The clutch is on the
-        // ship's movement axis, owned by RamshipKind. Resolved lazily from the SubLevel
-        // userDataTag so rehydration after restart needs zero extra wiring.
-        setForwardClutchEngaged(ship, true);
-
+        // All velocities consumed below MUST be in blocks/tick, the same unit
+        // RAMSHIP_SPEED_ESTIMATE is in. Vanilla {@code Entity.getDeltaMovement}
+        // already is. Sable's {@code SubLevelHelper.getVelocity} returns m/s
+        // — divide by SERVER_TPS=20 to bring it into the same frame, otherwise
+        // the intercept math compares a per-second target velocity to a
+        // per-tick estimate and silently returns garbage.
         double tx, tz, vx, vz;
         if (targetShip != null) {
             Vector3d tPos = targetShip.logicalPose().position();
             tx = tPos.x; tz = tPos.z;
             Vector3d tVel = dev.ryanhcode.sable.Sable.HELPER.getVelocity(
                     ship.parentLevel, targetShip, tPos, new Vector3d());
-            vx = tVel.x; vz = tVel.z;
+            vx = tVel.x / 20.0; vz = tVel.z / 20.0;
         } else if (targetPlayer != null) {
             tx = targetPlayer.getX(); tz = targetPlayer.getZ();
             Vec3 dm = targetPlayer.getDeltaMovement();
@@ -85,46 +86,5 @@ public final class RamMovement implements MovementBehavior {
         return Math.max(t1, t2);
     }
 
-    @Override
-    public void onEnterPursue(Airship ship, Vector3d shipPos,
-                              LivingEntity targetPlayer, SubLevel targetShip) {
-        // Off→on edge on entry: Aeronautics ignores props that were already powered
-        // through a chunk reload, so a fresh disengage forces a refresh before the next
-        // computeGoal re-engages.
-        setForwardClutchEngaged(ship, false);
-    }
-
-    @Override
-    public void onExitPursue(Airship ship) {
-        setForwardClutchEngaged(ship, false);
-    }
-
-    @Override
-    public String debugOverlay(Airship ship) {
-        return " ram";
-    }
-
-    private static void setForwardClutchEngaged(Airship ship, boolean engaged) {
-        if (!(ship.kind instanceof RamshipKind ramship)) return;
-        BlockPos slClutch = resolveSlForwardClutch(ship, ramship);
-        if (slClutch == null) return;
-        Level subLevelLevel = ship.subLevel.getLevel();
-        if (subLevelLevel == null) return;
-        // ClutchLevers semantics: powered=true disengages, powered=false engages.
-        ClutchLevers.setPowered(subLevelLevel, slClutch, !engaged);
-    }
-
-    /** Look up the SubLevel-frame forward-clutch position from the assembly stamp.
-     *  Returns null if the SubLevel hasn't been stamped (shouldn't happen at runtime —
-     *  every assembly writes the tag). */
-    private static BlockPos resolveSlForwardClutch(Airship ship, RamshipKind ramship) {
-        if (!(ship.subLevel instanceof ServerSubLevel ssl)) return null;
-        CompoundTag userTag = ssl.getUserDataTag();
-        if (userTag == null || !userTag.contains("mcpirates")) return null;
-        CompoundTag mcp = userTag.getCompound("mcpirates");
-        if (!mcp.contains("slPrimaryAnchor") || !mcp.contains("rotation")) return null;
-        Rotation rot = Rotation.values()[mcp.getInt("rotation")];
-        BlockPos slPrimaryAnchor = BlockPos.of(mcp.getLong("slPrimaryAnchor"));
-        return slPrimaryAnchor.offset(ramship.forwardClutchLeverDelta().rotate(rot));
-    }
+    @Override public String debugOverlay(Airship ship) { return " ram"; }
 }

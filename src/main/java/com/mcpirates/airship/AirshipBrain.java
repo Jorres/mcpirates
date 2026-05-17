@@ -51,7 +51,18 @@ public final class AirshipBrain {
      *  stuck-detect. */
     public static final double HEADING_TOLERANCE_DEG = 25.0;
     private static final int AIM_INTERVAL = 5;
-    private static final int DECISION_INTERVAL = 10;
+    /** How often the brain re-decides steering (clutches, propeller reversal).
+     *  Short so the controller can catch fast yaw rotation before the ship
+     *  overshoots target heading — ramship rotation can reach ~10°/tick under
+     *  counter-rotation, and the previous 10-tick interval was wider than the
+     *  ship's full pivot-through-target sweep. */
+    private static final int STEERING_DECISION_INTERVAL = 3;
+    /** How often the brain re-decides lift (plateau-table pick → throttle +
+     *  burner volume). Hot-air balloons are slow plants (multi-second response
+     *  to a thrust change), so high-frequency lift updates would just be noise.
+     *  The plateau pick already includes velocity damping
+     *  ({@link #VELOCITY_LOOKAHEAD_TICKS}) for transient handling. */
+    private static final int LIFT_DECISION_INTERVAL = 10;
 
     private static final boolean DEBUG_OVERLAY = true;
     private static final int OVERLAY_ACTIONBAR_INTERVAL = 10;
@@ -69,12 +80,13 @@ public final class AirshipBrain {
 
     private static final List<Airship> SHIPS = new CopyOnWriteArrayList<>();
 
-    /** Test seam — replaces {@link #findEnemyPlayerOnAirship}'s scan. */
-    public static volatile java.util.function.Function<Airship, LivingEntity> targetOverride = null;
-
-    /** Test seam — replaces {@link #findEnemyShip}'s SubLevel resolution. Lets a test
-     *  pin a specific ship as the target without spawning a player on it. */
-    public static volatile java.util.function.Function<Airship, SubLevel> targetShipOverride = null;
+    /** Test seam — when non-null, every brain queries this entity instead of scanning
+     *  {@code parentLevel.players()} in {@link #findEnemyPlayerOnAirship}. The brain's
+     *  {@link #findEnemyShip} resolves the SubLevel naturally from the entity's
+     *  {@code Sable.HELPER.getContaining(entity)}, so tests don't need a second override —
+     *  pointing at an entity that rides a SubLevel (e.g. the victim's captain) gives both
+     *  pieces of information in one. */
+    public static volatile LivingEntity targetOverride = null;
 
     /** Immutable snapshot of the list; the {@link Airship} instances are still live. */
     public static List<Airship> ships() { return List.copyOf(SHIPS); }
@@ -85,13 +97,13 @@ public final class AirshipBrain {
     }
 
     /** Send {@code a} into {@link State#NAVIGATE} steering toward {@code (x, z)}. Y is
-     *  ignored — altitude tracks cruiseRise like RETURN. Resets clutch state so the
+     *  ignored — altitude tracks cruiseRise like RETURN. Releases steering so the
      *  off→on edge re-engages Aeronautics' thrust contribution. */
     public static void navigateTo(Airship a, double x, double z) {
         a.navDestination = new Vector3d(x, 0.0, z);
         a.state = State.NAVIGATE;
         a.stateEnteredTick = a.parentLevel.getGameTime();
-        setBothClutchesDisengaged(a);
+        a.controls.release(a);
     }
 
     private AirshipBrain() {}
@@ -117,6 +129,8 @@ public final class AirshipBrain {
             List<BlockPos> slBurnerPositions,
             BlockPos slLeftClutchLever,
             BlockPos slRightClutchLever,
+            BlockPos slPrimaryAnchor,
+            net.minecraft.world.level.block.Rotation rotation,
             List<BlockPos> slCannonMounts,
             Vector3d shipLocalForward,
             List<AnchoredEntity> anchoredEntities,
@@ -129,6 +143,10 @@ public final class AirshipBrain {
         a.state = initialState;
         // Without this, default 0 makes (now - stateEnteredTick) huge and LIFTOFF_MIN_TICKS no-ops.
         a.stateEnteredTick = parentLevel.getGameTime();
+        // Steering controls: kind owns its hardware deltas + factory, hands us
+        // back a fully-bound actuator. Brain never touches block positions
+        // beyond what's on Airship itself.
+        a.controls = kind.makeControls(a, slPrimaryAnchor, rotation);
         SHIPS.add(a);
         MCPirates.LOGGER.info(
                 "registered pirate airship: kind={} subLevel={} state={} anchor={} mounts={} throttles={} burners={} clutches=({},{}) fwd=({},{},{}) anchoredEntities={} cannoneers={}",
@@ -245,7 +263,7 @@ public final class AirshipBrain {
             // Disengage on entry. The off→on edge refreshes Aeronautics' thrust contribution —
             // after a chunk reload props can visually spin without applying thrust until toggled.
             if (desired == State.PURSUE || desired == State.HOVER) {
-                setBothClutchesDisengaged(a);
+                a.controls.release(a);
             }
             if (previous == State.PURSUE) {
                 a.kind.movement().onExitPursue(a);
@@ -253,11 +271,22 @@ public final class AirshipBrain {
             if (desired == State.PURSUE) {
                 a.kind.movement().onEnterPursue(a, shipPos, targetPlayer, targetShip);
             }
-            applyMovement(a, targetPlayer, targetShip, shipPos, now);
-            a.lastDecisionTick = now;
-        } else if (now - a.lastDecisionTick >= DECISION_INTERVAL) {
-            applyMovement(a, targetPlayer, targetShip, shipPos, now);
-            a.lastDecisionTick = now;
+            // Fresh state — force both subsystems to update immediately so
+            // we don't carry the previous state's clutch/lift writes for up
+            // to LIFT_DECISION_INTERVAL ticks.
+            applySteering(a, targetPlayer, targetShip, shipPos);
+            applyLift(a, target, shipPos);
+            a.lastSteeringTick = now;
+            a.lastLiftTick = now;
+        } else {
+            if (now - a.lastSteeringTick >= STEERING_DECISION_INTERVAL) {
+                applySteering(a, targetPlayer, targetShip, shipPos);
+                a.lastSteeringTick = now;
+            }
+            if (now - a.lastLiftTick >= LIFT_DECISION_INTERVAL) {
+                applyLift(a, target, shipPos);
+                a.lastLiftTick = now;
+            }
         }
 
         if (CANNON_AIM_ENABLED && a.state == State.PURSUE && target != null) {
@@ -298,40 +327,32 @@ public final class AirshipBrain {
 
     // ───────────────────────────── Movement ─────────────────────────────
 
-    private static void applyMovement(Airship a, LivingEntity targetPlayer, SubLevel targetShip,
-                                      Vector3d shipPos, long now) {
-        Level subLevelLevel = a.subLevel.getLevel();
-        // Local alias: code below this point that doesn't distinguish player vs ship just
-        // wants "anything alive to chase" — for now that's the player target. The state
-        // machine's targetPos still consumes the player too.
-        LivingEntity target = targetPlayer;
+    /** Compute the per-state XZ goal. {@code Double.NaN} = stationary (no goal).
+     *  Shared by steering and (indirectly via {@link #applySteering}) the orbit
+     *  decision hook. */
+    private static MovementBehavior.Goal computeGoal(Airship a, Vector3d shipPos,
+                                                     LivingEntity targetPlayer,
+                                                     SubLevel targetShip, long now) {
+        return switch (a.state) {
+            case PURSUE -> a.kind.movement().computeGoal(a, shipPos, targetPlayer, targetShip, now);
+            case RETURN -> new MovementBehavior.Goal(
+                    a.airpadAnchor.getX() + 0.5, a.airpadAnchor.getZ() + 0.5);
+            case NAVIGATE -> a.navDestination == null ? null
+                    : new MovementBehavior.Goal(a.navDestination.x, a.navDestination.z);
+            case LIFTOFF, HOVER, MOORED -> null;
+        };
+    }
 
-        // Horizontal goal, NaN = stationary (LIFTOFF, HOVER).
-        double goalX = Double.NaN, goalZ = Double.NaN;
-        switch (a.state) {
-            case PURSUE -> {
-                MovementBehavior.Goal goal = a.kind.movement()
-                        .computeGoal(a, shipPos, targetPlayer, targetShip, now);
-                if (goal != null) {
-                    goalX = goal.x();
-                    goalZ = goal.z();
-                }
-            }
-            case RETURN -> {
-                goalX = a.airpadAnchor.getX() + 0.5;
-                goalZ = a.airpadAnchor.getZ() + 0.5;
-            }
-            case NAVIGATE -> {
-                if (a.navDestination != null) {
-                    goalX = a.navDestination.x;
-                    goalZ = a.navDestination.z;
-                }
-            }
-            case LIFTOFF, HOVER -> { /* stay put */ }
-            case MOORED -> { /* unreachable: tickShip short-circuits MOORED before here */ }
-        }
-
-        boolean leftEngaged = false, rightEngaged = false;
+    /** Steering pass — brain only knows <em>direction</em> (signed heading error).
+     *  The kind's {@link com.mcpirates.airship.kind.ShipControls} translates that
+     *  into clutch / propeller writes. No hardware blocks are touched at this
+     *  level. Runs on the fast {@link #STEERING_DECISION_INTERVAL} cadence. */
+    private static void applySteering(Airship a, LivingEntity targetPlayer, SubLevel targetShip,
+                                      Vector3d shipPos) {
+        MovementBehavior.Goal goal = computeGoal(a, shipPos, targetPlayer, targetShip,
+                                                 a.parentLevel.getGameTime());
+        double goalX = goal == null ? Double.NaN : goal.x();
+        double goalZ = goal == null ? Double.NaN : goal.z();
         double headingErrDeg = 0;
         if (!Double.isNaN(goalX)) {
             double dx = goalX - shipPos.x;
@@ -342,32 +363,37 @@ public final class AirshipBrain {
                 double currentYaw = a.yawRadians();
                 double err = AngleMath.normalizeRadians(targetYaw - currentYaw);
                 headingErrDeg = Math.toDegrees(err);
-                double absErrDeg = Math.abs(headingErrDeg);
-
-                if (absErrDeg < HEADING_TOLERANCE_DEG) {
-                    leftEngaged = true;
-                    rightEngaged = true;
-                } else if (err > 0) {
-                    leftEngaged = true;
-                    rightEngaged = false;
-                } else {
-                    leftEngaged = false;
-                    rightEngaged = true;
-                }
+                a.controls.applySteering(a, err);
+            } else {
+                a.controls.release(a);
             }
+        } else {
+            a.controls.release(a);
         }
+        // Orbit-math intermediates for the overlay; clutch/throttle/burner state
+        // lives in the SubLevel block states and is read back from there when needed.
+        a.lastGoalX = goalX;
+        a.lastGoalZ = goalZ;
+        a.lastHeadingErrDeg = headingErrDeg;
+        // Per-decision hook: orbit uses it for stuck-direction-flip; ram is a no-op.
+        if (a.state == State.PURSUE && !Double.isNaN(goalX)) {
+            a.kind.movement().onPursueDecision(a, headingErrDeg);
+        }
+    }
 
-        // Clutch is INVERTED: powered=true disengages.
-        ClutchLevers.setPowered(subLevelLevel, a.slLeftClutchLever, !leftEngaged);
-        ClutchLevers.setPowered(subLevelLevel, a.slRightClutchLever, !rightEngaged);
-
+    /** Lift pass — plateau-pick the (lever, volume) setting and write it to every
+     *  throttle lever + burner. Runs on the slow {@link #LIFT_DECISION_INTERVAL}
+     *  cadence; hot-air balloons can't respond to high-frequency thrust changes
+     *  anyway, and the plateau pick already absorbs transient velocity via
+     *  {@link #VELOCITY_LOOKAHEAD_TICKS}. */
+    private static void applyLift(Airship a, LivingEntity target, Vector3d shipPos) {
+        Level subLevelLevel = a.subLevel.getLevel();
         int balloonCap = -1;
         for (BlockPos burner : a.slBurnerPositions) {
             int c = HotAirBurners.queryBalloonCapacity(subLevelLevel, burner);
             if (c > 0) { balloonCap = c; break; }
         }
         a.balloonCapacity = balloonCap;
-        int burnerCount = Math.max(1, a.slBurnerPositions.size());
         int maxGroundAhead = maxGroundAhead(a, shipPos);
         LiftSetting lift = chooseLiftSetting(a, a.state, shipPos, target, maxGroundAhead);
         if (lift != null) {
@@ -383,39 +409,34 @@ public final class AirshipBrain {
             a.lastThrottleLogBucket = bucket;
             double cruiseY = a.airpadAnchor.getY() + a.kind.cruiseRise();
             double targetY = (a.state == State.PURSUE && target != null)
-                    ? Math.max(target.getEyeY() + PURSUE_ALT_OFFSET, maxGroundAhead + MIN_ALT_ABOVE_GROUND + 2.0)
+                    ? Math.max(target.getEyeY() + a.kind.pursueAltOffset(), maxGroundAhead + a.kind.minAltAboveGround() + 2.0)
                     : cruiseY;
-            int plateauRows = a.plateauTable == null ? 0 : a.plateauTable.size();
-            String liftStr = lift == null ? "—" : (lift.lever() + "/" + lift.volume()
-                    + " T=" + String.format("%.1f", burnerCount * (double) lift.volume() * lift.lever() / 15.0));
-            MCPirates.LOGGER.info(
-                    "ship {} ({}) throttle: state={} lift={} plateauRows={} balloonCap={} shipY={} maxGroundAhead={} targetY={} dy={}",
-                    a.subLevel.getUniqueId(), a.kind.name(), a.state, liftStr,
-                    plateauRows, a.balloonCapacity,
-                    String.format("%.1f", shipPos.y), maxGroundAhead,
-                    String.format("%.1f", targetY),
-                    String.format("%.1f", shipPos.y - targetY));
-        }
-
-        // Orbit-math intermediates for the overlay; clutch/throttle/burner state lives
-        // in the SubLevel block states and is read back from there when needed.
-        a.lastGoalX = goalX;
-        a.lastGoalZ = goalZ;
-        a.lastHeadingErrDeg = headingErrDeg;
-
-        // Per-decision hook: orbit uses it for stuck-direction-flip; ram is a no-op.
-        if (a.state == State.PURSUE && !Double.isNaN(goalX)) {
-            a.kind.movement().onPursueDecision(a, headingErrDeg);
+            ShipLog.snapshot(a, "throttle", lift, targetY);
         }
     }
 
 
-    /** PURSUE altitude = player.eye + this many blocks. */
-    private static final double PURSUE_ALT_OFFSET = 12.0;
-    /** Safety floor enforced by clamping the plateau pick: brain's targetY is bumped
-     *  up to {@code maxGround + MIN_ALT_ABOVE_GROUND + 2} so the picked plateau row
-     *  always equilibrates above this clearance, keeping the cannon arc unobstructed. */
-    private static final double MIN_ALT_ABOVE_GROUND = 30.0;
+    // The ground-clearance safety floor is per-kind — see
+    // {@link com.mcpirates.airship.kind.AirshipKind#minAltAboveGround()}.
+    /** Look-ahead horizon (ticks) for velocity-damped plateau pick. The picker
+     *  receives {@code targetY - K·v.y} instead of {@code targetY}, biasing
+     *  toward a row that brakes current vertical momentum.
+     *
+     *  <p>The plateau table itself encodes only steady-state equilibrium — at the
+     *  picked altitude buoyancy = weight, so net force is zero. A ship moving
+     *  through equilibrium with non-zero {@code v.y} therefore overshoots: there
+     *  is no fast brake in the hot-air-balloon plant, only weak Aeronautics drag.
+     *  Without this bias the controller is position-only and the ship oscillates
+     *  around (or sails past) every target altitude change.
+     *
+     *  <p>{@code K=10} chosen so that the worst observed LIFTOFF→PURSUE
+     *  transition (v.y≈+2.3 b/tick) maps to roughly a 23-block bias — enough to
+     *  pick a sink-producing row well before the ship arrives at equilibrium.
+     *  As {@code v.y} bleeds off the bias shrinks and the target relaxes back to
+     *  the real value. Symmetric on descent: {@code v.y < 0} biases target
+     *  upward, so the picker holds a *higher* equilibrium and the ship's sink
+     *  brakes before it sails past from below. */
+    public static final double VELOCITY_LOOKAHEAD_TICKS = 10.0;
 
     private static final int[] GROUND_LOOKAHEAD_SAMPLES = {0, 8, 16, 24, 32};
 
@@ -458,18 +479,37 @@ public final class AirshipBrain {
             return new LiftSetting(/*lever=*/10, LiftMath.BURNER_MIN_VOLUME);
         }
 
-        double floor = maxGround + MIN_ALT_ABOVE_GROUND + 2.0;
+        double floor = maxGround + a.kind.minAltAboveGround() + 2.0;
         double cruiseY = a.airpadAnchor.getY() + a.kind.cruiseRise();
         double targetY = switch (state) {
             case LIFTOFF, RETURN, HOVER, NAVIGATE -> Math.max(cruiseY, floor);
             case PURSUE -> target == null
                     ? Math.max(cruiseY, floor)
-                    : Math.max(target.getEyeY() + PURSUE_ALT_OFFSET, floor);
+                    : Math.max(target.getEyeY() + a.kind.pursueAltOffset(), floor);
             // tickShip short-circuits for MOORED before chooseLiftSetting is called;
             // this branch only exists to satisfy the compiler's exhaustiveness check.
             case MOORED -> throw new IllegalStateException("chooseLiftSetting unreachable for MOORED");
         };
-        return table.pickClosest(targetY).toLiftSetting();
+        // Velocity-damped pick — see VELOCITY_LOOKAHEAD_TICKS for rationale.
+        // The bias is *conditional*: only apply when the ship would overshoot
+        // by extrapolating its current velocity {@code K} ticks ahead. Otherwise
+        // we'd pull the equilibrium downward during LIFTOFF (ship far below
+        // target with positive v.y, no overshoot risk) and choke the climb.
+        // Floor the biased target so the brake can't drag us below the kind's
+        // configured ground clearance.
+        double vy = ShipLog.velocity(a).y;
+        double projectedY = shipPos.y + VELOCITY_LOOKAHEAD_TICKS * vy;
+        boolean overshootRising  = vy > 0 && projectedY > targetY;
+        boolean overshootSinking = vy < 0 && projectedY < targetY;
+        double biasedTargetY = (overshootRising || overshootSinking)
+                ? Math.max(targetY - VELOCITY_LOOKAHEAD_TICKS * vy, floor)
+                : targetY;
+        PlateauTable.Row picked = table.pickClosest(biasedTargetY);
+        // Stash for the throttle log so it reflects what was actually committed,
+        // not a parallel recomputation that can diverge from the floor clamp.
+        a.lastBiasedTargetY = biasedTargetY;
+        a.lastPickedEquilibriumY = picked.equilibriumY();
+        return picked.toLiftSetting();
     }
 
     /** Rebuilds only when {@link Airship#balloonCapacity} changes. Mass is sampled at
@@ -490,24 +530,16 @@ public final class AirshipBrain {
         a.plateauTable = PlateauTable.build(
                 a.parentLevel, mass, liftStrength, nBurners, vMaxPerBurner, shipPos.x, shipPos.z);
         a.plateauTableCapacity = cap;
-        MCPirates.LOGGER.info(
-                "ship {} ({}): plateau table built rows={} mass={} cap={} N={} vMax={} yRange=[{}..{}]",
-                a.subLevel.getUniqueId(), a.kind.name(), a.plateauTable.size(),
-                String.format("%.1f", mass), cap, nBurners, vMaxPerBurner,
-                String.format("%.1f", a.plateauTable.minY()),
-                String.format("%.1f", a.plateauTable.maxY()));
+        // mass/balloonVol unit trap (see ShipLog header) and the per-ship state line
+        // both live in ShipLog.snapshot — same emitter as the per-tick throttle log,
+        // just a different event tag.
+        ShipLog.snapshot(a, "plateau-built");
         return a.plateauTable;
-    }
-
-    private static void setBothClutchesDisengaged(Airship a) {
-        Level subLevelLevel = a.subLevel.getLevel();
-        ClutchLevers.setPowered(subLevelLevel, a.slLeftClutchLever, /*powered=disengaged=*/true);
-        ClutchLevers.setPowered(subLevelLevel, a.slRightClutchLever, /*powered=disengaged=*/true);
     }
 
     /** One-shot shutdown when the crew is wiped:
      *  <ol>
-     *    <li>Disengage both clutches so propellers stop.</li>
+     *    <li>Release all propulsion via the kind's controls.</li>
      *    <li>Strip the {@code "mcpirates"} compound from the SubLevel's user-data tag —
      *        rehydrator looks for that stamp on startup; without it the SubLevel
      *        survives as a vanilla Sable contraption and we never touch it again.</li>
@@ -515,8 +547,7 @@ public final class AirshipBrain {
      *  Throttle / burner state is left as-is — dead crew can't change it, and the
      *  wreck drifts on whatever lift it had until balloon drains naturally. */
     private static void shutdownDerelict(Airship a, Level subLevelLevel) {
-        ClutchLevers.setPowered(subLevelLevel, a.slLeftClutchLever, true);
-        ClutchLevers.setPowered(subLevelLevel, a.slRightClutchLever, true);
+        a.controls.release(a);
         if (a.subLevel instanceof ServerSubLevel ssl) {
             net.minecraft.nbt.CompoundTag tag = ssl.getUserDataTag();
             if (tag != null && tag.contains("mcpirates")) {
@@ -577,11 +608,11 @@ public final class AirshipBrain {
         Component msg = Component.empty()
                 .append(Component.literal("[" + a.state.name() + ":" + a.kind.name() + "] ").withStyle(stateColor))
                 .append(Component.literal(String.format(
-                        "pos=(%.0f,%.1f,%.0f) thr=%d vol=%dm³ cap=%s %s goal=%s yaw_err=%.0f° %s%s%s",
+                        "pos=(%.0f,%.1f,%.0f) thr=%d vol=%dm³ balloonVol=%s %s goal=%s yaw_err=%.0f° %s%s%s",
                         shipPos.x, shipPos.y, shipPos.z,
                         throttle,
                         burnerVolume,
-                        a.balloonCapacity < 0 ? "—" : (a.balloonCapacity + "m³"),
+                        ShipLog.balloonVol(a.balloonCapacity),
                         engines,
                         goalStr,
                         a.lastHeadingErrDeg,
@@ -595,9 +626,9 @@ public final class AirshipBrain {
     // ───────────────────────────── Targeting ─────────────────────────────
 
     private static LivingEntity findEnemyPlayerOnAirship(Airship a, Vector3d shipPos) {
-        java.util.function.Function<Airship, LivingEntity> override = targetOverride;
+        LivingEntity override = targetOverride;
         if (override != null) {
-            return override.apply(a);
+            return override.isAlive() ? override : null;
         }
         ServerPlayer best = null;
         double bestSq = AirshipStateMachine.DISENGAGE_RANGE_SQ;
@@ -617,11 +648,6 @@ public final class AirshipBrain {
     /** Resolve the SubLevel (any Sable-tracked ship — mcpirates or vanilla Aeronautics)
      *  the target is riding. Returns null for player-on-foot or for self. */
     private static SubLevel findEnemyShip(Airship self, LivingEntity targetPlayer) {
-        java.util.function.Function<Airship, SubLevel> override = targetShipOverride;
-        if (override != null) {
-            SubLevel s = override.apply(self);
-            return (s == null || s == self.subLevel) ? null : s;
-        }
         if (targetPlayer == null) return null;
         SubLevel containing = dev.ryanhcode.sable.Sable.HELPER.getContaining(targetPlayer);
         if (containing == null || containing == self.subLevel) return null;

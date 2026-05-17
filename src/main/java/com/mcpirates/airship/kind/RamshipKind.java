@@ -32,6 +32,15 @@ public final class RamshipKind implements AirshipKind {
     @Override public Direction nbtPrimaryFacing() { return Direction.NORTH; }
     @Override public Direction nbtForward() { return Direction.NORTH; }
     @Override public LeverKind throttleLeverKind() { return LeverKind.CREATE_ANALOG; }
+    /** Ram, don't overfly. The hull's keel sits at the deck the victim's crew stands
+     *  on — any positive offset turns the ram into a fly-over. */
+    @Override public double pursueAltOffset() { return 0.0; }
+
+    /** Ramming low-altitude targets requires giving up most of the ground-clearance
+     *  safety margin — a 30-block floor (the default) would prevent the ramship from
+     *  descending toward a victim flying anywhere near treetop level. 5 is enough to
+     *  not catch hills mid-chase while still letting the ram land. */
+    @Override public double minAltAboveGround() { return 5.0; }
 
     @Override
     public boolean isPrimaryAnchorBE(BlockEntity be) {
@@ -60,11 +69,35 @@ public final class RamshipKind implements AirshipKind {
     @Override public BlockPos rightClutchLeverDelta() { return new BlockPos(+3, 0, +9); }
     @Override public List<BlockPos> cannonMountDeltas() { return List.of(); }
 
-    /** Kind-specific third clutch lever — controls the center forward-axis propeller.
-     *  Resolved through the AirshipKind interface would leak yet another block-pos getter
-     *  into a shape every kind would have to implement; kept on RamshipKind only, with
-     *  the assembly path checking {@code instanceof RamshipKind}. See docs/tech-debt.md. */
-    public BlockPos forwardClutchLeverDelta() { return new BlockPos(+1, -1, +9); }
+    // Hardware deltas the ramship needs *beyond* the two outboard clutch levers
+    // every kind has. Kept private (this is implementation detail) — they're
+    // only consumed by {@link #makeControls} below, never exposed to the brain.
+    // Measured from the primary anchor lever at NBT (3,2,9):
+    //   forward clutch lever (4,1,18) → (+1,-1,+9)
+    //   port  outboard prop  (2,1,19) → (-1,-1,+10)
+    //   star  outboard prop  (6,1,19) → (+3,-1,+10)
+    //   forward center prop  (4,0,21) → (+1,-2,+12)  (diagnostic only — RamControls
+    //                                                  doesn't reverse it, the clutch
+    //                                                  lever above gates its drive)
+    private static final BlockPos FORWARD_CLUTCH_LEVER_DELTA = new BlockPos(+1, -1, +9);
+    private static final BlockPos LEFT_PROPELLER_DELTA       = new BlockPos(-1, -1, +10);
+    private static final BlockPos RIGHT_PROPELLER_DELTA      = new BlockPos(+3, -1, +10);
+    private static final BlockPos FORWARD_PROPELLER_DELTA    = new BlockPos(+1, -2, +12);
+
+    @Override
+    public com.mcpirates.airship.kind.ShipControls makeControls(
+            com.mcpirates.airship.Airship airship,
+            net.minecraft.core.BlockPos slPrimaryAnchor,
+            net.minecraft.world.level.block.Rotation rotation) {
+        return new com.mcpirates.airship.kind.RamControls(
+                airship.subLevel.getLevel(),
+                airship.slLeftClutchLever,
+                airship.slRightClutchLever,
+                slPrimaryAnchor.offset(FORWARD_CLUTCH_LEVER_DELTA.rotate(rotation)),
+                slPrimaryAnchor.offset(LEFT_PROPELLER_DELTA.rotate(rotation)),
+                slPrimaryAnchor.offset(RIGHT_PROPELLER_DELTA.rotate(rotation)),
+                slPrimaryAnchor.offset(FORWARD_PROPELLER_DELTA.rotate(rotation)));
+    }
 
     // Hull spans NBT (0..8, 0..9, 0..21). Lever-relative (spawnHoneyGlue offsets from
     // lever, not anchor — see AirshipSmallKind comment for the BFS reasoning):

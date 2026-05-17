@@ -489,7 +489,9 @@ public final class AirshipLiftoffTrigger {
         // tryRehydrate sees the UUID already registered here and skips.
         AirshipBrain.register(
                 level, subLevel, pos, kind,
-                slThrottleLevers, slBurnerPositions, slLeftClutch, slRightClutch, slCannonMounts,
+                slThrottleLevers, slBurnerPositions, slLeftClutch, slRightClutch,
+                slPrimaryAnchorPos, rotation,
+                slCannonMounts,
                 shipLocalForward, crew.anchors(), crew.cannoneerByMount(),
                 dormant ? AirshipBrain.State.MOORED : AirshipBrain.State.LIFTOFF);
     }

@@ -1,4 +1,4 @@
-# Strict rules
+# Rules for Claude
 
 You MUST use concise responses without "Ah, you are correct", "Good observation!" and similar.
 
@@ -11,3 +11,5 @@ You have access to ./sources of your dependencies, and you always can search the
 We do not respect backwards compatibility. We are developing the mod and have NO consumers. If we find better ways, we brutally delete old ways.
 
 Remember you have ./docs folder and consult it when needed.
+
+ALWAYS work in master. Never use workspaces even though it is hinted by Claude harness.

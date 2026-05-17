@@ -34,8 +34,7 @@ public interface MovementBehavior {
     default void onEnterPursue(Airship ship, Vector3d shipPos,
                                LivingEntity targetPlayer, SubLevel targetShip) {}
 
-    /** State-exit hook on transitions OUT of PURSUE. Counterpart to onEnterPursue —
-     *  ram movement uses it to disengage its forward clutch. */
+    /** State-exit hook on transitions OUT of PURSUE. Default no-op. */
     default void onExitPursue(Airship ship) {}
 
     /** Post-decision hook: brain's measured heading error after steering toward the goal. */

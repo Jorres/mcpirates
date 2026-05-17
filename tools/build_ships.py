@@ -10,10 +10,7 @@ set. The only programmatic touches are:
     * Ships: trim trailing all-air rows, add an `air_above` buffer over the hull, and
              stamp the ship_anchor block at `anchor_src_pos`. The keel jigsaw is copied
              verbatim from the source.
-    * Pads:  shift source content up by `pad_lift` rows (the lower rows become absent,
-             so worldgen preserves the existing terrain block underneath the deck). No
-             jigsaw is moved; if the source has the up-jigsaw at y=0, the lifted output
-             has it at y=lift.
+    * Pads:  pass verbatim
     * base_plate_with_airship*.nbt: vanilla pillager_outpost/base_plate is cloned and
              its east_up plate_entry jigsaw is re-targeted at our pool. This is the one
              place we mutate a jigsaw's NBT, because the source piece is vanilla and we
@@ -72,10 +69,6 @@ ANCHOR_BLOCK = "mcpirates:ship_anchor"
 #   outpost_attached  Routes the pad output. True → the airship_pads pool (chained from
 #                     pillager outpost base_plate). False → standalone, placed via /place
 #                     or /mcpirates galleon spawn at a Y the caller chooses.
-#   pad_lift          Number of cells to shift pad content UP in the output NBT. The
-#                     bottom `pad_lift` rows of the output are absent (no blocks), so
-#                     placement preserves the existing terrain block. Used so the deck
-#                     sits ON the grass instead of buried in it.
 # ─────────────────────────────────────────────────────────────────────────────
 # Appendage configuration
 # ─────────────────────────────────────────────────────────────────────────────
@@ -91,7 +84,7 @@ ANCHOR_BLOCK = "mcpirates:ship_anchor"
 APPENDAGES: list[str] = [
     "airship_small_ammo_box",
     "crossbow_board_ammo_box",
-    "galleon_tent",
+    # "galleon_tent",
 ]
 
 
@@ -100,31 +93,25 @@ SHIPS: dict[str, dict] = {
         "anchor_src_pos": (3, 3, 5),
         "air_above": 16,
         "outpost_attached": True,
-        # pad_lift=1: pad bottom row is absent in output → terrain preserved → deck sits
-        # one cell above the grass block. pad_lift=0 buries the deck in the grass cell.
-        "pad_lift": 1,
     },
     "crossbow_board": {
         "anchor_src_pos": (2, 3, 8),
         "air_above": 16,
         "outpost_attached": True,
-        "pad_lift": 1,
     },
-    "galleon": {
-        "anchor_src_pos": (3, 9, 13),
-        "air_above": 16,
-        "outpost_attached": False,
-        # Standalone-spawned via /mcpirates galleon spawn — caller picks world Y, so no
-        # depth bias from base_plate.
-        "pad_lift": 0,
-    },
+    # "galleon": {
+    #     "anchor_src_pos": (3, 9, 13),
+    #     "air_above": 16,
+    #     "outpost_attached": False,
+    #     # Standalone-spawned via /mcpirates galleon spawn — caller picks world Y, so no
+    #     # depth bias from base_plate.
+    # },
     "ramship": {
         # Air cell NBT-north of the left analog throttle at (3,3,9); matches
         # RamshipKind.anchorToLeverDelta() = (0,0,+1). Mirrors crossbow_board convention.
         "anchor_src_pos": (3, 3, 8),
         "air_above": 16,
         "outpost_attached": True,
-        "pad_lift": 1,
     },
 }
 
@@ -251,21 +238,7 @@ def build_ship(name: str, cfg: dict) -> None:
           f"{f', stripped {stripped} entities' if stripped else ''})")
 
 
-def build_pad(name: str, cfg: dict) -> None:
-    """Pad NBT: source copied verbatim with content shifted up by `pad_lift` rows. Every
-    block (jigsaws included) keeps its source NBT and lands at world-space y = source_y
-    + pad_lift. The bottom `pad_lift` rows of the output are absent from the blocks list
-    so MC's structure placement preserves the underlying terrain block (dirt/grass) —
-    that's what gets the deck sitting ON the grass instead of buried.
-
-    Note that `pad_lift > 0` shifts EVERY jigsaw up by `pad_lift` rows in the output,
-    including any chain-anchor jigsaw on the west face. For outpost-attached pads the
-    base_plate_with_airship piece chains its east jigsaw to the pad at the world Y of
-    the pad's bottom row (= pad output y=0 = preserved-terrain row), which means with
-    pad_lift > 0 the chain anchor on the pad must NOT be at source y=0 — the source
-    must place it at source y=pad_lift so it lands at output y=2*pad_lift... actually
-    no — the matching happens at the FIRST jigsaw of the correct name MC finds in the
-    placed piece. Source jigsaw positions are entirely up to the author."""
+def build_pad(name: str, cfg) -> None:
     src_path = SOURCES_DIR / f"{name}_pad.nbt"
     if not src_path.exists():
         raise SystemExit(f"{name}_pad: source NBT missing at {src_path}")
@@ -273,16 +246,13 @@ def build_pad(name: str, cfg: dict) -> None:
     sx, sy, sz = (int(v) for v in src["size"])
     palette = list(src["palette"])
 
-    lift = cfg.get("pad_lift", 0)
-    sy_out = sy + lift
-
     out_blocks: list[Compound] = []
     for b in src["blocks"]:
         sx_, sy_, sz_ = int(b["pos"][0]), int(b["pos"][1]), int(b["pos"][2])
-        out_blocks.append(make_block(int(b["state"]), sx_, sy_ + lift, sz_, b.get("nbt")))
+        out_blocks.append(make_block(int(b["state"]), sx_, sy_, sz_, b.get("nbt")))
 
     write_nbt(File(Compound({
-        "size": List[Int]([Int(sx), Int(sy_out), Int(sz)]),
+        "size": List[Int]([Int(sx), Int(sy), Int(sz)]),
         "palette": List[Compound](palette),
         "blocks": List[Compound](out_blocks),
         "entities": src.get("entities", List[Compound]()),
@@ -290,8 +260,7 @@ def build_pad(name: str, cfg: dict) -> None:
     })), OUT_DIR / f"{name}_pad.nbt")
 
     style = "outpost-attached" if cfg["outpost_attached"] else "standalone"
-    lift_info = f", lifted +{lift}" if lift else ""
-    print(f"  [{name}_pad] wrote {style} pad {sx}x{sy_out}x{sz}{lift_info}")
+    print(f"  [{name}_pad] wrote {style} pad {sx}x{sy}x{sz}")
 
 
 def build_appendage(name: str) -> None:

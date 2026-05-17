@@ -603,7 +603,7 @@ public final class AirshipGameTests {
                         return;
                     }
                     zombie.moveTo(zPos.getX() + 0.5, zPos.getY(), zPos.getZ() + 0.5);
-                    AirshipBrain.targetOverride = a -> zombie.isAlive() ? zombie : null;
+                    AirshipBrain.targetOverride = zombie;
                     ship.state = State.RETURN;
                     ship.stateEnteredTick = helper.getLevel().getGameTime();
                 })

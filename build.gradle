@@ -120,6 +120,14 @@ neoForge {
 }
 
 dependencies {
+    // NeoForge testframework — needed (in `main` scope, not `test`) for
+    // ExtendedGameTestHelper.makeTickingMockServerPlayerInLevel, the version of
+    // mock-player creation that calls NetworkRegistry.configureMockConnection.
+    // Vanilla GameTestHelper.makeMockServerPlayerInLevel skips that step, so
+    // mods like Simulated throw "may not be sent to the client" when sending
+    // their datapack-sync payloads to a mock player on join.
+    implementation "net.neoforged:testframework:${neoforge_version}"
+
     // Create + ecosystem (matched to Aeronautics 1.2.1)
     implementation("com.simibubi.create:create-${minecraft_version}:${create_version}") {
         transitive = false

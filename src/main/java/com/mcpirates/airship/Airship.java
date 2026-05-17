@@ -64,7 +64,13 @@ public final class Airship {
      *  toward (x, z) and idles within arrival radius. Y is unused — altitude tracks
      *  cruiseRise like RETURN. Null in every other state. */
     public Vector3d navDestination;
-    public long lastDecisionTick = Long.MIN_VALUE / 2;
+    /** Last tick steering ({@link com.mcpirates.airship.kind.ShipControls}) ran.
+     *  Decoupled from lift so the brain can re-decide steering on a fast cadence
+     *  (a few ticks) while lift stays on the slow plateau-pick rhythm — hot-air
+     *  balloons can't respond to high-frequency thrust changes anyway, and
+     *  steering needs to catch fast yaw rotation before the ship overshoots. */
+    public long lastSteeringTick = Long.MIN_VALUE / 2;
+    public long lastLiftTick = Long.MIN_VALUE / 2;
     public long lastFireTick = Long.MIN_VALUE / 2;
     public long lastTargetSeenTick = Long.MIN_VALUE / 2;
 
@@ -78,10 +84,32 @@ public final class Airship {
     public PlateauTable plateauTable;
     public int plateauTableCapacity = -1;
 
+    /** Steering actuator for this assembly. Owns all kind-specific hardware
+     *  positions (extra clutches, propellers) privately — the brain only ever
+     *  calls {@link com.mcpirates.airship.kind.ShipControls#applySteering} or
+     *  {@link com.mcpirates.airship.kind.ShipControls#release}. Populated by
+     *  {@link AirshipBrain#register} via the kind's
+     *  {@code makeControls} factory. */
+    public com.mcpirates.airship.kind.ShipControls controls;
+
     /** Last-tick orbit-math outputs, cached so the overlay doesn't recompute them. */
     public double lastGoalX = Double.NaN;
     public double lastGoalZ = Double.NaN;
     public double lastHeadingErrDeg = 0;
+
+    /** Equilibrium altitude of the plateau row {@link AirshipBrain#chooseLiftSetting}
+     *  picked on the most recent decision tick. Written by the brain, read by
+     *  {@link com.mcpirates.airship.ShipLog#snapshot} so the log shows what the brain
+     *  actually committed to (including the {@code maxGroundAhead}-derived floor clamp)
+     *  rather than a parallel recomputation that can diverge. {@code NaN} until the
+     *  first decision with a built plateau table. */
+    public double lastPickedEquilibriumY = Double.NaN;
+    /** Velocity-damped target altitude the brain handed to
+     *  {@link com.mcpirates.airship.kind.PlateauTable#pickClosest} on the most recent
+     *  decision tick. Distinct from the raw {@code targetY} (state-derived) — this is
+     *  {@code targetY − K·v.y} when an overshoot is projected, else just {@code targetY},
+     *  then clamped to the {@code maxGroundAhead} floor. {@code NaN} until set. */
+    public double lastBiasedTargetY = Double.NaN;
 
     public double lastSampledY = Double.NaN;
     public int steadyTicks = 0;
@@ -166,8 +194,13 @@ public final class Airship {
         this.cannoneerByMount = cannoneerByMount;
     }
 
-    /** Yaw of the ship's world-frame forward axis, in radians. Convention matches
-     *  {@code atan2(-fwd.x, fwd.z)} — i.e. zero = +Z, positive = CCW from above. */
+    /** Yaw of the ship's world-frame forward axis, in radians, in {@code [-π, π)}.
+     *  Convention: {@code atan2(-fwd.x, fwd.z)} — zero = facing +Z (south),
+     *  positive = <strong>CW</strong> from above (south→west→north→east is
+     *  the direction of increasing yaw). Note this is the <em>opposite</em> of
+     *  the right-hand-rule convention Sable's rigid-body angular velocity uses;
+     *  {@link com.mcpirates.airship.ShipLog#angularVelocity} negates {@code .y}
+     *  to bring it into this same convention. */
     public double yawRadians() {
         Quaterniond orient = subLevel.logicalPose().orientation();
         Vector3d worldFwd = orient.transform(new Vector3d(shipLocalForward), new Vector3d());

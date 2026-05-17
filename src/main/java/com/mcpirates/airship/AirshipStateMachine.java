@@ -38,8 +38,8 @@ public final class AirshipStateMachine {
      *  ramp-up) looks identical to post-ascent steady-state under the per-tick steady-Y
      *  check, so the steady-tick count reaches the threshold while the ship is still
      *  parked at the anchor. Without this guard LIFTOFF exits, propellers engage, ship
-     *  crashes into nearby terrain/trees. 25 chosen to match the MIN_ALT_ABOVE_GROUND
-     *  floor used elsewhere in the brain. */
+     *  crashes into nearby terrain/trees. 25 chosen to match the default
+     *  {@code minAltAboveGround()} (30) less a small buffer. */
     public static final double LIFTOFF_MIN_RISE = 25.0;
     /** Ticks of "no target seen" before dropping out of PURSUE back to RETURN. */
     static final int LOST_TARGET_DEBOUNCE = 60;

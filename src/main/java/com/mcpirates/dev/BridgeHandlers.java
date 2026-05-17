@@ -96,8 +96,11 @@ public final class BridgeHandlers {
             if (live instanceof ServerSubLevel ssl) {
                 RigidBodyHandle handle = RigidBodyHandle.of(ssl);
                 if (handle != null) {
-                    o.add("linearVelocity", writeVec(handle.getLinearVelocity(new Vector3d())));
-                    o.add("angularVelocity", writeVec(handle.getAngularVelocity(new Vector3d())));
+                    // Sable returns SI units (m/s, rad/s) — labeled explicitly here
+                    // so consumers don't assume per-tick. See
+                    // memory/feedback_sable_velocity_units.md.
+                    o.add("linearVelocity_mPerSec", writeVec(handle.getLinearVelocity(new Vector3d())));
+                    o.add("angularVelocity_radPerSec", writeVec(handle.getAngularVelocity(new Vector3d())));
                 }
                 if (ssl.getMassTracker() != null && !ssl.getMassTracker().isInvalid()) {
                     o.addProperty("mass", ssl.getMassTracker().getMass());
@@ -129,8 +132,11 @@ public final class BridgeHandlers {
             if (sl instanceof ServerSubLevel ssl) {
                 RigidBodyHandle handle = RigidBodyHandle.of(ssl);
                 if (handle != null) {
-                    o.add("linearVelocity", writeVec(handle.getLinearVelocity(new Vector3d())));
-                    o.add("angularVelocity", writeVec(handle.getAngularVelocity(new Vector3d())));
+                    // Sable returns SI units (m/s, rad/s) — labeled explicitly here
+                    // so consumers don't assume per-tick. See
+                    // memory/feedback_sable_velocity_units.md.
+                    o.add("linearVelocity_mPerSec", writeVec(handle.getLinearVelocity(new Vector3d())));
+                    o.add("angularVelocity_radPerSec", writeVec(handle.getAngularVelocity(new Vector3d())));
                 }
                 if (ssl.getMassTracker() != null && !ssl.getMassTracker().isInvalid()) {
                     o.addProperty("mass", ssl.getMassTracker().getMass());
