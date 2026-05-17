@@ -32,3 +32,4 @@ sources/
 *.pyc
 .venv
 .claude
+.mcp.json
