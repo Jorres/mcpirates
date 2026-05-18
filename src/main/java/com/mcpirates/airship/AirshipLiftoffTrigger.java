@@ -445,14 +445,15 @@ public final class AirshipLiftoffTrigger {
                 ? CaptainSpawner.CrewSpawnResult.empty()
                 : CaptainSpawner.spawn(subLevel, pos, offset, rotation, kind, slCannonMounts);
 
+        Airship airship = new Airship(level, subLevel, pos, kind,
+                slThrottleLevers, slBurnerPositions,
+                slLeftClutch, slRightClutch,
+                slCannonMounts, shipLocalForward,
+                crew.anchors(), crew.cannoneerByMount());
+
         // Rehydrator's SubLevelObserver saw this allocate too; tryRehydrate skips
         // because the UUID is already registered.
-        AirshipBrain.register(
-                level, subLevel, pos, kind,
-                slThrottleLevers, slBurnerPositions, slLeftClutch, slRightClutch,
-                slPrimaryAnchorPos, rotation,
-                slCannonMounts,
-                shipLocalForward, crew.anchors(), crew.cannoneerByMount(),
+        AirshipBrain.register(airship, slPrimaryAnchorPos, rotation,
                 dormant ? AirshipBrain.State.MOORED : AirshipBrain.State.LIFTOFF);
     }
 

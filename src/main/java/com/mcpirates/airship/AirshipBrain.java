@@ -96,38 +96,27 @@ public final class AirshipBrain {
      *  {@code NAVIGATE}: externally-driven XZ target; auto state machine never enters it. */
     public enum State { LIFTOFF, PURSUE, RETURN, HOVER, MOORED, NAVIGATE }
 
-    public static void register(
-            ServerLevel parentLevel,
-            SubLevel subLevel,
-            BlockPos airpadAnchor,
-            AirshipKind kind,
-            List<BlockPos> slThrottleLevers,
-            List<BlockPos> slBurnerPositions,
-            BlockPos slLeftClutchLever,
-            BlockPos slRightClutchLever,
-            BlockPos slPrimaryAnchor,
-            net.minecraft.world.level.block.Rotation rotation,
-            List<BlockPos> slCannonMounts,
-            Vector3d shipLocalForward,
-            List<AnchoredEntity> anchoredEntities,
-            java.util.Map<BlockPos, java.util.UUID> cannoneerByMount,
-            State initialState) {
-        Airship a = new Airship(parentLevel, subLevel, airpadAnchor, kind,
-                slThrottleLevers, slBurnerPositions,
-                slLeftClutchLever, slRightClutchLever,
-                slCannonMounts, shipLocalForward, anchoredEntities, cannoneerByMount);
+    /** Register a pre-built {@link Airship} with the brain. Caller (trigger / rehydrator)
+     *  constructs the Airship + resolves all hardware positions; brain just stamps state,
+     *  builds controls, and starts ticking. The {@code slPrimaryAnchor} + {@code rotation}
+     *  pair is still needed for {@link AirshipKind#makeControls} — that lift goes away in
+     *  Step 2. */
+    public static void register(Airship a,
+                                BlockPos slPrimaryAnchor,
+                                net.minecraft.world.level.block.Rotation rotation,
+                                State initialState) {
         a.state = initialState;
         // Without this, default 0 makes (now - stateEnteredTick) huge and LIFTOFF_MIN_TICKS no-ops.
-        a.stateEnteredTick = parentLevel.getGameTime();
-        a.controls = kind.makeControls(a, slPrimaryAnchor, rotation);
+        a.stateEnteredTick = a.parentLevel.getGameTime();
+        a.controls = a.kind.makeControls(a, slPrimaryAnchor, rotation);
         SHIPS.add(a);
         MCPirates.LOGGER.info(
                 "registered pirate airship: kind={} subLevel={} state={} anchor={} mounts={} throttles={} burners={} clutches=({},{}) fwd=({},{},{}) anchoredEntities={} cannoneers={}",
-                kind.name(), subLevel.getUniqueId(), initialState, airpadAnchor,
-                slCannonMounts, slThrottleLevers, slBurnerPositions,
-                slLeftClutchLever, slRightClutchLever,
-                shipLocalForward.x, shipLocalForward.y, shipLocalForward.z,
-                anchoredEntities.size(), cannoneerByMount.size());
+                a.kind.name(), a.subLevel.getUniqueId(), initialState, a.airpadAnchor,
+                a.slCannonMounts, a.slThrottleLevers, a.slBurnerPositions,
+                a.slLeftClutchLever, a.slRightClutchLever,
+                a.shipLocalForward.x, a.shipLocalForward.y, a.shipLocalForward.z,
+                a.anchoredEntities.size(), a.cannoneerByMount.size());
     }
 
     @SubscribeEvent
