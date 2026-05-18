@@ -106,9 +106,18 @@ neoForge {
         // every @GameTest in src/main/java with namespace=mcpirates, prints a pass/fail
         // summary and exits non-zero on failure. See AirshipGameTests for the entry
         // points. Suitable for CI; takes ~30 s warm cache.
+        //
+        // Pass `-Ponly=<substring>` to run only matching tests (case-insensitive
+        // substring on the method name). Implemented by GameTestRegistryMixin which
+        // reads -Dmcpirates.gametest.only at discovery time. Example:
+        //   ./gradlew runGameTestServer -Ponly=crossbowBoardOrbitsCcw
+        //   ./gradlew runGameTestServer -Ponly=orbit          (all orbit tests)
         gameTestServer {
             type = 'gameTestServer'
             gameDirectory = project.file('runs/gametest')
+            if (project.hasProperty('only')) {
+                jvmArgument "-Dmcpirates.gametest.only=${project.property('only')}"
+            }
         }
     }
 

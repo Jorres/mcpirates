@@ -4,8 +4,11 @@
   "compatibilityLevel": "JAVA_21",
   "minVersion": "0.8",
   "mixins": [
+    "GameTestRegistryMixin",
     "GameTestServerMixin",
-    "StructureGridSpawnerMixin"
+    "ReportGameListenerMixin",
+    "StructureGridSpawnerMixin",
+    "StructureUtilsMixin"
   ],
   "client": [],
   "server": []

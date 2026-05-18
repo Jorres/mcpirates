@@ -1,5 +1,6 @@
 package com.mcpirates.airship;
 
+import com.mcpirates.MCPDataKeys;
 import com.mcpirates.MCPirates;
 import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.airship.physics.AngleMath;
@@ -624,9 +625,12 @@ public final class AirshipBrain {
             return override.isAlive() ? override : null;
         }
         // Distance-only — on-SubLevel predicate is enforced upstream by the trigger.
+        // Players carrying TEST_OBSERVER_TAG are skipped so debugging on a live test
+        // server doesn't get the human player targeted as the closest enemy.
         ServerPlayer best = null;
         double bestSq = AirshipStateMachine.DISENGAGE_RANGE_SQ;
         for (ServerPlayer player : a.parentLevel.players()) {
+            if (player.getTags().contains(MCPDataKeys.TEST_OBSERVER_TAG)) continue;
             double d2 = horizDistSq(shipPos, player.getX(), player.getZ());
             if (d2 < bestSq) {
                 bestSq = d2;

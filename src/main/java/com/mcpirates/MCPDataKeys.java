@@ -40,5 +40,11 @@ public final class MCPDataKeys {
      *  work-cycle restocks. */
     public static final String SHERIFF_SCROLLS_SOLD_NBT_KEY = "mcpirates.bounty_scrolls_sold";
 
+    /** Scoreboard tag on a player who wants pirate AI to ignore them — for
+     *  visiting a running gametest server without becoming the target. Brain
+     *  skips any player carrying this tag in {@code findEnemyPlayerOnAirship}.
+     *  Apply via {@code /tag @s add mcpirates.test_observer}. */
+    public static final String TEST_OBSERVER_TAG = "mcpirates.test_observer";
+
     private MCPDataKeys() {}
 }

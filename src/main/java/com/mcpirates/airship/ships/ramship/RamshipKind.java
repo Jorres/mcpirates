@@ -45,8 +45,8 @@ public final class RamshipKind implements AirshipKind {
     // NBT-frame deltas from the left analog lever — private impl detail. Lever sits one
     // block NBT-south of the anchor. Ramship has one engine (driving all three props), two
     // throttles (left + right), three vanilla clutch levers (port/starboard/forward), three
-    // propellers. FORWARD_PROPELLER is diagnostic only — RamControls doesn't reverse it; the
-    // forward clutch lever gates its drive.
+    // propellers. RamControls flips FORWARD_PROPELLER's REVERSED during the retreat phase
+    // (push backward); the forward clutch always gates its drive.
     private static final BlockPos ANCHOR_TO_LEVER     = new BlockPos(0, 0, +1);
     private static final List<BlockPos> ENGINES      = List.of(new BlockPos(0, -1, +4));
     private static final List<BlockPos> THROTTLES    = List.of(BlockPos.ZERO, new BlockPos(+2, 0, 0));
@@ -63,6 +63,7 @@ public final class RamshipKind implements AirshipKind {
      *  three. Hardcoded so rehydrate after a PURSUE-time mutation still has the truth. */
     private static final boolean NBT_REVERSED_L = true;
     private static final boolean NBT_REVERSED_R = true;
+    private static final boolean NBT_REVERSED_F = true;
 
     @Override
     public com.mcpirates.airship.interfaces.ShipControls makeControls(
@@ -79,7 +80,8 @@ public final class RamshipKind implements AirshipKind {
                 slPrimaryAnchor.offset(RIGHT_PROPELLER.rotate(rotation)),
                 slPrimaryAnchor.offset(FORWARD_PROPELLER.rotate(rotation)),
                 NBT_REVERSED_L,
-                NBT_REVERSED_R);
+                NBT_REVERSED_R,
+                NBT_REVERSED_F);
     }
 
     @Override

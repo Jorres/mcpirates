@@ -5,6 +5,7 @@ import com.mcpirates.MCPirates;
 import com.mcpirates.airship.Airship;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
+import com.mcpirates.airship.ShipTelemetry;
 import com.mcpirates.airship.ships.ramship.RamshipKind;
 import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
 import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;
@@ -34,8 +35,11 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Ramship intercept: victim airship_small crosses orthogonal to the ramship's nose,
- * brain targets the victim's captain, pass = SubLevel AABBs overlap. Forces a real
- * lead/intercept rather than a tail chase.
+ * brain targets the victim's captain. Pass = two successive collisions (ramship hits,
+ * retreats, the brain re-engages with the now-perpendicular-moving victim, ramship
+ * hits again). Each collision is detected as a sudden drop in ramship forward speed
+ * — the same downstream signal {@link com.mcpirates.airship.ships.ramship.RamControls}
+ * uses to arm retreat, so the test validates the full end-to-end loop.
  */
 @GameTestHolder(MCPirates.MOD_ID)
 @PrefixGameTestTemplate(false)
@@ -44,7 +48,15 @@ public final class RamshipTests {
     private static final int PERP_DISTANCE = 45;
     private static final int VICTIM_WEST_OFFSET = 25;
     private static final int VICTIM_EAST_DESTINATION = 200;
-    private static final int TIMEOUT_TICKS = 2600;
+    /** South offset for the post-collision perpendicular leg. 80 keeps us within the
+     *  setup-time force-load region while pulling the victim well off its old line. */
+    private static final int VICTIM_PERPENDICULAR_OFFSET = 80;
+    /** Collision detector: previous-tick forward speed gate. Below this the ramship
+     *  wasn't really charging, so a drop doesn't mean it hit anything. */
+    private static final double CHARGING_MIN_FWD_SPEED = 0.15;
+    /** Per-tick drop in forward speed that counts as an impact impulse. */
+    private static final double COLLISION_DROP_THRESHOLD = 0.15;
+    private static final int TIMEOUT_TICKS = 4500;
 
     private RamshipTests() {}
 
@@ -53,7 +65,13 @@ public final class RamshipTests {
     public static void ramshipInterceptsMovingTarget(GameTestHelper helper) {
         AtomicReference<Airship> ramshipRef = new AtomicReference<>();
         AtomicReference<Airship> victimRef = new AtomicReference<>();
-        AtomicReference<Double> closestApproach = new AtomicReference<>(Double.POSITIVE_INFINITY);
+        // Rising-edge collision counter shared across both wait phases. lastFwdSpeed
+        // tracks the previous tick's signed forward speed; when it was > CHARGING_MIN
+        // and dropped by > THRESHOLD in one tick, that's an impact. The same gate
+        // (last > CHARGING_MIN) re-arms naturally once the ship recovers to charging.
+        int[] collisionCount = {0};
+        double[] lastFwdSpeed = {Double.NaN};
+        long[] firstImpactTick = {-1};
         ServerLevel level = helper.getLevel();
 
         helper.startSequence()
@@ -194,47 +212,95 @@ public final class RamshipTests {
                             destX, vPos.z, captain.getUUID(),
                             captain.getX(), captain.getY(), captain.getZ());
                 })
-                // First AABB overlap = impact = pass.
-                .thenWaitUntil(() -> {
-                    Airship ramship = ramshipRef.get();
+                // First collision: ramship forward speed drops sharply (collision impulse).
+                .thenWaitUntil(() ->
+                        pollCollision(helper, level, ramshipRef, victimRef,
+                                lastFwdSpeed, collisionCount, 1))
+                .thenExecute(() -> {
+                    firstImpactTick[0] = level.getGameTime();
                     Airship victim = victimRef.get();
-                    helper.assertTrue(ramship != null && victim != null,
-                            "ship references lost mid-pursuit");
+                    Vector3d vPos = victim.subLevel.logicalPose().position();
+                    double newDestX = vPos.x;
+                    double newDestZ = vPos.z + VICTIM_PERPENDICULAR_OFFSET;
 
-                    BoundingBox3dc rBox = ramship.subLevel.boundingBox();
-                    BoundingBox3dc vBox = victim.subLevel.boundingBox();
-                    Vector3d rC = rBox.center();
-                    Vector3d vC = vBox.center();
-                    double dx = rC.x - vC.x;
-                    double dz = rC.z - vC.z;
-                    double horizDist = Math.sqrt(dx * dx + dz * dz);
-                    closestApproach.updateAndGet(prev -> Math.min(prev, horizDist));
-
-                    boolean overlap = rBox.intersects(vBox);
-
-                    long gt = level.getGameTime();
-                    if (gt % 40 == 0 || overlap) {
-                        // Don't call Sable's RigidBodyHandle velocity getters from this
-                        // poll — native Rapier panics if body lookup misses mid-assembly.
-                        // See [[feedback_rapier_two_sublevel_window]].
-                        String rState = ramship.state.name();
-                        String rCtrl = ramship.controls == null ? "—" : ramship.controls.diagnostics(ramship);
-                        double yawDeg = Math.toDegrees(ramship.yawRadians());
-                        MCPirates.LOGGER.info(String.format(
-                                "[ramship-test] t=%d state=%s ramship c=(%.1f,%.1f,%.1f) yaw=%.1f° victim c=(%.1f,%.1f,%.1f) horizDist=%.2f overlap=%s closest=%.2f | %s",
-                                gt, rState, rC.x, rC.y, rC.z, yawDeg,
-                                vC.x, vC.y, vC.z,
-                                horizDist, overlap, closestApproach.get(), rCtrl));
+                    // Force-load the southward leg so the victim's SubLevel keeps ticking
+                    // outside the setup-time loaded band.
+                    ChunkPos newDestChunk = new ChunkPos(
+                            new BlockPos((int) newDestX, 0, (int) newDestZ));
+                    for (int dx = -5; dx <= 5; dx++) {
+                        for (int dz = -5; dz <= 5; dz++) {
+                            level.setChunkForced(newDestChunk.x + dx, newDestChunk.z + dz, true);
+                        }
                     }
-                    helper.assertTrue(overlap,
-                            "waiting for ramship/victim AABB overlap (impact); closestApproach="
-                                    + closestApproach.get());
+
+                    AirshipBrain.navigateTo(victim, newDestX, newDestZ);
+                    MCPirates.LOGGER.info(
+                            "[ramship-test] first impact at t={}; victim re-routed perpendicular to ({}, {})",
+                            firstImpactTick[0],
+                            String.format("%.1f", newDestX),
+                            String.format("%.1f", newDestZ));
                 })
+                // Second collision after retreat + re-engage along the perpendicular leg.
+                .thenWaitUntil(() ->
+                        pollCollision(helper, level, ramshipRef, victimRef,
+                                lastFwdSpeed, collisionCount, 2))
                 .thenExecute(() -> MCPirates.LOGGER.info(
-                        "[ramship-test] IMPACT observed at t={} (closestApproach={})",
-                        level.getGameTime(), closestApproach.get()))
+                        "[ramship-test] SECOND IMPACT at t={} (gap since first={} ticks)",
+                        level.getGameTime(), level.getGameTime() - firstImpactTick[0]))
                 .thenExecute(() -> TestSetup.reset(helper))
                 .thenSucceed();
+    }
+
+    /** Sample ramship forward speed; rising-edge count when it drops past the threshold.
+     *  Fails the wait until {@code targetCount} collisions have been seen. Shared by both
+     *  wait phases — phase 1 waits for count≥1, phase 2 for count≥2. */
+    private static void pollCollision(GameTestHelper helper, ServerLevel level,
+                                      AtomicReference<Airship> ramshipRef,
+                                      AtomicReference<Airship> victimRef,
+                                      double[] lastFwdSpeed, int[] collisionCount,
+                                      int targetCount) {
+        Airship ramship = ramshipRef.get();
+        Airship victim = victimRef.get();
+        helper.assertTrue(ramship != null && victim != null,
+                "ship references lost mid-pursuit");
+
+        double fwd = forwardSpeed(ramship);
+        if (!Double.isNaN(lastFwdSpeed[0])
+                && lastFwdSpeed[0] > CHARGING_MIN_FWD_SPEED
+                && (lastFwdSpeed[0] - fwd) > COLLISION_DROP_THRESHOLD) {
+            collisionCount[0]++;
+            MCPirates.LOGGER.info(
+                    "[ramship-test] collision #{} at t={}: fwdSpeed {} → {} (drop={})",
+                    collisionCount[0], level.getGameTime(),
+                    String.format("%.3f", lastFwdSpeed[0]),
+                    String.format("%.3f", fwd),
+                    String.format("%.3f", lastFwdSpeed[0] - fwd));
+        }
+        lastFwdSpeed[0] = fwd;
+
+        long gt = level.getGameTime();
+        if (gt % 40 == 0) {
+            Vector3d rPos = ramship.subLevel.logicalPose().position();
+            Vector3d vPos = victim.subLevel.logicalPose().position();
+            String rCtrl = ramship.controls == null ? "—" : ramship.controls.diagnostics(ramship);
+            MCPirates.LOGGER.info(String.format(
+                    "[ramship-test] t=%d state=%s ramship c=(%.1f,%.1f,%.1f) victim c=(%.1f,%.1f,%.1f) fwd=%.3f collisions=%d | %s",
+                    gt, ramship.state.name(),
+                    rPos.x, rPos.y, rPos.z, vPos.x, vPos.y, vPos.z,
+                    fwd, collisionCount[0], rCtrl));
+        }
+        helper.assertTrue(collisionCount[0] >= targetCount,
+                "waiting for collision #" + targetCount + "; have " + collisionCount[0]);
+    }
+
+    /** Signed velocity projection onto the ship's world-forward axis (blocks/tick).
+     *  Positive = charging; negative = retreating. Mirrors the same projection
+     *  {@link com.mcpirates.airship.ships.ramship.RamControls} uses internally. */
+    private static double forwardSpeed(Airship a) {
+        Vector3d vel = ShipTelemetry.velocity(a);
+        Vector3d worldFwd = a.subLevel.logicalPose().orientation()
+                .transform(new Vector3d(a.shipLocalForward), new Vector3d());
+        return vel.x * worldFwd.x + vel.z * worldFwd.z;
     }
 
     private static LivingEntity findCaptain(ServerLevel level, Airship victim) {
