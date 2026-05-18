@@ -3,6 +3,7 @@ package com.mcpirates.pirates;
 import com.mcpirates.MCPDataKeys;
 import com.mcpirates.MCPirates;
 import com.mcpirates.airship.interfaces.AirshipKind;
+import com.mcpirates.airship.interfaces.Layout;
 import com.mcpirates.pirates.roles.CannoneerRole;
 import com.mcpirates.pirates.roles.CrossbowmanRole;
 import com.mcpirates.pirates.roles.PirateRole;
@@ -225,12 +226,13 @@ public final class CaptainSpawner {
         return added ? new AnchoredEntity(pillager.getUUID(), plotPos, role) : null;
     }
 
-    /** Rotate glue corners into SubLevel space, sort, scan for colour-partitioned seats. */
+    /** Resolve glue corners in SubLevel space, sort, scan for colour-partitioned seats. */
     private static Seats.SeatScan scanSeatsInGlueBox(SubLevel subLevel, BlockPos leverWorldPos,
                                                      BlockPos assemblyOffset, Rotation rotation,
                                                      AirshipKind kind) {
-        BlockPos a = leverWorldPos.offset(kind.glueMin().rotate(rotation)).offset(assemblyOffset);
-        BlockPos b = leverWorldPos.offset(kind.glueMax().rotate(rotation)).offset(assemblyOffset);
+        Layout sl = kind.layoutAt(rotation, leverWorldPos.offset(assemblyOffset));
+        BlockPos a = sl.glueMin();
+        BlockPos b = sl.glueMax();
         BlockPos slMin = new BlockPos(
                 Math.min(a.getX(), b.getX()),
                 Math.min(a.getY(), b.getY()),

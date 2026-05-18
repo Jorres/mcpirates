@@ -4,6 +4,7 @@ import com.mcpirates.MCPDataKeys;
 import com.mcpirates.MCPirates;
 import com.mcpirates.airship.anchor.MCPShipAnchorBlockEntity;
 import com.mcpirates.airship.interfaces.AirshipKind;
+import com.mcpirates.airship.interfaces.Layout;
 import com.mcpirates.airship.ships.AirshipKinds;
 import com.mcpirates.airship.hardware.ThrottleLevers;
 import com.mcpirates.pirates.CaptainSpawner;
@@ -124,9 +125,9 @@ public final class AirshipLiftoffTrigger {
                         anchorBe.getKindName(), anchorPos);
                 return false;
             }
-            Rotation rotation = detectRotationFromAnchor(level, anchorPos, kind);
+            Rotation rotation = kind.detectRotation(level, anchorPos).orElse(null);
             if (rotation == null) return false; // chunk not primed
-            BlockPos leverPos = anchorPos.offset(kind.anchorToLeverDelta().rotate(rotation));
+            BlockPos leverPos = kind.leverFromAnchor(rotation, anchorPos);
             BlockEntity leverBe = level.getBlockEntity(leverPos);
             if (leverBe == null) return false;
             // Anchor has no collision → assembly BFS skips it → world-side BE survives.
@@ -275,9 +276,9 @@ public final class AirshipLiftoffTrigger {
         AirshipKind kind = AirshipKinds.byName(anchorBe.getKindName());
         if (kind == null) return;
         if (kind.groundCombat().isEmpty()) return;
-        Rotation rotation = detectRotationFromAnchor(level, anchorPos, kind);
+        Rotation rotation = kind.detectRotation(level, anchorPos).orElse(null);
         if (rotation == null) return;
-        BlockPos leverPos = anchorPos.offset(kind.anchorToLeverDelta().rotate(rotation));
+        BlockPos leverPos = kind.leverFromAnchor(rotation, anchorPos);
         // GROUND_ENGAGEMENTS is in-memory; DefeatedAirships persists across restarts.
         if (DefeatedAirships.get(level).containsExact(leverPos)) return;
 
@@ -314,48 +315,26 @@ public final class AirshipLiftoffTrigger {
         GROUND_ENGAGEMENTS.put(anchorPos, engagement);
     }
 
-    /** Try each 90° rotation; match = anchor→lever delta hits the primary-anchor BE.
-     *  Null = chunk not primed; caller should retry. */
-    private static Rotation detectRotationFromAnchor(ServerLevel level, BlockPos anchorPos, AirshipKind kind) {
-        BlockPos delta = kind.anchorToLeverDelta();
-        for (Rotation r : Rotation.values()) {
-            BlockPos leverWorld = anchorPos.offset(delta.rotate(r));
-            BlockEntity be = level.getBlockEntity(leverWorld);
-            if (be != null && kind.isPrimaryAnchorBE(be)) {
-                return r;
-            }
-        }
-        return null;
-    }
-
     /** Full assembly; {@code dormant=true} skips deck-crew spawn (registers as MOORED). */
     private static void activateShip(ServerLevel level, BlockPos pos, AirshipKind kind,
                                      Rotation rotation, boolean dormant) {
         BlockState anchorState = level.getBlockState(pos);
         Direction connected = ThrottleLevers.leverConnectedDirection(anchorState);
 
-        // Resolve world-frame positions for all NBT deltas the liftoff sequence touches.
-        List<BlockPos> enginePositions = new ArrayList<>(kind.engineDeltas().size());
-        for (BlockPos d : kind.engineDeltas()) enginePositions.add(pos.offset(d.rotate(rotation)));
-        List<BlockPos> throttleLeverPositions = new ArrayList<>(kind.throttleLeverDeltas().size());
-        for (BlockPos d : kind.throttleLeverDeltas()) throttleLeverPositions.add(pos.offset(d.rotate(rotation)));
-        BlockPos leftClutchPos = pos.offset(kind.leftClutchLeverDelta().rotate(rotation));
-        BlockPos rightClutchPos = pos.offset(kind.rightClutchLeverDelta().rotate(rotation));
-        List<BlockPos> cannonMountPositions = new ArrayList<>(kind.cannonMountDeltas().size());
-        for (BlockPos d : kind.cannonMountDeltas()) cannonMountPositions.add(pos.offset(d.rotate(rotation)));
+        Layout worldLayout = kind.layoutAt(rotation, pos);
 
         MCPirates.LOGGER.info(
                 "pirate trigger ({}) at {} (rotation={}): engines={} cannons={} left={} right={} throttles={}",
-                kind.name(), pos, rotation, enginePositions, cannonMountPositions,
-                leftClutchPos, rightClutchPos, throttleLeverPositions);
+                kind.name(), pos, rotation, worldLayout.engines(), worldLayout.cannonMounts(),
+                worldLayout.leftClutch(), worldLayout.rightClutch(), worldLayout.throttleLevers());
 
         // Step 1: fuel every engine
-        for (BlockPos enginePos : enginePositions) {
+        for (BlockPos enginePos : worldLayout.engines()) {
             insertCoalIntoEngine(level, enginePos);
         }
 
         MCPirates.LOGGER.info("trigger ({}) at {}: {} throttle lever(s), waiting on brain",
-                kind.name(), pos, throttleLeverPositions.size());
+                kind.name(), pos, worldLayout.throttleLevers().size());
 
         BlockPos assemblySeed = pos.relative(connected.getOpposite());
         AssemblyResult result = AirshipAssembler.assemble(level, assemblySeed);
@@ -365,19 +344,19 @@ public final class AirshipLiftoffTrigger {
         }
         SubLevel subLevel = result.subLevel();
         BlockPos offset = result.offset();
+        BlockPos slPrimaryAnchorPos = pos.offset(offset);
 
-        List<BlockPos> slCannonMounts = new ArrayList<>(cannonMountPositions.size());
-        for (BlockPos worldMount : cannonMountPositions) {
-            BlockPos slMount = worldMount.offset(offset);
+        // Post-assembly: re-resolve cannon mounts in SL frame and trigger CBC assembly.
+        Layout slLayout = kind.layoutAt(rotation, slPrimaryAnchorPos);
+        List<BlockPos> slCannonMounts = new ArrayList<>(slLayout.cannonMounts().size());
+        for (BlockPos slMount : slLayout.cannonMounts()) {
             BlockPos assembled = triggerCannonAssembly(subLevel.getLevel(), slMount);
             if (assembled != null) slCannonMounts.add(assembled);
         }
-        if (slCannonMounts.size() != cannonMountPositions.size()) {
+        if (slCannonMounts.size() != slLayout.cannonMounts().size()) {
             MCPirates.LOGGER.warn("({}) cannon assembly partial: {}/{} succeeded",
-                    kind.name(), slCannonMounts.size(), cannonMountPositions.size());
+                    kind.name(), slCannonMounts.size(), slLayout.cannonMounts().size());
         }
-
-        BlockPos slPrimaryAnchorPos = pos.offset(offset);
 
         CaptainSpawner.CrewSpawnResult crew = dormant
                 ? CaptainSpawner.CrewSpawnResult.empty()
@@ -398,8 +377,9 @@ public final class AirshipLiftoffTrigger {
      *  queries miss the glue). Caller retries. */
     private static boolean spawnHoneyGlue(ServerLevel level, BlockPos anchorPos,
                                           Rotation rotation, AirshipKind kind) {
-        BlockPos a = anchorPos.offset(kind.glueMin().rotate(rotation));
-        BlockPos b = anchorPos.offset(kind.glueMax().rotate(rotation));
+        Layout layout = kind.layoutAt(rotation, anchorPos);
+        BlockPos a = layout.glueMin();
+        BlockPos b = layout.glueMax();
         double minX = Math.min(a.getX(), b.getX());
         double minY = Math.min(a.getY(), b.getY());
         double minZ = Math.min(a.getZ(), b.getZ());

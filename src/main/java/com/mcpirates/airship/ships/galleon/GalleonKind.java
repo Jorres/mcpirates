@@ -1,11 +1,13 @@
 package com.mcpirates.airship.ships.galleon;
 
 import com.mcpirates.airship.interfaces.AirshipKind;
+import com.mcpirates.airship.interfaces.Layout;
 import com.mcpirates.airship.ships.AnchorNbtPositions;
 import com.mcpirates.airship.interfaces.CombatBehavior;
 import dev.simulated_team.simulated.content.blocks.throttle_lever.ThrottleLeverBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
 import java.util.List;
@@ -60,46 +62,46 @@ public final class GalleonKind implements AirshipKind {
         return be instanceof ThrottleLeverBlockEntity;
     }
 
+    // NBT-frame deltas from the left throttle lever at NBT (4, 8, 13). Private impl
+    // detail — kinds expose resolved positions via layoutAt.
+    //   engines (4,5,8),(7,5,8); right throttle (7,8,13); clutches at (4,6,9),(7,6,9);
+    //   port cannons x=3, starboard x=8, z=8/11/16/19 at y=1.
+    // Left throttle is +X, -Y of the anchor — unambiguously the LEFT of the pair.
+    private static final BlockPos ANCHOR_TO_LEVER = new BlockPos(+1, -1, 0);
+    private static final List<BlockPos> ENGINES   = List.of(
+            new BlockPos(0, -3, -5),
+            new BlockPos(+3, -3, -5));
+    private static final List<BlockPos> THROTTLES = List.of(BlockPos.ZERO, new BlockPos(+3, 0, 0));
+    private static final BlockPos LEFT_CLUTCH     = new BlockPos(0, -2, -4);
+    private static final BlockPos RIGHT_CLUTCH    = new BlockPos(+3, -2, -4);
+    private static final List<BlockPos> CANNONS   = List.of(
+            new BlockPos(-1, -7, -5),
+            new BlockPos(-1, -7, -2),
+            new BlockPos(-1, -7, +3),
+            new BlockPos(-1, -7, +6),
+            new BlockPos(+4, -7, -5),
+            new BlockPos(+4, -7, -2),
+            new BlockPos(+4, -7, +3),
+            new BlockPos(+4, -7, +6));
+    private static final BlockPos GLUE_MIN = new BlockPos(-4, -8, -13);
+    private static final BlockPos GLUE_MAX = new BlockPos(+7, +6, +14);
+
     @Override
-    public BlockPos anchorToLeverDelta() {
-        // Left throttle is +X, -Y of the anchor. Unambiguously the LEFT of the pair —
-        // the right throttle is at anchorToLeverDelta + (+3,0,0). Anchor coords in
-        // AnchorNbtPositions.
-        return new BlockPos(+1, -1, 0);
+    public BlockPos leverFromAnchor(Rotation r, BlockPos anchorWorld) {
+        return anchorWorld.offset(ANCHOR_TO_LEVER.rotate(r));
     }
 
-    // NBT-frame deltas from the left throttle lever at (4, 8, 13):
-    //   engines (4,5,8),(7,5,8) → (0,-3,-5),(+3,-3,-5)
-    //   right throttle (7,8,13) → (+3,0,0)
-    //   left clutch lever (4,6,9) → (0,-2,-4)
-    //   right clutch lever (7,6,9) → (+3,-2,-4)
-    //   port cannons (x=3, z=8/11/16/19) at y=1 → (-1,-7,-5),(-1,-7,-2),(-1,-7,+3),(-1,-7,+6)
-    //   starboard (x=8, z=8/11/16/19) at y=1 → (+4,-7,-5),(+4,-7,-2),(+4,-7,+3),(+4,-7,+6)
-    @Override public List<BlockPos> engineDeltas() {
-        return List.of(
-                new BlockPos(0, -3, -5),
-                new BlockPos(+3, -3, -5));
+    @Override
+    public Layout layoutAt(Rotation r, BlockPos leverRef) {
+        return new Layout(
+                ENGINES.stream().map(d -> leverRef.offset(d.rotate(r))).toList(),
+                THROTTLES.stream().map(d -> leverRef.offset(d.rotate(r))).toList(),
+                leverRef.offset(LEFT_CLUTCH.rotate(r)),
+                leverRef.offset(RIGHT_CLUTCH.rotate(r)),
+                CANNONS.stream().map(d -> leverRef.offset(d.rotate(r))).toList(),
+                leverRef.offset(GLUE_MIN.rotate(r)),
+                leverRef.offset(GLUE_MAX.rotate(r)));
     }
-    @Override public List<BlockPos> throttleLeverDeltas() {
-        return List.of(BlockPos.ZERO, new BlockPos(+3, 0, 0));
-    }
-    @Override public BlockPos leftClutchLeverDelta() { return new BlockPos(0, -2, -4); }
-    @Override public BlockPos rightClutchLeverDelta() { return new BlockPos(+3, -2, -4); }
-    @Override public List<BlockPos> cannonMountDeltas() {
-        return List.of(
-                new BlockPos(-1, -7, -5),
-                new BlockPos(-1, -7, -2),
-                new BlockPos(-1, -7, +3),
-                new BlockPos(-1, -7, +6),
-                new BlockPos(+4, -7, -5),
-                new BlockPos(+4, -7, -2),
-                new BlockPos(+4, -7, +3),
-                new BlockPos(+4, -7, +6));
-    }
-
-    // Glue bbox covering the full hull, expressed as lever-relative min/max.
-    @Override public BlockPos glueMin() { return new BlockPos(-4, -8, -13); }
-    @Override public BlockPos glueMax() { return new BlockPos(+7, +6, +14); }
 
     @Override public CombatBehavior combat() { return combat; }
 }

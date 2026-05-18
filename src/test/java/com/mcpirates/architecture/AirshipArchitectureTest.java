@@ -65,25 +65,6 @@ public class AirshipArchitectureTest {
                                   // an AssemblyMetadata wrapper carried by the SubLevel.
     );
 
-    private static final Set<String> DELTA_METHODS = Set.of(
-            "engineDeltas",
-            "throttleLeverDeltas",
-            "leftClutchLeverDelta",
-            "rightClutchLeverDelta",
-            "cannonMountDeltas",
-            "anchorToLeverDelta",
-            "glueMin",
-            "glueMax"
-    );
-
-    /** Packages that legitimately read deltas as part of their own assembly recipe. */
-    private static final String[] PER_KIND_PACKAGES = {
-            "com.mcpirates.airship.ships.airship_small..",
-            "com.mcpirates.airship.ships.crossbow_board..",
-            "com.mcpirates.airship.ships.galleon..",
-            "com.mcpirates.airship.ships.ramship.."
-    };
-
     private static JavaClasses CLASSES;
 
     @BeforeAll
@@ -146,22 +127,6 @@ public class AirshipArchitectureTest {
         rule.check(CLASSES);
     }
 
-    /**
-     * Delta methods on {@code AirshipKind} are an assembly-time concern; only the kind's
-     * own packages may read them. (NOTE: this rule remains a goal — the trigger / rehydrator
-     * / CaptainSpawner still call delta methods. The full migration to an assembly-recipe /
-     * {@code AssembledShip} shape is a separate piece of work, not part of Phase B.)
-     */
-    @Test
-    @Disabled("future work — physical-detail callers migrated to AssembledShip / recipe")
-    void onlyKindPackageReadsAirshipKindDeltas() {
-        ArchRule rule = noClasses()
-                .that().resideOutsideOfPackages(PER_KIND_PACKAGES)
-                .should().callMethodWhere(deltaMethodCall())
-                .because("hardware positions are an assembly-time concern, not a brain-time concern");
-        rule.check(CLASSES);
-    }
-
     // ─── Disabled, target Phase C ────────────────────────────────────────
 
     /**
@@ -189,16 +154,6 @@ public class AirshipArchitectureTest {
             public boolean test(JavaCall<?> call) {
                 return call.getTargetOwner().getName().equals(ownerFqn)
                         && call.getName().equals(methodName);
-            }
-        };
-    }
-
-    private static DescribedPredicate<JavaCall<?>> deltaMethodCall() {
-        return new DescribedPredicate<>("call to an AirshipKind delta method " + DELTA_METHODS) {
-            @Override
-            public boolean test(JavaCall<?> call) {
-                return call.getTargetOwner().getName().equals(AIRSHIP_KIND)
-                        && DELTA_METHODS.contains(call.getName());
             }
         };
     }

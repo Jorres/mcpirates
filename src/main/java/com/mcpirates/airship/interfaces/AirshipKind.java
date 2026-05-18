@@ -6,6 +6,8 @@ import com.mcpirates.airship.common.TankSteerControls;
 import com.mcpirates.pirates.GroundCombatModule;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
 import java.util.List;
@@ -13,45 +15,53 @@ import java.util.Optional;
 
 /**
  * Per-design constants for one kind of pirate airship. {@link com.mcpirates.airship.AirshipBrain}
- * runs flight behaviour generically; lever positions, cannon layout, and other per-design data
- * live here.
+ * runs flight behaviour generically; this interface exposes only resolved positions and
+ * strategies — the underlying NBT-frame deltas are each kind's private business.
  *
- * <p>Positional methods return <strong>NBT-frame deltas from the primary-anchor lever</strong>.
- * The trigger detects worldgen rotation by walking the 4 rotations and asking each kind if its
- * primary-anchor BE sits at {@code anchorPos + anchorToLeverDelta.rotate(r)}. Ships are
- * identified by a hidden {@link com.mcpirates.airship.anchor.MCPShipAnchorBlock} that stores
- * the kind name; the trigger walks from the anchor to the primary lever via
- * {@link #anchorToLeverDelta()}.
+ * <p>Ships are identified by a hidden {@link com.mcpirates.airship.anchor.MCPShipAnchorBlock}
+ * that stores the kind name; {@link #detectRotation} probes the 4 worldgen rotations to find
+ * the one where {@link #leverFromAnchor} lands on a {@link #isPrimaryAnchorBE} block. Once
+ * rotation is known, {@link #layoutAt} returns every resolved hardware position relative to a
+ * primary-lever reference — in either world frame (pre-assembly) or SubLevel frame
+ * (post-assembly), depending on what the caller passes as {@code leverRef}.
  */
 public interface AirshipKind {
 
     String name();
 
-    // ───────────── orientation / identification ─────────────
+    // ───────────── identification ─────────────
 
-    /** NBT-frame "ship forward" — the bow direction. Rotated into world frame at trigger. */
-    Direction nbtForward();
-
-    /** Cheap pre-filter the trigger uses before reading the anchor's pointed-at lever. */
+    /** Kind-private predicate identifying the primary anchor block's BE type. Consumed only
+     *  by {@link #detectRotation}'s default implementation. */
     boolean isPrimaryAnchorBE(BlockEntity be);
 
-    /** NBT-frame delta from the metadata anchor block to the primary lever. */
-    BlockPos anchorToLeverDelta();
+    /** World-frame position of the primary lever given the metadata anchor block's world
+     *  pos and the assembly rotation. */
+    BlockPos leverFromAnchor(Rotation r, BlockPos anchorWorld);
 
-    // ───────────── layout (NBT-frame deltas from the primary anchor) ─────────────
+    /** NBT-frame "ship forward" — only consumed by {@link #worldForward}'s default. */
+    Direction nbtForward();
 
-    /** Portable engines to fuel at lift-off. */
-    List<BlockPos> engineDeltas();
+    /** Ship's bow direction in the world frame (NBT-forward rotated by {@code r}). */
+    default Direction worldForward(Rotation r) {
+        return r.rotate(nbtForward());
+    }
 
-    /** All throttle-equivalent levers (including the primary at {@code (0,0,0)}); the brain
-     *  writes the same state to each so multi-burner kinds stay in lock-step. */
-    List<BlockPos> throttleLeverDeltas();
+    /** Probe each rotation; returns the one where {@link #leverFromAnchor} lands on a
+     *  {@link #isPrimaryAnchorBE} block, or empty if the chunk isn't primed yet. */
+    default Optional<Rotation> detectRotation(Level level, BlockPos anchorWorld) {
+        for (Rotation r : Rotation.values()) {
+            BlockEntity be = level.getBlockEntity(leverFromAnchor(r, anchorWorld));
+            if (be != null && isPrimaryAnchorBE(be)) return Optional.of(r);
+        }
+        return Optional.empty();
+    }
 
-    /** Vanilla lever driving the port propeller clutch. */
-    BlockPos leftClutchLeverDelta();
+    /** Resolved positions relative to a primary-lever reference. {@code leverRef} can be in
+     *  either frame (world pre-assembly, SL post-assembly); output is in the same frame. */
+    Layout layoutAt(Rotation r, BlockPos leverRef);
 
-    /** Vanilla lever driving the starboard propeller clutch. */
-    BlockPos rightClutchLeverDelta();
+    // ───────────── actuator factories ─────────────
 
     /** Build steering controls bound to this assembly's already-resolved hardware positions.
      *  Default: tank-steer on the two clutch levers. Kinds with extra hardware override
@@ -60,7 +70,7 @@ public interface AirshipKind {
                                       BlockPos slLeftClutchLever,
                                       BlockPos slRightClutchLever,
                                       BlockPos slPrimaryAnchor,
-                                      net.minecraft.world.level.block.Rotation rotation) {
+                                      Rotation rotation) {
         return new TankSteerControls(slLeftClutchLever, slRightClutchLever);
     }
 
@@ -70,15 +80,6 @@ public interface AirshipKind {
                               List<BlockPos> slBurnerPositions) {
         return new HotAirBalloonLift(slThrottleLevers, slBurnerPositions);
     }
-
-    /** CBC cannon mounts to assemble; may be empty. */
-    List<BlockPos> cannonMountDeltas();
-
-    /** Inclusive min corner of the honey-glue body box. Trigger inflates max sides by +1
-     *  so AABB.contains covers inclusive block coords. */
-    BlockPos glueMin();
-
-    BlockPos glueMax();
 
     // ───────────── combat & movement ─────────────
 

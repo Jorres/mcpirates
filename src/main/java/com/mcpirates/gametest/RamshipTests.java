@@ -124,12 +124,16 @@ public final class RamshipTests {
                     // Anything non-air left in the glue bbox is a hull cell BFS missed —
                     // it stays in the world and blocks the SubLevel from rising.
                     Airship ramship = ramshipRef.get();
-                    BlockPos lever = ramship.airpadAnchor;
-                    BlockPos gMin = RamshipKind.INSTANCE.glueMin();
-                    BlockPos gMax = RamshipKind.INSTANCE.glueMax();
-                    int x0 = lever.getX() + gMin.getX(), x1 = lever.getX() + gMax.getX();
-                    int y0 = lever.getY() + gMin.getY(), y1 = lever.getY() + gMax.getY();
-                    int z0 = lever.getZ() + gMin.getZ(), z1 = lever.getZ() + gMax.getZ();
+                    // Arena pinned at origin, no worldgen rotation; layout resolves directly
+                    // against the lever world pos.
+                    com.mcpirates.airship.interfaces.Layout glue =
+                            RamshipKind.INSTANCE.layoutAt(net.minecraft.world.level.block.Rotation.NONE,
+                                                          ramship.airpadAnchor);
+                    BlockPos gMin = glue.glueMin();
+                    BlockPos gMax = glue.glueMax();
+                    int x0 = gMin.getX(), x1 = gMax.getX();
+                    int y0 = gMin.getY(), y1 = gMax.getY();
+                    int z0 = gMin.getZ(), z1 = gMax.getZ();
                     int leftover = 0;
                     for (BlockPos p : BlockPos.betweenClosed(x0, y0, z0, x1, y1, z1)) {
                         if (!level.getBlockState(p).isAir()) {

@@ -1,6 +1,7 @@
 package com.mcpirates.airship.ships.crossbow_board;
 
 import com.mcpirates.airship.interfaces.AirshipKind;
+import com.mcpirates.airship.interfaces.Layout;
 import com.mcpirates.airship.ships.AnchorNbtPositions;
 import com.mcpirates.airship.interfaces.CombatBehavior;
 import com.mcpirates.airship.common.NoCannonCombat;
@@ -8,6 +9,7 @@ import com.mcpirates.pirates.GroundCombatModule;
 import com.simibubi.create.content.redstone.analogLever.AnalogLeverBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
 import java.util.List;
@@ -40,35 +42,38 @@ public final class CrossbowBoardKind implements AirshipKind {
         return be instanceof AnalogLeverBlockEntity;
     }
 
+    // NBT-frame deltas — private impl detail. Lever sits one block NBT-south of the anchor.
+    private static final BlockPos ANCHOR_TO_LEVER = new BlockPos(0, 0, +1);
+    private static final List<BlockPos> ENGINES = List.of(
+            new BlockPos(-1, -1, -3),
+            new BlockPos(+2, -1, -3));
+    private static final List<BlockPos> THROTTLES = List.of(BlockPos.ZERO, new BlockPos(+1, 0, 0));
+    private static final BlockPos LEFT_CLUTCH  = new BlockPos(-1, 0, -4);
+    private static final BlockPos RIGHT_CLUTCH = new BlockPos(+2, 0, -4);
+
+    // Hull spans NBT (0..5, 0..7, 1..15). Deltas are LEVER-relative; an earlier
+    // anchor-relative version shifted the glue bbox +1 in Z and left the keel layer
+    // un-stuck — visible as the assembled ship "missing" a row at the bow and grabbing
+    // an air column at the stern.
+    private static final BlockPos GLUE_MIN = new BlockPos(-2, -3, -8);
+    private static final BlockPos GLUE_MAX = new BlockPos(+3, +4, +6);
+
     @Override
-    public BlockPos anchorToLeverDelta() {
-        // Lever sits one block NBT-south (+Z) of the anchor. Anchor coords in AnchorNbtPositions.
-        return new BlockPos(0, 0, +1);
+    public BlockPos leverFromAnchor(Rotation r, BlockPos anchorWorld) {
+        return anchorWorld.offset(ANCHOR_TO_LEVER.rotate(r));
     }
 
-    // NBT-frame deltas from the left analog lever (two engines, right throttle, two
-    // vanilla clutch levers on top of create:clutch blocks).
-    @Override public List<BlockPos> engineDeltas() {
-        return List.of(
-                new BlockPos(-1, -1, -3),
-                new BlockPos(+2, -1, -3));
+    @Override
+    public Layout layoutAt(Rotation r, BlockPos leverRef) {
+        return new Layout(
+                ENGINES.stream().map(d -> leverRef.offset(d.rotate(r))).toList(),
+                THROTTLES.stream().map(d -> leverRef.offset(d.rotate(r))).toList(),
+                leverRef.offset(LEFT_CLUTCH.rotate(r)),
+                leverRef.offset(RIGHT_CLUTCH.rotate(r)),
+                List.of(),
+                leverRef.offset(GLUE_MIN.rotate(r)),
+                leverRef.offset(GLUE_MAX.rotate(r)));
     }
-    @Override public List<BlockPos> throttleLeverDeltas() {
-        return List.of(BlockPos.ZERO, new BlockPos(+1, 0, 0));
-    }
-    @Override public BlockPos leftClutchLeverDelta() { return new BlockPos(-1, 0, -4); }
-    @Override public BlockPos rightClutchLeverDelta() { return new BlockPos(+2, 0, -4); }
-    @Override public List<BlockPos> cannonMountDeltas() {
-        return List.of();
-    }
-
-    // Hull spans NBT (0..5, 0..7, 1..15). Deltas are LEVER-relative — spawnHoneyGlue adds
-    // these to the lever pos (NOT the anchor pos; see anchorToLeverDelta). Earlier
-    // values were anchor-relative, which shifted the glue bbox +1 in Z and left the
-    // keel layer un-stuck — visible as the assembled ship "missing" a row at the bow
-    // and grabbing an air column at the stern.
-    @Override public BlockPos glueMin() { return new BlockPos(-2, -3, -8); }
-    @Override public BlockPos glueMax() { return new BlockPos(+3, +4, +6); }
 
     @Override public CombatBehavior combat() { return combat; }
 

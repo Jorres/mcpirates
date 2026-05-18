@@ -2,6 +2,7 @@ package com.mcpirates.airship;
 
 import com.mcpirates.airship.hardware.HotAirBurners;
 import com.mcpirates.airship.interfaces.AirshipKind;
+import com.mcpirates.airship.interfaces.Layout;
 import com.mcpirates.airship.physics.PlateauTable;
 import com.mcpirates.airship.ships.AirshipKinds;
 import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
@@ -53,7 +54,7 @@ public final class Airship {
     public final BlockPos slPrimaryAnchor;
 
     public final List<BlockPos> slCannonMounts;
-    /** Derived from {@code rotation.rotate(kind.nbtForward())}. */
+    /** Derived from {@code kind.worldForward(rotation)}. */
     public final Vector3d shipLocalForward;
     /** Crew the brain re-anchors after chunk reload. Replaced by {@link #installCrew} on
      *  MOORED→LIFTOFF promotion. */
@@ -136,7 +137,7 @@ public final class Airship {
         this.slCannonMounts = slCannonMounts;
         this.anchoredEntities = anchoredEntities;
         this.cannoneerByMount = cannoneerByMount;
-        Direction fwd = rotation.rotate(kind.nbtForward());
+        Direction fwd = kind.worldForward(rotation);
         this.shipLocalForward = new Vector3d(fwd.getStepX(), fwd.getStepY(), fwd.getStepZ());
     }
 
@@ -269,12 +270,7 @@ public final class Airship {
      *  both fresh assembly ({@code AirshipLiftoffTrigger.activateShip}) and rehydrate
      *  ({@link #readNbt}). */
     static void rebuildActuators(Airship a) {
-        BlockPos slLeftClutch = a.slPrimaryAnchor.offset(a.kind.leftClutchLeverDelta().rotate(a.rotation));
-        BlockPos slRightClutch = a.slPrimaryAnchor.offset(a.kind.rightClutchLeverDelta().rotate(a.rotation));
-        List<BlockPos> slThrottleLevers = new ArrayList<>(a.kind.throttleLeverDeltas().size());
-        for (BlockPos d : a.kind.throttleLeverDeltas()) {
-            slThrottleLevers.add(a.slPrimaryAnchor.offset(d.rotate(a.rotation)));
-        }
+        Layout layout = a.kind.layoutAt(a.rotation, a.slPrimaryAnchor);
         var plotBox = ((ServerSubLevel) a.subLevel).getPlot().getBoundingBox();
         List<BlockPos> slBurnerPositions = HotAirBurners.findAllInBox(
                 a.subLevel.getLevel(),
@@ -285,8 +281,9 @@ public final class Airship {
                     "({}) no Hot Air Burners found in SubLevel plot; lift control disabled",
                     a.kind.name());
         }
-        a.controls = a.kind.makeControls(a, slLeftClutch, slRightClutch, a.slPrimaryAnchor, a.rotation);
-        a.lift = a.kind.makeLift(slThrottleLevers, slBurnerPositions);
+        a.controls = a.kind.makeControls(a, layout.leftClutch(), layout.rightClutch(),
+                a.slPrimaryAnchor, a.rotation);
+        a.lift = a.kind.makeLift(layout.throttleLevers(), slBurnerPositions);
     }
 
     private static long[] toLongArray(List<BlockPos> positions) {

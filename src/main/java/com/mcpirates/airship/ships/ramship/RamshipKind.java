@@ -1,6 +1,7 @@
 package com.mcpirates.airship.ships.ramship;
 
 import com.mcpirates.airship.interfaces.AirshipKind;
+import com.mcpirates.airship.interfaces.Layout;
 import com.mcpirates.airship.ships.AnchorNbtPositions;
 import com.mcpirates.airship.interfaces.CombatBehavior;
 import com.mcpirates.airship.interfaces.MovementBehavior;
@@ -9,6 +10,7 @@ import com.mcpirates.pirates.GroundCombatModule;
 import com.simibubi.create.content.redstone.analogLever.AnalogLeverBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
 import java.util.List;
@@ -48,34 +50,22 @@ public final class RamshipKind implements AirshipKind {
         return be instanceof AnalogLeverBlockEntity;
     }
 
-    @Override
-    public BlockPos anchorToLeverDelta() {
-        // Lever sits one block NBT-south (+Z) of the anchor. Anchor coords in AnchorNbtPositions.
-        return new BlockPos(0, 0, +1);
-    }
-
-    // NBT-frame deltas from the left analog lever (right throttle, sole portable engine
-    // driving all three props, three vanilla clutch levers — port/starboard/forward).
-    @Override public List<BlockPos> engineDeltas() {
-        return List.of(new BlockPos(0, -1, +4));
-    }
-    @Override public List<BlockPos> throttleLeverDeltas() {
-        return List.of(BlockPos.ZERO, new BlockPos(+2, 0, 0));
-    }
-    @Override public BlockPos leftClutchLeverDelta() { return new BlockPos(-1, 0, +9); }
-    @Override public BlockPos rightClutchLeverDelta() { return new BlockPos(+3, 0, +9); }
-    @Override public List<BlockPos> cannonMountDeltas() { return List.of(); }
-
-    // Hardware deltas the ramship needs *beyond* the two outboard clutch levers
-    // every kind has. Kept private (this is implementation detail) — they're
-    // only consumed by {@link #makeControls} below, never exposed to the brain.
-    // All deltas are anchor-relative (see anchorToLeverDelta + AnchorNbtPositions).
-    // FORWARD_PROPELLER_DELTA is diagnostic only — RamControls doesn't reverse it;
-    // the forward clutch lever above gates its drive.
-    private static final BlockPos FORWARD_CLUTCH_LEVER_DELTA = new BlockPos(+1, -1, +9);
-    private static final BlockPos LEFT_PROPELLER_DELTA       = new BlockPos(-1, -1, +10);
-    private static final BlockPos RIGHT_PROPELLER_DELTA      = new BlockPos(+3, -1, +10);
-    private static final BlockPos FORWARD_PROPELLER_DELTA    = new BlockPos(+1, -2, +12);
+    // NBT-frame deltas from the left analog lever — private impl detail. Lever sits one
+    // block NBT-south of the anchor. Ramship has one engine (driving all three props), two
+    // throttles (left + right), three vanilla clutch levers (port/starboard/forward), three
+    // propellers. FORWARD_PROPELLER is diagnostic only — RamControls doesn't reverse it; the
+    // forward clutch lever gates its drive.
+    private static final BlockPos ANCHOR_TO_LEVER     = new BlockPos(0, 0, +1);
+    private static final List<BlockPos> ENGINES      = List.of(new BlockPos(0, -1, +4));
+    private static final List<BlockPos> THROTTLES    = List.of(BlockPos.ZERO, new BlockPos(+2, 0, 0));
+    private static final BlockPos LEFT_CLUTCH        = new BlockPos(-1, 0, +9);
+    private static final BlockPos RIGHT_CLUTCH       = new BlockPos(+3, 0, +9);
+    private static final BlockPos FORWARD_CLUTCH     = new BlockPos(+1, -1, +9);
+    private static final BlockPos LEFT_PROPELLER     = new BlockPos(-1, -1, +10);
+    private static final BlockPos RIGHT_PROPELLER    = new BlockPos(+3, -1, +10);
+    private static final BlockPos FORWARD_PROPELLER  = new BlockPos(+1, -2, +12);
+    private static final BlockPos GLUE_MIN           = new BlockPos(-3, -3, -9);
+    private static final BlockPos GLUE_MAX           = new BlockPos(+5, +6, +12);
 
     /** ramship.nbt has a single propeller palette entry: {@code reversed=true} on all
      *  three. Hardcoded so rehydrate after a PURSUE-time mutation still has the truth. */
@@ -92,19 +82,30 @@ public final class RamshipKind implements AirshipKind {
         return new RamControls(
                 slLeftClutchLever,
                 slRightClutchLever,
-                slPrimaryAnchor.offset(FORWARD_CLUTCH_LEVER_DELTA.rotate(rotation)),
-                slPrimaryAnchor.offset(LEFT_PROPELLER_DELTA.rotate(rotation)),
-                slPrimaryAnchor.offset(RIGHT_PROPELLER_DELTA.rotate(rotation)),
-                slPrimaryAnchor.offset(FORWARD_PROPELLER_DELTA.rotate(rotation)),
+                slPrimaryAnchor.offset(FORWARD_CLUTCH.rotate(rotation)),
+                slPrimaryAnchor.offset(LEFT_PROPELLER.rotate(rotation)),
+                slPrimaryAnchor.offset(RIGHT_PROPELLER.rotate(rotation)),
+                slPrimaryAnchor.offset(FORWARD_PROPELLER.rotate(rotation)),
                 NBT_REVERSED_L,
                 NBT_REVERSED_R);
     }
 
-    // Glue bbox covering the full hull, expressed as lever-relative min/max
-    // (spawnHoneyGlue offsets from lever, not anchor — see AirshipSmallKind for the
-    // BFS reasoning).
-    @Override public BlockPos glueMin() { return new BlockPos(-3, -3, -9); }
-    @Override public BlockPos glueMax() { return new BlockPos(+5, +6, +12); }
+    @Override
+    public BlockPos leverFromAnchor(Rotation r, BlockPos anchorWorld) {
+        return anchorWorld.offset(ANCHOR_TO_LEVER.rotate(r));
+    }
+
+    @Override
+    public Layout layoutAt(Rotation r, BlockPos leverRef) {
+        return new Layout(
+                ENGINES.stream().map(d -> leverRef.offset(d.rotate(r))).toList(),
+                THROTTLES.stream().map(d -> leverRef.offset(d.rotate(r))).toList(),
+                leverRef.offset(LEFT_CLUTCH.rotate(r)),
+                leverRef.offset(RIGHT_CLUTCH.rotate(r)),
+                List.of(),
+                leverRef.offset(GLUE_MIN.rotate(r)),
+                leverRef.offset(GLUE_MAX.rotate(r)));
+    }
 
     @Override public CombatBehavior combat() { return combat; }
     @Override public MovementBehavior movement() { return RamMovement.INSTANCE; }
