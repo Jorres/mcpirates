@@ -5,11 +5,9 @@ import com.mcpirates.airship.interfaces.Layout;
 import com.mcpirates.airship.ships.AnchorNbtPositions;
 import com.mcpirates.airship.interfaces.CombatBehavior;
 import com.mcpirates.pirates.GroundCombatModule;
-import com.simibubi.create.content.redstone.analogLever.AnalogLeverBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Rotation;
-import net.minecraft.world.level.block.entity.BlockEntity;
 
 import java.util.List;
 import java.util.Optional;
@@ -31,11 +29,6 @@ public final class AirshipSmallKind implements AirshipKind {
 
     @Override public String name() { return "airship_small"; }
     @Override public Direction nbtForward() { return Direction.NORTH; }
-
-    @Override
-    public boolean isPrimaryAnchorBE(BlockEntity be) {
-        return be instanceof AnalogLeverBlockEntity;
-    }
 
     // NBT-frame deltas — private impl detail. Lever sits one block NBT-south of the anchor.
     private static final BlockPos ANCHOR_TO_LEVER = new BlockPos(0, 0, +1);

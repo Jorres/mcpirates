@@ -7,11 +7,9 @@ import com.mcpirates.airship.interfaces.CombatBehavior;
 import com.mcpirates.airship.interfaces.MovementBehavior;
 import com.mcpirates.airship.common.NoCannonCombat;
 import com.mcpirates.pirates.GroundCombatModule;
-import com.simibubi.create.content.redstone.analogLever.AnalogLeverBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Rotation;
-import net.minecraft.world.level.block.entity.BlockEntity;
 
 import java.util.List;
 import java.util.Optional;
@@ -19,7 +17,8 @@ import java.util.Optional;
 /**
  * Ramming attacker (NBT {@code ramship}, hull 9×10×22). Two outboard propellers driven
  * by the standard left/right clutches steer; a third center propeller — aligned on the
- * movement axis — provides constant forward thrust during PURSUE via {@link #forwardClutchLeverDelta}.
+ * movement axis — provides constant forward thrust during PURSUE via a dedicated forward
+ * clutch lever (see {@code FORWARD_CLUTCH} below).
  *
  * <p>Primary anchor: the left Create analog lever (face=ceiling, facing=NORTH).
  * Absolute coords in {@link AnchorNbtPositions}. Ship-forward is NORTH
@@ -44,11 +43,6 @@ public final class RamshipKind implements AirshipKind {
      *  descending toward a victim flying anywhere near treetop level. 5 is enough to
      *  not catch hills mid-chase while still letting the ram land. */
     @Override public double minAltAboveGround() { return 5.0; }
-
-    @Override
-    public boolean isPrimaryAnchorBE(BlockEntity be) {
-        return be instanceof AnalogLeverBlockEntity;
-    }
 
     // NBT-frame deltas from the left analog lever — private impl detail. Lever sits one
     // block NBT-south of the anchor. Ramship has one engine (driving all three props), two

@@ -1,5 +1,9 @@
 {
+  "_comment": "FACING is for rotation-detection only; block is INVISIBLE so the same model serves every facing.",
   "variants": {
-    "": { "model": "mcpirates:block/ship_anchor" }
+    "facing=north": { "model": "mcpirates:block/ship_anchor" },
+    "facing=east":  { "model": "mcpirates:block/ship_anchor" },
+    "facing=south": { "model": "mcpirates:block/ship_anchor" },
+    "facing=west":  { "model": "mcpirates:block/ship_anchor" }
   }
 }

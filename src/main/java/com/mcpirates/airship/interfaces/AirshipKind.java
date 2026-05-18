@@ -1,5 +1,6 @@
 package com.mcpirates.airship.interfaces;
 
+import com.mcpirates.airship.anchor.MCPShipAnchorBlock;
 import com.mcpirates.airship.common.HotAirBalloonLift;
 import com.mcpirates.airship.common.OrbitMovement;
 import com.mcpirates.airship.common.TankSteerControls;
@@ -8,7 +9,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Rotation;
-import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.List;
 import java.util.Optional;
@@ -18,22 +19,18 @@ import java.util.Optional;
  * runs flight behaviour generically; this interface exposes only resolved positions and
  * strategies — the underlying NBT-frame deltas are each kind's private business.
  *
- * <p>Ships are identified by a hidden {@link com.mcpirates.airship.anchor.MCPShipAnchorBlock}
- * that stores the kind name; {@link #detectRotation} probes the 4 worldgen rotations to find
- * the one where {@link #leverFromAnchor} lands on a {@link #isPrimaryAnchorBE} block. Once
- * rotation is known, {@link #layoutAt} returns every resolved hardware position relative to a
- * primary-lever reference — in either world frame (pre-assembly) or SubLevel frame
- * (post-assembly), depending on what the caller passes as {@code leverRef}.
+ * <p>Ships are identified by a hidden {@link MCPShipAnchorBlock} that stores the kind name
+ * via its BE. The placement rotation is recovered directly from the anchor's {@code FACING}
+ * block-state property — see {@link #detectRotation}. Once rotation is known,
+ * {@link #layoutAt} returns every resolved hardware position relative to a primary-lever
+ * reference — in either world frame (pre-assembly) or SubLevel frame (post-assembly),
+ * depending on what the caller passes as {@code leverRef}.
  */
 public interface AirshipKind {
 
     String name();
 
     // ───────────── identification ─────────────
-
-    /** Kind-private predicate identifying the primary anchor block's BE type. Consumed only
-     *  by {@link #detectRotation}'s default implementation. */
-    boolean isPrimaryAnchorBE(BlockEntity be);
 
     /** World-frame position of the primary lever given the metadata anchor block's world
      *  pos and the assembly rotation. */
@@ -47,14 +44,18 @@ public interface AirshipKind {
         return r.rotate(nbtForward());
     }
 
-    /** Probe each rotation; returns the one where {@link #leverFromAnchor} lands on a
-     *  {@link #isPrimaryAnchorBE} block, or empty if the chunk isn't primed yet. */
+    /** Recover the placement rotation from the anchor block's FACING property. Returns empty
+     *  if the block at {@code anchorWorld} isn't an anchor (chunk not primed, or it's been
+     *  griefed). Independent of the ship's bow direction — see
+     *  {@link MCPShipAnchorBlock}'s docs on FACING. */
     default Optional<Rotation> detectRotation(Level level, BlockPos anchorWorld) {
+        BlockState s = level.getBlockState(anchorWorld);
+        if (!(s.getBlock() instanceof MCPShipAnchorBlock)) return Optional.empty();
+        Direction worldFacing = s.getValue(MCPShipAnchorBlock.FACING);
         for (Rotation r : Rotation.values()) {
-            BlockEntity be = level.getBlockEntity(leverFromAnchor(r, anchorWorld));
-            if (be != null && isPrimaryAnchorBE(be)) return Optional.of(r);
+            if (r.rotate(Direction.NORTH) == worldFacing) return Optional.of(r);
         }
-        return Optional.empty();
+        return Optional.empty();  // unreachable: 4 rotations cover all 4 horizontals
     }
 
     /** Resolved positions relative to a primary-lever reference. {@code leverRef} can be in

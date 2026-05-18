@@ -4,11 +4,9 @@ import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.airship.interfaces.Layout;
 import com.mcpirates.airship.ships.AnchorNbtPositions;
 import com.mcpirates.airship.interfaces.CombatBehavior;
-import dev.simulated_team.simulated.content.blocks.throttle_lever.ThrottleLeverBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Rotation;
-import net.minecraft.world.level.block.entity.BlockEntity;
 
 import java.util.List;
 
@@ -23,8 +21,8 @@ import java.util.List;
  * dispatches by BE type at write time.
  *
  * <p>Primary anchor: the leftmost throttle lever (face=floor, facing=NORTH). Absolute
- * anchor coords in {@link AnchorNbtPositions}; the right throttle is at
- * {@link #throttleLeverDeltas()} offset from the primary, written in lock-step.
+ * anchor coords in {@link AnchorNbtPositions}; the right throttle is at a fixed
+ * lever-relative offset (see {@code THROTTLES} below), written in lock-step.
  */
 public final class GalleonKind implements AirshipKind {
 
@@ -56,11 +54,6 @@ public final class GalleonKind implements AirshipKind {
     /** Galleon cruises lower than lighter kinds — heavy broadside design fights
      *  near the player rather than as a high observation platform. */
     @Override public double cruiseRise() { return 40.0; }
-
-    @Override
-    public boolean isPrimaryAnchorBE(BlockEntity be) {
-        return be instanceof ThrottleLeverBlockEntity;
-    }
 
     // NBT-frame deltas from the left throttle lever at NBT (4, 8, 13). Private impl
     // detail — kinds expose resolved positions via layoutAt.
