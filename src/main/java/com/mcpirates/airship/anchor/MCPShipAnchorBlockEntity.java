@@ -28,7 +28,7 @@ public final class MCPShipAnchorBlockEntity extends BlockEntity {
     private static final String KIND_TAG = "kind";
 
     /** AirshipKind name resolved at trigger time via
-     *  {@link com.mcpirates.airship.kind.AirshipKinds#byName}. */
+     *  {@link com.mcpirates.airship.ships.AirshipKinds#byName}. */
     private String kindName = "";
 
     public MCPShipAnchorBlockEntity(BlockPos pos, BlockState state) {

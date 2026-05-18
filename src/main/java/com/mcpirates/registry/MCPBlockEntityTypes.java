@@ -13,7 +13,7 @@ import java.util.function.Supplier;
  * Block-entity type registrations for mcpirates.
  *
  * <p>{@link #SHIP_ANCHOR} — the metadata BE attached to every {@link MCPBlocks#SHIP_ANCHOR}
- * block. Stores the {@link com.mcpirates.airship.kind.AirshipKind} name so
+ * block. Stores the {@link com.mcpirates.airship.interfaces.AirshipKind} name so
  * {@link com.mcpirates.airship.AirshipLiftoffTrigger} can identify a ship without
  * heuristic geometric matching.
  */

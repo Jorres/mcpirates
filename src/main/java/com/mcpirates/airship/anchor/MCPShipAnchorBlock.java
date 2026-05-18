@@ -14,7 +14,7 @@ import net.minecraft.world.level.BlockGetter;
 
 /**
  * Invisible metadata block placed inside every mcpirates airship's structure NBT to
- * identify which {@link com.mcpirates.airship.kind.AirshipKind} the ship is, without
+ * identify which {@link com.mcpirates.airship.interfaces.AirshipKind} the ship is, without
  * the lift-off trigger having to geometrically guess. See
  * {@link MCPShipAnchorBlockEntity} for the kind-name payload.
  *

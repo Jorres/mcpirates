@@ -5,7 +5,7 @@ import com.mcpirates.MCPirates;
 import com.mcpirates.airship.Airship;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
-import com.mcpirates.airship.ramship.RamshipKind;
+import com.mcpirates.airship.ships.ramship.RamshipKind;
 import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
 import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;
 import dev.ryanhcode.sable.companion.math.BoundingBox3dc;

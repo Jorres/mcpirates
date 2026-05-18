@@ -1,8 +1,8 @@
 package com.mcpirates.village;
 
 import com.mcpirates.MCPirates;
-import com.mcpirates.airship.galleon.GalleonSpawner;
-import com.mcpirates.airship.galleon.GalleonUnlockState;
+import com.mcpirates.airship.ships.galleon.GalleonSpawner;
+import com.mcpirates.airship.ships.galleon.GalleonUnlockState;
 import com.mcpirates.pirates.DefeatedAirships;
 import com.mcpirates.registry.MCPStructureTags;
 import net.minecraft.core.BlockPos;

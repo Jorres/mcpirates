@@ -2,9 +2,9 @@ package com.mcpirates.airship;
 
 import com.mcpirates.MCPDataKeys;
 import com.mcpirates.MCPirates;
-import com.mcpirates.airship.kind.AirshipKind;
-import com.mcpirates.airship.kind.AirshipKinds;
-import com.mcpirates.airship.kind.HotAirBurners;
+import com.mcpirates.airship.interfaces.AirshipKind;
+import com.mcpirates.airship.ships.AirshipKinds;
+import com.mcpirates.airship.hardware.HotAirBurners;
 import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
 import com.mcpirates.pirates.roles.CannoneerRole;
 import com.mcpirates.pirates.roles.CrossbowmanRole;

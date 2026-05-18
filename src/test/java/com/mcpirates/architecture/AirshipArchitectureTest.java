@@ -43,7 +43,7 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noFields;
 public class AirshipArchitectureTest {
 
     private static final String BLOCK_POS = "net.minecraft.core.BlockPos";
-    private static final String AIRSHIP_KIND = "com.mcpirates.airship.kind.AirshipKind";
+    private static final String AIRSHIP_KIND = "com.mcpirates.airship.interfaces.AirshipKind";
 
     /**
      * Fields on {@code Airship} that legitimately have type {@code BlockPos} /
@@ -75,12 +75,11 @@ public class AirshipArchitectureTest {
     );
 
     /** Packages that legitimately read deltas as part of their own assembly recipe. */
-    private static final String[] KIND_AND_PER_KIND_PACKAGES = {
-            "com.mcpirates.airship.kind..",
-            "com.mcpirates.airship.airship_small..",
-            "com.mcpirates.airship.crossbow_board..",
-            "com.mcpirates.airship.galleon..",
-            "com.mcpirates.airship.ramship.."
+    private static final String[] PER_KIND_PACKAGES = {
+            "com.mcpirates.airship.ships.airship_small..",
+            "com.mcpirates.airship.ships.crossbow_board..",
+            "com.mcpirates.airship.ships.galleon..",
+            "com.mcpirates.airship.ships.ramship.."
     };
 
     private static JavaClasses CLASSES;
@@ -154,7 +153,7 @@ public class AirshipArchitectureTest {
     @Disabled("future work — physical-detail callers migrated to AssembledShip / recipe")
     void onlyKindPackageReadsAirshipKindDeltas() {
         ArchRule rule = noClasses()
-                .that().resideOutsideOfPackages(KIND_AND_PER_KIND_PACKAGES)
+                .that().resideOutsideOfPackages(PER_KIND_PACKAGES)
                 .should().callMethodWhere(deltaMethodCall())
                 .because("hardware positions are an assembly-time concern, not a brain-time concern");
         rule.check(CLASSES);

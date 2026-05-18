@@ -3,7 +3,7 @@ package com.mcpirates.dev;
 import com.mcpirates.MCPirates;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
-import com.mcpirates.airship.galleon.GalleonSpawner;
+import com.mcpirates.airship.ships.galleon.GalleonSpawner;
 import com.mcpirates.util.FunnyNames;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;

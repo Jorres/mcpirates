@@ -1,11 +1,11 @@
 package com.mcpirates.airship;
 
 import com.mcpirates.MCPirates;
-import com.mcpirates.airship.kind.AirshipKind;
-import com.mcpirates.airship.kind.AngleMath;
-import com.mcpirates.airship.movement.MovementBehavior;
-import com.mcpirates.airship.kind.PlateauTable;
-import com.mcpirates.airship.kind.PlateauTable.LiftSetting;
+import com.mcpirates.airship.interfaces.AirshipKind;
+import com.mcpirates.airship.physics.AngleMath;
+import com.mcpirates.airship.interfaces.MovementBehavior;
+import com.mcpirates.airship.physics.PlateauTable;
+import com.mcpirates.airship.physics.PlateauTable.LiftSetting;
 import dev.eriksonn.aeronautics.index.AeroLiftingGasTypes;
 import dev.ryanhcode.sable.api.physics.mass.MassData;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
@@ -288,7 +288,7 @@ public final class AirshipBrain {
         };
     }
 
-    /** Brain produces signed heading error; {@link com.mcpirates.airship.kind.ShipControls}
+    /** Brain produces signed heading error; {@link com.mcpirates.airship.interfaces.ShipControls}
      *  translates it to clutch/propeller writes. */
     private static void applySteering(Airship a, LivingEntity targetPlayer, SubLevel targetShip,
                                       Vector3d shipPos) {

@@ -2,7 +2,7 @@ package com.mcpirates.pirates;
 
 import com.mcpirates.MCPDataKeys;
 import com.mcpirates.MCPirates;
-import com.mcpirates.airship.kind.AirshipKind;
+import com.mcpirates.airship.interfaces.AirshipKind;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;

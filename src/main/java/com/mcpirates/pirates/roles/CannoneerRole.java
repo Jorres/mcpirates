@@ -10,7 +10,7 @@ import net.minecraft.world.item.ItemStack;
 /**
  * Unarmed pillager bound to one cannon mount. The role itself does nothing per tick —
  * the linkage between cannoneer and cannon is enforced inside the {@link
- * com.mcpirates.airship.kind.CombatBehavior} implementations, which query
+ * com.mcpirates.airship.interfaces.CombatBehavior} implementations, which query
  * {@link Airship#isMountManned(net.minecraft.core.BlockPos)} before aiming or firing
  * each mount. When the cannoneer dies, the lookup returns false and the cannon goes
  * silent — exactly the "kill the gunner, silence the gun" mechanic the design calls for.

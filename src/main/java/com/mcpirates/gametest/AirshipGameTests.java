@@ -7,7 +7,7 @@ import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipBrain.State;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
 import com.mcpirates.airship.AirshipRehydrator;
-import com.mcpirates.airship.kind.ClutchLevers;
+import com.mcpirates.airship.hardware.ClutchLevers;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;

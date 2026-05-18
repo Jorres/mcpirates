@@ -1,8 +1,8 @@
 package com.mcpirates.airship;
 
 import com.mcpirates.MCPirates;
-import com.mcpirates.airship.kind.PlateauTable;
-import com.mcpirates.airship.kind.PlateauTable.LiftSetting;
+import com.mcpirates.airship.physics.PlateauTable;
+import com.mcpirates.airship.physics.PlateauTable.LiftSetting;
 import dev.eriksonn.aeronautics.content.blocks.hot_air.balloon.ServerBalloon;
 import dev.eriksonn.aeronautics.content.blocks.hot_air.hot_air_burner.HotAirBurnerBlockEntity;
 import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;

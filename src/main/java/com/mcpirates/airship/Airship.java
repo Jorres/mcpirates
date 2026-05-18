@@ -1,7 +1,7 @@
 package com.mcpirates.airship;
 
-import com.mcpirates.airship.kind.AirshipKind;
-import com.mcpirates.airship.kind.PlateauTable;
+import com.mcpirates.airship.interfaces.AirshipKind;
+import com.mcpirates.airship.physics.PlateauTable;
 import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.core.BlockPos;
@@ -59,11 +59,11 @@ public final class Airship {
 
     /** Steering actuator built by the kind's makeControls factory. Brain calls only
      *  {@code applySteering}/{@code release}. */
-    public com.mcpirates.airship.kind.ShipControls controls;
+    public com.mcpirates.airship.interfaces.ShipControls controls;
 
     /** Lift actuator built by the kind's makeLift factory. Brain calls only
      *  {@code apply}/{@code queryBalloonCapacity}. */
-    public com.mcpirates.airship.lift.ShipLift lift;
+    public com.mcpirates.airship.interfaces.ShipLift lift;
 
     public double lastGoalX = Double.NaN;
     public double lastGoalY = Double.NaN;

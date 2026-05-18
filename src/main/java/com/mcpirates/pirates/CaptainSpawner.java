@@ -2,7 +2,7 @@ package com.mcpirates.pirates;
 
 import com.mcpirates.MCPDataKeys;
 import com.mcpirates.MCPirates;
-import com.mcpirates.airship.kind.AirshipKind;
+import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.pirates.roles.CannoneerRole;
 import com.mcpirates.pirates.roles.CrossbowmanRole;
 import com.mcpirates.pirates.roles.PirateRole;

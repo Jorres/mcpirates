@@ -1,6 +1,6 @@
 package com.mcpirates.nbtcheck;
 
-import com.mcpirates.airship.kind.AnchorNbtPositions;
+import com.mcpirates.airship.ships.AnchorNbtPositions;
 import com.mcpirates.nbtcheck.StructureBundle.BlockRef;
 import com.mcpirates.nbtcheck.StructureBundle.ParsedStructure;
 import org.junit.jupiter.api.DynamicTest;
