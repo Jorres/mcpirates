@@ -110,9 +110,6 @@ public interface AirshipKind {
     /** Target altitude above {@code airpadAnchor.y} for LIFTOFF / HOVER / RETURN. */
     default double cruiseRise() { return 60.0; }
 
-    /** Vertical offset above target during PURSUE. Ramships set 0; ranged ships keep clearance. */
-    default double pursueAltOffset() { return 12.0; }
-
     /** Safety floor above max terrain ahead. Target altitude is at least
      *  {@code maxGroundAhead + this + 2} in non-PURSUE; in PURSUE it lower-bounds the
      *  target-eye + offset. Ramships override low so they can actually connect. */

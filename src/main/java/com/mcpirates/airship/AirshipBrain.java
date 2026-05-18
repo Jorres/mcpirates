@@ -335,10 +335,14 @@ public final class AirshipBrain {
         long bucket = System.currentTimeMillis() / 2000;
         if (bucket != a.lastThrottleLogBucket) {
             a.lastThrottleLogBucket = bucket;
+            // Mirror chooseLiftSetting's targetY formula so the log shows what was actually
+            // committed (pre velocity-bias). Pursue Y comes from the movement strategy's
+            // goal; other states use cruise altitude.
             double cruiseY = a.airpadAnchor.getY() + a.kind.cruiseRise();
-            double targetY = (a.state == State.PURSUE && target != null)
-                    ? Math.max(target.getEyeY() + a.kind.pursueAltOffset(), maxGroundAhead + a.kind.minAltAboveGround() + 2.0)
-                    : cruiseY;
+            double floor = maxGroundAhead + a.kind.minAltAboveGround() + 2.0;
+            double targetY = (a.state == State.PURSUE && !Double.isNaN(a.lastGoalY))
+                    ? Math.max(a.lastGoalY, floor)
+                    : Math.max(cruiseY, floor);
             ShipTelemetry.snapshot(a, "throttle", lift, targetY);
         }
     }

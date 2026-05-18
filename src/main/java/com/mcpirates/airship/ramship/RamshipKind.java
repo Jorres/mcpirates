@@ -39,9 +39,6 @@ public final class RamshipKind implements AirshipKind {
     @Override public Direction nbtPrimaryFacing() { return Direction.NORTH; }
     @Override public Direction nbtForward() { return Direction.NORTH; }
     @Override public ThrottleLevers.Kind throttleLeverKind() { return ThrottleLevers.Kind.CREATE_ANALOG; }
-    /** Ram, don't overfly. The hull's keel sits at the deck the victim's crew stands
-     *  on — any positive offset turns the ram into a fly-over. */
-    @Override public double pursueAltOffset() { return 0.0; }
 
     /** Ramming low-altitude targets requires giving up most of the ground-clearance
      *  safety margin — a 30-block floor (the default) would prevent the ramship from
