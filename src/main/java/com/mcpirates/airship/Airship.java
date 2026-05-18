@@ -66,6 +66,7 @@ public final class Airship {
     public com.mcpirates.airship.kind.ShipLift lift;
 
     public double lastGoalX = Double.NaN;
+    public double lastGoalY = Double.NaN;
     public double lastGoalZ = Double.NaN;
     public double lastHeadingErrDeg = 0;
 

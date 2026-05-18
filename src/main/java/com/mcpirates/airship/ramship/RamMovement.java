@@ -44,27 +44,30 @@ public final class RamMovement implements MovementBehavior {
         // — divide by SERVER_TPS=20 to bring it into the same frame, otherwise
         // the intercept math compares a per-second target velocity to a
         // per-tick estimate and silently returns garbage.
-        double tx, tz, vx, vz;
+        double tx, ty, tz, vx, vz;
         if (targetShip != null) {
             Vector3d tPos = targetShip.logicalPose().position();
-            tx = tPos.x; tz = tPos.z;
+            tx = tPos.x; ty = tPos.y; tz = tPos.z;
             Vector3d tVel = dev.ryanhcode.sable.Sable.HELPER.getVelocity(
                     ship.parentLevel, targetShip, tPos, new Vector3d());
             vx = tVel.x / 20.0; vz = tVel.z / 20.0;
         } else if (targetPlayer != null) {
-            tx = targetPlayer.getX(); tz = targetPlayer.getZ();
+            tx = targetPlayer.getX(); ty = targetPlayer.getY(); tz = targetPlayer.getZ();
             Vec3 dm = targetPlayer.getDeltaMovement();
             vx = dm.x; vz = dm.z;
         } else {
             return null;
         }
 
+        // Y is target's altitude directly — no offset. Ram is meant to collide on the
+        // target's plane, not fly above. Vertical lead would let agile targets dodge
+        // by climbing/dropping; the controller's existing velocity damping handles overshoot.
         double tInt = solveIntercept(tx - shipPos.x, tz - shipPos.z, vx, vz);
         if (Double.isNaN(tInt) || tInt <= 0 || tInt > MAX_INTERCEPT_TICKS) {
             // Direct pursuit fallback: aim at current position.
-            return new Goal(tx, tz);
+            return new Goal(tx, ty, tz);
         }
-        return new Goal(tx + vx * tInt, tz + vz * tInt);
+        return new Goal(tx + vx * tInt, ty, tz + vz * tInt);
     }
 
     /** Solve |D + V * t|² = (S * t)² for the smallest positive {@code t}, where

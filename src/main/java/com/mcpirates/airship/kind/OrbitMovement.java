@@ -24,6 +24,11 @@ public final class OrbitMovement implements MovementBehavior {
     /** Decisions of sustained heading-err > tolerance×3 before flipping orbit direction. */
     private static final int ORBIT_STUCK_DECISIONS = 8;
 
+    /** Y offset above the target's eye level. Wide enough that the orbit clears the
+     *  target's deck for cannon arcs / crossbow shots; tight enough that the ship stays
+     *  in render range. */
+    private static final double PURSUE_ALT_OFFSET = 12.0;
+
     private OrbitMovement() {}
 
     @Override
@@ -45,7 +50,9 @@ public final class OrbitMovement implements MovementBehavior {
         double dirZ = tanZ + radInZ * radialBlend;
         double dirLen = Math.sqrt(dirX * dirX + dirZ * dirZ);
         if (dirLen > 0.001) { dirX /= dirLen; dirZ /= dirLen; }
-        return new Goal(shipPos.x + dirX * ORBIT_LOOK_AHEAD, shipPos.z + dirZ * ORBIT_LOOK_AHEAD);
+        return new Goal(shipPos.x + dirX * ORBIT_LOOK_AHEAD,
+                        targetPlayer.getEyeY() + PURSUE_ALT_OFFSET,
+                        shipPos.z + dirZ * ORBIT_LOOK_AHEAD);
     }
 
     @Override

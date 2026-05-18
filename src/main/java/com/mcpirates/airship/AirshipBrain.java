@@ -271,16 +271,19 @@ public final class AirshipBrain {
 
     // ───────────────────────────── Movement ─────────────────────────────
 
-    /** Per-state XZ goal; null = stationary. */
+    /** Per-state 3D goal; null = stationary. */
     private static MovementBehavior.Goal computeGoal(Airship a, Vector3d shipPos,
                                                      LivingEntity targetPlayer,
                                                      SubLevel targetShip, long now) {
+        // Non-PURSUE altitudes are uniform across kinds — cruiseRise from the airpad.
+        // Strategy-specific altitude only matters during PURSUE; that branch delegates.
+        double cruiseY = a.airpadAnchor.getY() + a.kind.cruiseRise();
         return switch (a.state) {
             case PURSUE -> a.kind.movement().computeGoal(a, shipPos, targetPlayer, targetShip, now);
             case RETURN -> new MovementBehavior.Goal(
-                    a.airpadAnchor.getX() + 0.5, a.airpadAnchor.getZ() + 0.5);
+                    a.airpadAnchor.getX() + 0.5, cruiseY, a.airpadAnchor.getZ() + 0.5);
             case NAVIGATE -> a.navDestination == null ? null
-                    : new MovementBehavior.Goal(a.navDestination.x, a.navDestination.z);
+                    : new MovementBehavior.Goal(a.navDestination.x, cruiseY, a.navDestination.z);
             case LIFTOFF, HOVER, MOORED -> null;
         };
     }
@@ -292,6 +295,7 @@ public final class AirshipBrain {
         MovementBehavior.Goal goal = computeGoal(a, shipPos, targetPlayer, targetShip,
                                                  a.parentLevel.getGameTime());
         double goalX = goal == null ? Double.NaN : goal.x();
+        double goalY = goal == null ? Double.NaN : goal.y();
         double goalZ = goal == null ? Double.NaN : goal.z();
         double headingErrDeg = 0;
         if (!Double.isNaN(goalX)) {
@@ -311,6 +315,7 @@ public final class AirshipBrain {
             a.controls.release(a);
         }
         a.lastGoalX = goalX;
+        a.lastGoalY = goalY;
         a.lastGoalZ = goalZ;
         a.lastHeadingErrDeg = headingErrDeg;
         // Orbit uses this for stuck-direction-flip; other movements are no-ops.

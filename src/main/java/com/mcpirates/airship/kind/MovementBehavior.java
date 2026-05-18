@@ -7,9 +7,9 @@ import org.joml.Vector3d;
 
 /**
  * Per-kind PURSUE movement strategy. The brain calls {@link #computeGoal} each decision
- * tick during PURSUE; the returned (x, z) is the world-frame horizontal goal the brain
- * steers toward using its generic yaw + clutch logic. Returning {@code null} signals
- * "no goal" (brain disengages clutches).
+ * tick during PURSUE; the returned 3D goal feeds both steering (XZ → heading error) and
+ * lift (Y → altitude target via plateau lookup). Returning {@code null} signals "no goal"
+ * (brain disengages clutches).
  *
  * <p>Two callbacks let an implementation maintain its own state without the brain
  * knowing about it: {@link #onEnterPursue} fires once on state transition, and
@@ -22,8 +22,10 @@ import org.joml.Vector3d;
  */
 public interface MovementBehavior {
 
-    /** Horizontal goal in world coordinates. */
-    record Goal(double x, double z) {}
+    /** 3D goal in world coordinates. Y is the target altitude the brain feeds to the
+     *  plateau-table picker; the floor clamp (ground clearance) is applied by the brain
+     *  uniformly across states. */
+    record Goal(double x, double y, double z) {}
 
     /** Decide where the ship should head this decision tick. Either target may be null;
      *  at least one is non-null when this is called. */
