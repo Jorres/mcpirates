@@ -7,7 +7,6 @@ import com.mcpirates.airship.interfaces.CombatBehavior;
 import com.mcpirates.airship.common.NoCannonCombat;
 import com.mcpirates.pirates.GroundCombatModule;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Rotation;
 
 import java.util.List;
@@ -33,7 +32,6 @@ public final class CrossbowBoardKind implements AirshipKind {
     private CrossbowBoardKind() {}
 
     @Override public String name() { return "crossbow_board"; }
-    @Override public Direction nbtForward() { return Direction.NORTH; }
 
     // NBT-frame deltas — private impl detail. Lever sits one block NBT-south of the anchor.
     private static final BlockPos ANCHOR_TO_LEVER = new BlockPos(0, 0, +1);

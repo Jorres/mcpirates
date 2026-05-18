@@ -8,7 +8,6 @@ import com.mcpirates.airship.interfaces.MovementBehavior;
 import com.mcpirates.airship.common.NoCannonCombat;
 import com.mcpirates.pirates.GroundCombatModule;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Rotation;
 
 import java.util.List;
@@ -36,7 +35,6 @@ public final class RamshipKind implements AirshipKind {
     private RamshipKind() {}
 
     @Override public String name() { return "ramship"; }
-    @Override public Direction nbtForward() { return Direction.NORTH; }
 
     /** Ramming low-altitude targets requires giving up most of the ground-clearance
      *  safety margin — a 30-block floor (the default) would prevent the ramship from

@@ -5,7 +5,6 @@ import com.mcpirates.airship.interfaces.Layout;
 import com.mcpirates.airship.ships.AnchorNbtPositions;
 import com.mcpirates.airship.interfaces.CombatBehavior;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Rotation;
 
 import java.util.List;
@@ -44,7 +43,6 @@ public final class GalleonKind implements AirshipKind {
     }
 
     @Override public String name() { return "galleon"; }
-    @Override public Direction nbtForward() { return Direction.NORTH; }
 
     /** Galleon climbs ~100 blocks above its spawn altitude before exiting LIFTOFF —
      *  it has much more lift than airship_small, so the 25-block default exits

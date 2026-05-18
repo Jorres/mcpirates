@@ -26,13 +26,14 @@ import net.minecraft.world.level.BlockGetter;
  *
  * <h2>FACING</h2>
  *
- * Carries the standard {@link HorizontalDirectionalBlock#FACING} property. Its
- * <em>only</em> purpose is to encode the structure's worldgen rotation: structure-template
- * placement rotates this property automatically via {@link #rotate(BlockState, Rotation)},
- * and {@code AirshipKind.detectRotation} reads it back at activation to recover the
- * placed rotation. The NBT-frame default is {@link Direction#NORTH} — an arbitrary,
- * cross-kind-consistent reference axis, NOT a claim about the ship's bow direction
- * (which is a separate concept, {@code AirshipKind.nbtForward()}).
+ * Carries the standard {@link HorizontalDirectionalBlock#FACING} property. Its purpose is
+ * to encode the structure's worldgen rotation: structure-template placement rotates this
+ * property automatically via {@link #rotate(BlockState, Rotation)}, and
+ * {@code AirshipKind.detectRotation} reads it back at activation to recover the placed
+ * rotation. The NBT-frame default {@link #NBT_FACING} also doubles as each ship's bow
+ * direction in NBT — by convention every ship is authored with both the anchor and the
+ * bow pointing this way, so {@code Airship}'s constructor uses the same constant to
+ * derive {@code shipLocalForward}.
  *
  * <h2>Visual + physical properties</h2>
  *
@@ -48,9 +49,15 @@ public final class MCPShipAnchorBlock extends Block implements EntityBlock {
 
     public static final DirectionProperty FACING = HorizontalDirectionalBlock.FACING;
 
+    /** Mod-wide convention: every ship NBT authors the anchor — and the ship's bow — at
+     *  this direction. {@link com.mcpirates.airship.Airship}'s constructor uses this same
+     *  constant to derive {@code shipLocalForward}. Don't fork them without also splitting
+     *  the bow direction back out as a per-kind concept. */
+    public static final Direction NBT_FACING = Direction.NORTH;
+
     public MCPShipAnchorBlock(BlockBehaviour.Properties properties) {
         super(properties);
-        registerDefaultState(stateDefinition.any().setValue(FACING, Direction.NORTH));
+        registerDefaultState(stateDefinition.any().setValue(FACING, NBT_FACING));
     }
 
     @Override

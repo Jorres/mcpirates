@@ -36,14 +36,6 @@ public interface AirshipKind {
      *  pos and the assembly rotation. */
     BlockPos leverFromAnchor(Rotation r, BlockPos anchorWorld);
 
-    /** NBT-frame "ship forward" — only consumed by {@link #worldForward}'s default. */
-    Direction nbtForward();
-
-    /** Ship's bow direction in the world frame (NBT-forward rotated by {@code r}). */
-    default Direction worldForward(Rotation r) {
-        return r.rotate(nbtForward());
-    }
-
     /** Recover the placement rotation from the anchor block's FACING property. Returns empty
      *  if the block at {@code anchorWorld} isn't an anchor (chunk not primed, or it's been
      *  griefed). Independent of the ship's bow direction — see

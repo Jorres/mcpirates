@@ -1,5 +1,6 @@
 package com.mcpirates.airship;
 
+import com.mcpirates.airship.anchor.MCPShipAnchorBlock;
 import com.mcpirates.airship.hardware.HotAirBurners;
 import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.airship.interfaces.Layout;
@@ -54,7 +55,7 @@ public final class Airship {
     public final BlockPos slPrimaryAnchor;
 
     public final List<BlockPos> slCannonMounts;
-    /** Derived from {@code kind.worldForward(rotation)}. */
+    /** Derived from {@code rotation.rotate(MCPShipAnchorBlock.NBT_FACING)}. */
     public final Vector3d shipLocalForward;
     /** Crew the brain re-anchors after chunk reload. Replaced by {@link #installCrew} on
      *  MOORED→LIFTOFF promotion. */
@@ -137,7 +138,7 @@ public final class Airship {
         this.slCannonMounts = slCannonMounts;
         this.anchoredEntities = anchoredEntities;
         this.cannoneerByMount = cannoneerByMount;
-        Direction fwd = kind.worldForward(rotation);
+        Direction fwd = rotation.rotate(MCPShipAnchorBlock.NBT_FACING);
         this.shipLocalForward = new Vector3d(fwd.getStepX(), fwd.getStepY(), fwd.getStepZ());
     }
 
