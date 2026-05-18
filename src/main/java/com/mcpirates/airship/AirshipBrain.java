@@ -325,13 +325,7 @@ public final class AirshipBrain {
 
     /** Plateau-pick (lever, volume) and write to every throttle lever + burner. */
     private static void applyLift(Airship a, LivingEntity target, Vector3d shipPos) {
-        Level subLevelLevel = a.subLevel.getLevel();
-        int balloonCap = -1;
-        for (BlockPos burner : a.slBurnerPositions) {
-            int c = HotAirBurners.queryBalloonCapacity(subLevelLevel, burner);
-            if (c > 0) { balloonCap = c; break; }
-        }
-        a.balloonCapacity = balloonCap;
+        a.balloonCapacity = a.lift.queryBalloonCapacity(a);
         int maxGroundAhead = maxGroundAhead(a, shipPos);
         LiftSetting lift = chooseLiftSetting(a, a.state, shipPos, target, maxGroundAhead);
         if (lift != null) {
