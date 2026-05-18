@@ -1,7 +1,7 @@
 package com.mcpirates.registry;
 
 import com.mcpirates.MCPirates;
-import com.mcpirates.airship.worldgen.GalleonStructure;
+import com.mcpirates.airship.galleon.GalleonStructure;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.world.level.levelgen.structure.StructureType;
 import net.neoforged.bus.api.IEventBus;

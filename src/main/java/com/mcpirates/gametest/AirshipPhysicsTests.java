@@ -283,7 +283,7 @@ public final class AirshipPhysicsTests {
 
     private static void sample(ServerLevel parentLevel, Airship a, String phase) {
         if (a == null) return;
-        com.mcpirates.airship.ShipLog.snapshot(a, "physics-test " + phase);
+        com.mcpirates.airship.ShipTelemetry.snapshot(a, "physics-test " + phase);
     }
 
 }

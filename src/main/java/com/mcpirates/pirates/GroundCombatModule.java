@@ -28,101 +28,40 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Ground-side defenders that spawn next to a dormant pirate airship the first time a
- * player approaches it <em>on foot</em>. A player arriving in their own airship triggers
- * the existing in-air liftoff path instead — see {@link com.mcpirates.airship.AirshipLiftoffTrigger}.
+ * Ground defenders that spawn next to a dormant pirate airship when a player approaches
+ * on foot. Air arrival triggers {@link com.mcpirates.airship.AirshipLiftoffTrigger} instead.
  *
- * <h2>Gameplay role</h2>
+ * <p>The "prize fight": kill the defenders and the airship is yours. The captain mob
+ * carries {@link MCPDataKeys#CAPTAIN_TAG} + {@link MCPDataKeys#CAPTAIN_ANCHOR_NBT_KEY},
+ * so {@code CaptainDeath} drops the seal and {@code DefeatedAirships} marks the ship cleared
+ * regardless of where the fight happened.
  *
- * Without this module a freshly-arrived on-foot player would have no way to engage the
- * pirate airship (they can't board it, and the liftoff trigger is gated on the player
- * being on a SubLevel). The ground module is the "prize fight": kill the defenders and
- * the airship is yours — undefended, no deck pillagers spawn. The bounty captain on
- * the ground is fully equivalent to his deck counterpart: same {@link MCPDataKeys#CAPTAIN_TAG},
- * same {@link MCPDataKeys#CAPTAIN_ANCHOR_NBT_KEY persistent anchor key}, so killing him
- * drops the seal and marks the ship defeated for {@code DefeatedAirships}. The
- * sheriff-bounty loop works whether the player engages on foot or in the air.
- *
- * <h2>Loadout (v0.1, shared between airship_small and crossbow_board)</h2>
- *
- * <ul>
- *   <li>1× {@link Vindicator} — default iron axe, no armour. Standard melee threat.</li>
- *   <li>2× {@link Pillager} — default crossbow. Ranged pressure; spread spawn so they
- *       don't share the same firing arc.</li>
- *   <li>1× {@link Vindicator} "captain" — iron sword + iron helm + iron chestplate,
- *       custom-named, captain-tagged. Tankier, last-man-standing, drops the seal.</li>
- * </ul>
- *
- * <p>Total raw threat: ~13 dmg from each vindicator melee, ~9 dmg per crossbow bolt,
- * captain has ~44% damage reduction from iron armour. Designed to bruise an early
- * leather-armoured player but be killable with a shield + iron sword.
- *
- * <h2>Spawn frame — lever-relative, not anchor-relative</h2>
- *
- * <p>{@link #SPAWN_DELTAS} are lever-relative because the kind's {@link AirshipKind#glueMin
- * glueMin}/{@link AirshipKind#glueMax glueMax} hull bounds are also lever-relative —
- * sharing the frame lets us read off "outside the hull" trivially. Y is resolved via
- * the world heightmap so defenders land on whatever surface the ship is parked on (its
- * stone-brick pad in worldgen, or natural terrain in a test setup), avoiding the
- * anchor-vs-lever-vs-pad Y-offset minefield that bit the first iteration.
- *
- * <h2>Despawn on liftoff</h2>
- *
- * If the airship eventually lifts off (another player flies up in their own ship), the
- * in-air branch first calls {@link #despawn} on the engagement so the ground defenders
- * don't double up with the air crew.
+ * <p>Spawn deltas are lever-relative to share frame with the kind's hull bounds; Y is read
+ * from the heightmap so defenders land on whatever surface the ship parked on. If the ship
+ * later lifts off, the trigger calls {@link #despawn} so air and ground crews don't double up.
  */
 public final class GroundCombatModule {
 
-    /** Shared instance — the first two ships (airship_small, crossbow_board) point at
-     *  this. If a later ship wants a different loadout, instantiate a separate one
-     *  rather than mutating shared state. */
     public static final GroundCombatModule SHARED = new GroundCombatModule();
 
-    /** Defenders' leash radius around their spawn point. Wide enough that vanilla
-     *  vindicator/pillager combat AI can chase a player who steps back to ~kite range,
-     *  tight enough that a sprinting retreat outpaces them and they wander home
-     *  instead of disappearing into the world. */
     public static final int LEASH_RADIUS = 30;
 
-    /**
-     * Returned from {@link #spawn} so the trigger can despawn living attackers later.
-     * The list is immutable; individual mobs may die in the meantime — {@link #despawn}
-     * just skips removed/dead entries.
-     */
+    /** Immutable; {@link #despawn} tolerates already-dead entries. */
     public record GroundEngagement(List<UUID> attackerUuids) {}
 
-    /** Lever-relative (NBT-frame) spawn deltas. X chosen clearly outside both kinds'
-     *  actual <em>body</em> X span (which is tighter than {@link AirshipKind#glueMin
-     *  glueMin}/{@link AirshipKind#glueMax glueMax}!): airship_small body lever-rel
-     *  X=-3..+1, crossbow_board body lever-rel X=-2..+3. So safe exterior X is
-     *  X &lt;= -4 (west of both bodies) or X &gt;= +4 (east of both). A delta of -3
-     *  lands on airship_small's western hull column — the iteration-1 bug that put a
-     *  pillager on top of the keel. Z spreads the line along the ship's flank. Y is
-     *  unused (the spawn path pulls it from the world heightmap at the X/Z column). */
+    /** Lever-relative deltas. |X| >= 4 keeps spawns clear of both small ship hulls
+     *  (airship_small body X=-3..+1, crossbow_board body X=-2..+3). Y comes from the
+     *  heightmap. */
     private static final BlockPos[] SPAWN_DELTAS = {
             new BlockPos(+4, 0,  0),  // vindicator: east flank, midship
             new BlockPos(+4, 0, -3),  // crossbow pillager 1: east flank, forward
             new BlockPos(-4, 0, -2),  // crossbow pillager 2: west flank, forward
-            new BlockPos(+5, 0, +2),  // captain: east flank, aft, one block further out
+            new BlockPos(+5, 0, +2),  // captain: east flank, aft
     };
 
     private GroundCombatModule() {}
 
-    /**
-     * Spawn the full ground-combat loadout near the dormant ship. Mobs use vanilla AI
-     * ({@code NoAi=false}) so they path toward and engage the player on their own.
-     * Persistence is forced so a player retreating ~30 blocks doesn't despawn them.
-     *
-     * @param level         parent ServerLevel (NOT a SubLevel — these defenders live in
-     *                      the normal world).
-     * @param leverWorldPos world-space position of the ship's primary lever. Same frame
-     *                      the kind's hull bounds use, so {@link #SPAWN_DELTAS} land
-     *                      outside the hull by construction.
-     * @param rotation      jigsaw rotation of the parent structure, applied to the
-     *                      X/Z deltas.
-     * @param kind          supplies a name string for diagnostic logs.
-     */
+    /** Spawn defenders in the parent ServerLevel (not a SubLevel). */
     public GroundEngagement spawn(ServerLevel level, BlockPos leverWorldPos,
                                   Rotation rotation, AirshipKind kind) {
         List<UUID> uuids = new ArrayList<>(SPAWN_DELTAS.length);
@@ -152,12 +91,7 @@ public final class GroundCombatModule {
         return new GroundEngagement(Collections.unmodifiableList(uuids));
     }
 
-    /** Apply rotation to the X/Z delta, then query the world heightmap so the mob
-     *  stands on whatever surface is there — pad block, grass, sand — rather than
-     *  hardcoding a Y offset that only works for one kind's pad layout. Uses
-     *  MOTION_BLOCKING_NO_LEAVES (the heightmap mobs themselves consult for landing)
-     *  rather than WORLD_SURFACE — leaves shouldn't pin a vindicator in the canopy
-     *  if a ship ever parks above a forest. */
+    /** Resolves Y via MOTION_BLOCKING_NO_LEAVES so leaves never pin a defender in a canopy. */
     private static BlockPos resolveGroundPos(ServerLevel level, BlockPos leverWorldPos,
                                              BlockPos delta, Rotation rotation) {
         BlockPos rotated = delta.rotate(rotation);
@@ -167,11 +101,7 @@ public final class GroundCombatModule {
         return new BlockPos(x, y, z);
     }
 
-    /**
-     * Remove any still-living attackers from {@code engagement}. Already-dead or
-     * already-removed entries are silently skipped. Returns the count actually
-     * removed for log readability.
-     */
+    /** Remove still-living attackers; returns the count actually removed. */
     public int despawn(ServerLevel level, GroundEngagement engagement) {
         int removed = 0;
         for (UUID id : engagement.attackerUuids()) {
@@ -183,9 +113,7 @@ public final class GroundCombatModule {
         return removed;
     }
 
-    /** True iff every attacker in the engagement is dead or gone. The trigger uses
-     *  this to decide whether to re-spawn the module (it doesn't — once cleared, the
-     *  ground is the player's reward) and for log clarity. */
+    /** True iff every attacker is dead or gone. */
     public boolean isCleared(ServerLevel level, GroundEngagement engagement) {
         for (UUID id : engagement.attackerUuids()) {
             Entity e = level.getEntity(id);
@@ -221,19 +149,12 @@ public final class GroundCombatModule {
         // finalizeSpawn equips the vindicator's vanilla iron-axe default + sets attack
         // attributes. Passing null reason because this isn't a natural spawn.
         v.finalizeSpawn(level, level.getCurrentDifficultyAt(pos), MobSpawnType.EVENT, null);
-        // finalizeSpawn may overwrite our mainhand with the default iron axe — re-apply
-        // the sword AFTER if requested. (We deliberately don't re-apply armour because
-        // finalizeSpawn doesn't touch HEAD/CHEST when no spawn-armour table fires for
-        // EVENT, but the sword goes in MAINHAND which is always re-rolled.)
+        // finalizeSpawn re-rolls MAINHAND to the default iron axe; re-apply sword after.
         if (sword) {
             v.setItemSlot(EquipmentSlot.MAINHAND, new ItemStack(Items.IRON_SWORD));
-            // Lock the weapon so vindicator's pickup-equipment AI doesn't swap it back.
             v.setDropChance(EquipmentSlot.MAINHAND, 0f);
         }
         if (captain) {
-            // Tag + anchor stamp mirror CaptainSpawner's deck-captain setup so CaptainDeath
-            // drops the seal and DefeatedAirships marks the ship as cleared regardless of
-            // whether the player engaged on foot or in the air.
             v.addTag(MCPDataKeys.CAPTAIN_TAG);
             v.getPersistentData().putLong(MCPDataKeys.CAPTAIN_ANCHOR_NBT_KEY, shipLeverWorldPos.asLong());
         }
@@ -254,7 +175,6 @@ public final class GroundCombatModule {
         p.moveTo(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, 0f, 0f);
         p.restrictTo(pos, LEASH_RADIUS);
         attachLeashBehavior(p);
-        // finalizeSpawn equips the crossbow + the pillager's default cape & arm offsets.
         p.finalizeSpawn(level, level.getCurrentDifficultyAt(pos), MobSpawnType.EVENT, null);
         boolean added = level.addFreshEntity(p);
         if (!added) {
@@ -264,8 +184,7 @@ public final class GroundCombatModule {
         return p;
     }
 
-    /** Wire restriction-based path-home + drop-target-when-outside-leash. Vanilla
-     *  Vindicator/Pillager omit both. */
+    /** Wire path-home + drop-target-when-outside-leash (neither is on vanilla by default). */
     private static void attachLeashBehavior(Mob mob) {
         mob.goalSelector.addGoal(5, new MoveTowardsRestrictionGoal(
                 (net.minecraft.world.entity.PathfinderMob) mob, 1.0));

@@ -36,42 +36,24 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Re-registers persisted SubLevels with the brain after restart. Triggered on
- * {@link ServerStartedEvent} — scans every container's already-loaded SubLevels and
- * attaches a {@link SubLevelObserver} so any SubLevel that loads lazily (chunks coming
- * into range) is rehydrated when it arrives. Without this, a ship that was flying at
- * shutdown comes back as a persisted SubLevel that nobody is ticking: clutch/throttle
- * writes never happen, crew lose their {@code sable$setPlotPosition} binding (it's a
- * {@code @Unique} mixin field, not in entity NBT), and rapier's accumulated angular
- * velocity spins the body unchecked.
- *
- * <p>State source of truth: {@link ServerSubLevel#getUserDataTag()}'s
- * {@code "mcpirates"} compound, written by {@code activateShip} after a successful
- * assembly. The ship_anchor block doesn't survive assembly (no collision → BFS skips
- * it), so we can't rely on a block-entity stamp.
- *
- * <p>Crew pillagers carry {@code mcpirates.role} + {@code mcpirates.cannon_mount} so
- * we can rebuild {@code PirateRole} and the {@code cannoneerByMount} map without
- * re-running the seat scan.
+ * Re-register persisted SubLevels with the brain on restart / chunk reload. Source of
+ * truth is {@code userDataTag.mcpirates} written by {@code activateShip} (the anchor
+ * block doesn't survive assembly, so a BE stamp wouldn't work). Crew pillagers carry
+ * {@code role}/{@code cannon_mount} stamps so we can rebuild PirateRole and the
+ * cannon→cannoneer map without re-scanning seats.
  */
 @EventBusSubscriber(modid = MCPirates.MOD_ID)
 public final class AirshipRehydrator {
 
     private AirshipRehydrator() {}
 
-    /** SubLevels that arrived via {@code onSubLevelAdded} but haven't been rehydrated yet
-     *  (their userDataTag wasn't set at observer-fire time — see class doc). Processed on
-     *  the next ServerTickEvent.Post by {@link #onServerTick}. */
+    /** Queued because {@code onSubLevelAdded} fires before {@code setUserDataTag};
+     *  {@link #onServerTick} retries once the tag is in place. */
     private static final java.util.Set<java.util.UUID> PENDING = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
-    /** Half-extent of the crew-scan AABB around the ship's world-rendered position.
-     *  Covers galleon footprint (~12×15×28) plus margin for inter-tick drift. */
+    /** Covers galleon footprint + drift between save and rehydrate. */
     private static final double CREW_SCAN_RADIUS = 64.0;
 
-    /** Hook ServerStartedEvent to scan any preloaded SubLevels and attach observers for
-     *  later arrivals. SubLevels loaded lazily via {@code SubLevelSerializer} fire
-     *  {@code onSubLevelAdded} BEFORE {@code setUserDataTag}, so we queue them and let
-     *  {@link #onServerTick} retry once the tag is in place. */
     @SubscribeEvent
     public static void onServerStarted(ServerStartedEvent event) {
         var server = event.getServer();
@@ -128,22 +110,11 @@ public final class AirshipRehydrator {
         return registered;
     }
 
-    /** Resurrects an existing mcpirates SubLevel back into the brain's {@code SHIPS}
-     *  list — for ships that survived a server restart or had their chunks unloaded
-     *  and reloaded. The brain itself is in-memory only; the SubLevel + its userDataTag
-     *  stamp persist on disk, so this is how a flying ship "comes back."
-     *
-     *  <p>Fresh assemblies don't go through here — {@link AirshipLiftoffTrigger} calls
-     *  {@link AirshipBrain#register} directly during Step 8 of {@code activateShip},
-     *  passing {@code state=LIFTOFF} so the new ship runs the full
-     *  LIFTOFF → PURSUE/RETURN/HOVER state-machine path. Our {@link SubLevelObserver}
-     *  catches every SubLevel allocation (fresh OR disk-loaded) and queues the UUID,
-     *  so the duplicate-skip guard below is needed to bail out for ones the trigger
-     *  has already registered. */
+    /** Brain SHIPS list is in-memory; this is how a saved flying ship comes back.
+     *  Fresh assemblies register directly via {@link AirshipLiftoffTrigger}; the
+     *  duplicate-skip below bails when the trigger beat the observer. */
     private static boolean tryRehydrate(ServerLevel parentLevel, SubLevel subLevel) {
         if (!(subLevel instanceof ServerSubLevel ssl)) return false;
-        // Skip ships already in the brain — the trigger races our observer for fresh
-        // assemblies and gets there first.
         for (Airship existing : AirshipBrain.ships()) {
             if (existing.subLevelId.equals(ssl.getUniqueId())) return false;
         }
@@ -162,9 +133,7 @@ public final class AirshipRehydrator {
         Rotation rotation = Rotation.values()[mcp.getInt("rotation")];
         BlockPos slPrimaryAnchor = BlockPos.of(mcp.getLong("slPrimaryAnchor"));
 
-        // SubLevel-local positions from kind deltas. Rotation hasn't changed since
-        // assembly, so the same delta formula that activateShip used in WORLD coords
-        // gives correct SL-LOCAL coords here.
+        // SL-local positions: same delta formula activateShip used in world coords.
         List<BlockPos> slThrottleLevers = new ArrayList<>(kind.throttleLeverDeltas().size());
         for (BlockPos d : kind.throttleLeverDeltas()) {
             slThrottleLevers.add(slPrimaryAnchor.offset(d.rotate(rotation)));
@@ -186,12 +155,9 @@ public final class AirshipRehydrator {
         Vector3d shipLocalForward = new Vector3d(
                 shipForwardDir.getStepX(), shipForwardDir.getStepY(), shipForwardDir.getStepZ());
 
-        // Crew: scan around the ship's WORLD-rendered position, not the plot box. Sable's
-        // Entity tick mixin writes the world-rendered position back to entity.position()
-        // every frame, so on save the pillagers' NBT carries world coords (~ship's
-        // logical-pose XYZ) rather than plot coords (~20M). A plot-bbox scan would miss
-        // them all. CREW_SCAN_RADIUS is generous enough to cover any ship's footprint
-        // plus a margin for in-flight drift between save and rehydrate.
+        // Sable writes world-coords back to entity.position() every frame, so saved
+        // pillager NBT carries ship-world XYZ, not plot coords (~20M). Scan around the
+        // pose centre, not the plot bbox.
         Vector3d shipWorldPos = ssl.logicalPose().position();
         AABB scanBox = new AABB(
                 shipWorldPos.x - CREW_SCAN_RADIUS, shipWorldPos.y - CREW_SCAN_RADIUS, shipWorldPos.z - CREW_SCAN_RADIUS,
@@ -213,13 +179,8 @@ public final class AirshipRehydrator {
             }
         }
 
-        // MOORED ships were never in flight to begin with — they were assembled by the
-        // on-foot ground-combat path and parked on the airpad. Bring them back as MOORED
-        // (the brain's MOORED short-circuit + defeat-gate keep an empty-crew ship from
-        // self-destructing). Otherwise: rehydrated ships are already in-flight, start in
-        // HOVER if at the airpad, RETURN otherwise — LIFTOFF is the "freshly climbing
-        // from the airpad" phase only and its stabilized-exit gate doesn't fire for a
-        // ship already at cruise altitude.
+        // MOORED ships come back as MOORED; otherwise HOVER if at airpad, else RETURN
+        // (LIFTOFF's exit gates don't fire on a ship already at cruise altitude).
         AirshipBrain.State initialState;
         if (mcp.getBoolean("moored")) {
             initialState = AirshipBrain.State.MOORED;
@@ -248,10 +209,7 @@ public final class AirshipRehydrator {
         };
     }
 
-    /** World position → absolute plot coordinate (high ~20M range). The previous
-     *  implementation returned only the pose-center-relative offset; Sable's tick
-     *  mixin then couldn't resolve a SubLevel for that "plot pos" via getContaining
-     *  and wiped the anchor back to null, leaving the pillager detached. */
+    /** Inverse of logicalPose; returns absolute plot coords (~20M). */
     private static Vec3 worldToPlot(SubLevel subLevel, Vec3 worldPos) {
         return subLevel.logicalPose().transformPositionInverse(worldPos);
     }

@@ -28,92 +28,44 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Seat-driven pirate spawn. Every airship gets one pillager per Create seat inside its
- * glue volume, with role determined by seat colour and proximity to cannons:
- *
+ * Seat-driven pirate spawn — one pillager per Create seat in the glue volume:
  * <ul>
- *   <li><strong>Black seat → captain.</strong> Tagged {@link MCPDataKeys#CAPTAIN_TAG} so
- *       {@link CaptainDeath} drops a seal + marks the airship defeated. Wields a crossbow
- *       and runs {@link CrossbowmanRole}. Each ship NBT must have <em>exactly one</em>
- *       black seat — zero or more than one is treated as a broken blueprint and no crew
- *       spawns at all (loud error, no salvage path).</li>
- *   <li><strong>Gray / light-gray seat near a cannon → cannoneer.</strong> Each cannon
- *       mount claims its nearest unclaimed crew seat within {@link #CANNONEER_BIND_RANGE_SQ}
- *       blocks. The pillager there is unarmed, runs {@link CannoneerRole}, and is
- *       registered in {@link com.mcpirates.airship.Airship#cannoneerByMount}. Killing
- *       the cannoneer permanently silences that cannon (per-mount, not all of them).</li>
- *   <li><strong>Gray / light-gray seat elsewhere → crossbowman.</strong> Untagged,
- *       crossbow-wielding, fires in staggered volleys.</li>
+ *   <li><b>Black seat</b> → captain ({@link MCPDataKeys#CAPTAIN_TAG}, crossbow,
+ *       {@link CrossbowmanRole}). Exactly one required, else no crew spawns at all.</li>
+ *   <li><b>Gray/light-gray near cannon</b> (within {@link #CANNONEER_BIND_RANGE_SQ})
+ *       → {@link CannoneerRole}, registered in {@code cannoneerByMount}.</li>
+ *   <li><b>Gray/light-gray elsewhere</b> → crossbowman, staggered volleys.</li>
  * </ul>
  *
- * <h2>Why colour + proximity (and not just colour, or just proximity)</h2>
- *
- * <p>Colour cleanly answers "which seat is the captain?" — explicit, rotation-independent,
- * doesn't depend on the NBT designer remembering to put the helm at the highest Y. Cannon
- * binding still uses proximity because there's no natural colour-mapping for "this seat
- * belongs to that cannon" — and the geometric pairing is intuitive (sit next to the gun
- * you're operating).
- *
- * <h2>Anchoring + per-pirate behaviour</h2>
- *
- * <p>Pillagers stay {@code NoAi=true} + {@code NoGravity=true} and are anchored via
- * Sable's {@code sable$setPlotPosition(Vec3)}. Sable's {@code Entity.tick} mixin re-derives
- * world position each tick from plot pos. The plot-position field isn't persisted to NBT
- * so {@link com.mcpirates.airship.AirshipBrain#tickShip} re-applies it from
- * {@link AnchoredEntity#plotPos} when observed null. See {@link PirateRole} for why we
- * don't reuse vanilla {@code Goal}s.
+ * <p>Pillagers are {@code NoAi=true}/{@code NoGravity=true} and anchored via Sable's
+ * {@code sable$setPlotPosition}; plot-pos isn't persisted, so the brain re-applies it
+ * after chunk reload.
  */
 public final class CaptainSpawner {
 
-    /**
-     * Stable handle to a pillager anchored on a moving SubLevel.
-     *
-     * <p>{@link #role} is the per-pirate behaviour model. Each instance may be unique
-     * per-pirate ({@link CrossbowmanRole} carries reload state) or a shared singleton
-     * ({@link CannoneerRole} is stateless).
-     */
+    /** Stable handle for a Sable-anchored pillager. {@code role} may be shared
+     *  (stateless) or unique (carries per-pirate state). */
     public record AnchoredEntity(UUID uuid, Vec3 plotPos, PirateRole role) {}
 
-    /**
-     * Bundle returned from {@link #spawn} — the anchored entities for the brain to drive,
-     * plus the cannon→cannoneer binding for {@link com.mcpirates.airship.Airship}'s
-     * {@code isMountManned} queries.
-     */
     public record CrewSpawnResult(List<AnchoredEntity> anchors,
                                   Map<BlockPos, UUID> cannoneerByMount) {
 
-        /** Empty result, used for dormant (MOORED) ship registrations that skip
-         *  deck-crew spawn — see {@link com.mcpirates.airship.AirshipLiftoffTrigger}. */
+        /** Used for MOORED registrations that defer deck-crew spawn. */
         public static CrewSpawnResult empty() {
             return new CrewSpawnResult(List.of(), Map.of());
         }
     }
 
-    /** Stagger between crossbowman firing starts (ticks). 7 ticks = 0.35 s, so a 4-crew
-     *  volley spreads ~1 s from first shot to last — overlapping reloads. */
+    /** 7 ticks → 4-crew volley spreads ~1s. */
     private static final int CREW_FIRE_STAGGER_TICKS = 7;
 
-    /** Max squared-distance from a cannon mount to bind a seat as cannoneer station.
-     *  16 = 4 blocks Euclidean — generous enough to absorb deck thickness and 1–2 blocks
-     *  of horizontal offset from the mount. A seat farther than that is treated as a
-     *  crossbowman / captain station, and the cannon goes un-manned (no fire). */
+    /** 4-block² seat→cannon binding window; un-manned cannons never fire. */
     private static final double CANNONEER_BIND_RANGE_SQ = 16.0;
 
 
     private CaptainSpawner() {}
 
-    /**
-     * Scan seats, bind cannons, spawn the crew.
-     *
-     * @param subLevel        SubLevel returned by the assembler.
-     * @param leverWorldPos   pre-assembly world pos of the airship's primary lever —
-     *                        airship identity stamped onto each pirate's persistentData.
-     * @param assemblyOffset  offset returned by the assembler.
-     * @param rotation        jigsaw rotation of the structure.
-     * @param kind            supplies the glue AABB used to bound the seat scan.
-     * @param slCannonMounts  cannon mount positions in SubLevel-local frame (already
-     *                        assembled). Each gets its nearest seat as cannoneer station.
-     */
+    /** Scan seats, bind cannons, spawn the crew. */
     public static CrewSpawnResult spawn(SubLevel subLevel, BlockPos leverWorldPos,
                                         BlockPos assemblyOffset, Rotation rotation,
                                         AirshipKind kind, List<BlockPos> slCannonMounts) {
@@ -134,9 +86,7 @@ public final class CaptainSpawner {
         BlockPos captainSeat = scan.captainSeats().get(0);
         List<BlockPos> crewSeats = new ArrayList<>(scan.crewSeats());
 
-        // Bind cannons → nearest unclaimed CREW seat (captain seat is reserved). The black
-        // seat is never a cannoneer station even if it happens to sit next to a cannon —
-        // colour is the authoritative role marker.
+        // Cannons claim nearest unclaimed CREW seat; black seat is never a cannoneer.
         Set<BlockPos> reserved = new HashSet<>();
         Map<BlockPos, BlockPos> cannonToSeat = new HashMap<>();
         for (BlockPos mount : slCannonMounts) {
@@ -192,8 +142,7 @@ public final class CaptainSpawner {
                 /*cannonMountSlPos=*/ null);
         if (captain != null) anchors.add(captain);
 
-        // Crossbowmen on remaining (unclaimed) crew seats. Stagger reloads so volleys
-        // arrive spread across ~1 s rather than as one big simultaneous flight.
+        // Crossbowmen on remaining crew seats; stagger reloads.
         int volleyStaggerIndex = 1;
         for (BlockPos seat : crewSeats) {
             if (reserved.contains(seat)) continue;
@@ -216,16 +165,11 @@ public final class CaptainSpawner {
         return new CrewSpawnResult(anchors, cannoneerByMount);
     }
 
-    /** Pillager stands ON the seat block: feet at (x+0.5, y+1, z+0.5) — same convention
-     *  vanilla uses when a mob mounts a seat block. */
+    /** Feet at (x+0.5, y+1, z+0.5) — same convention vanilla uses for seat-mounted mobs. */
     private static Vec3 seatToFeetPlot(BlockPos seat) {
         return new Vec3(seat.getX() + 0.5, seat.getY() + 1.0, seat.getZ() + 0.5);
     }
 
-    /**
-     * Spawn one pillager at the given plot-local position, anchor it via Sable, equip
-     * per-role, and stamp the airship anchor for the defeat-tracking pipeline.
-     */
     private static AnchoredEntity spawnAnchoredPillager(
             Level inner, SubLevel subLevel,
             Vec3 plotPos,
@@ -254,14 +198,9 @@ public final class CaptainSpawner {
         }
         pillager.setCustomName(customName);
         pillager.setCustomNameVisible(true);
-        // Aggressive flag → vanilla Pillager.getArmPose() returns CROSSBOW_HOLD when also
-        // holding a crossbow (arms raised). Cannoneers have no weapon and don't want the
-        // attacking pose — they're crew, not shooters. So only set aggressive for armed
-        // roles. NoAi=true keeps the flag from being ticked back off.
+        // Aggressive→CROSSBOW_HOLD pose with arms raised. Skip for unarmed cannoneers.
         pillager.setAggressive(!mainHand.isEmpty());
-        // Stamp the airship anchor for CaptainDeath / DefeatedAirships. Harmless for crew
-        // (their death isn't watched) — lets us later promote a crewmate to captain
-        // without touching the spawn path.
+        // Anchor stamp is harmless on non-captain crew; keeps promote-to-captain path open.
         pillager.getPersistentData().putLong(MCPDataKeys.CAPTAIN_ANCHOR_NBT_KEY, airshipAnchorWorldPos.asLong());
         pillager.getPersistentData().putString(MCPDataKeys.CREW_ROLE_NBT_KEY, roleStamp);
         if (cannonMountSlPos != null) {
@@ -269,8 +208,7 @@ public final class CaptainSpawner {
         }
 
         boolean added = inner.addFreshEntity(pillager);
-        // Bind to the SubLevel AFTER addFreshEntity so the entity's full state is in place
-        // and Sable's @Unique mixin field has been initialised.
+        // Bind AFTER addFreshEntity so Sable's @Unique mixin field is initialised.
         ((EntityStickExtension) pillager).sable$setPlotPosition(plotPos);
 
         MCPirates.LOGGER.info(
@@ -280,8 +218,7 @@ public final class CaptainSpawner {
         return added ? new AnchoredEntity(pillager.getUUID(), plotPos, role) : null;
     }
 
-    /** Rotate the kind's NBT-frame glue corners into SubLevel space, sort componentwise,
-     *  then scan that AABB for Create seats partitioned by colour. */
+    /** Rotate glue corners into SubLevel space, sort, scan for colour-partitioned seats. */
     private static Seats.SeatScan scanSeatsInGlueBox(SubLevel subLevel, BlockPos leverWorldPos,
                                                      BlockPos assemblyOffset, Rotation rotation,
                                                      AirshipKind kind) {

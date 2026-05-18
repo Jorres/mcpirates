@@ -1,4 +1,4 @@
-package com.mcpirates.mixin;
+package com.mcpirates.gametest.mixin;
 
 import net.minecraft.gametest.framework.StructureGridSpawner;
 import org.spongepowered.asm.mixin.Mixin;

@@ -59,9 +59,7 @@ public final class TestSetup {
         purgeSubLevels(level);
     }
 
-    /** Wrap a vanilla {@link GameTestHelper} into an {@link ExtendedGameTestHelper}
-     *  for access to {@code makeTickingMockServerPlayerInLevel}. Mirrors the
-     *  reflection trick the testframework uses internally in {@code AbstractTest.onGameTest}. */
+    /** Reflection trick mirrored from testframework's AbstractTest.onGameTest. */
     public static ExtendedGameTestHelper extend(GameTestHelper helper) {
         try {
             Field f = GameTestHelper.class.getDeclaredField("testInfo");
@@ -72,10 +70,7 @@ public final class TestSetup {
         }
     }
 
-    /** Pin a {@link GameTestPlayer} at (x,y,z) as a passive position proxy. Uses the
-     *  3-arg {@code moveTo} so chunk tickets refresh; the 5-arg variant skips that.
-     *  For per-tick re-pinning use {@code setPos} to avoid chunk-ticket churn.
-     *  Caller bumps sim/view distance if the brain needs chunks outside the player cell. */
+    /** 3-arg moveTo so chunk tickets refresh; per-tick re-pinning should use setPos. */
     public static GameTestPlayer spawnPinnedMockPlayer(
             ExtendedGameTestHelper ext, double x, double y, double z) {
         GameTestPlayer player = ext.makeTickingMockServerPlayerInLevel(GameType.SURVIVAL);
@@ -87,32 +82,8 @@ public final class TestSetup {
         return player;
     }
 
-    /**
-     * Drop a ship template, strip its mcpirates anchor, glue it, and have Sable
-     * assemble the result into a {@link SubLevel} — all *without* going through any
-     * mcpirates code. The resulting SubLevel is a plain Sable contraption with no
-     * brain, no crew, no captain — exactly what a real player riding their own
-     * (non-pirate) airship looks like to {@code AirshipLiftoffTrigger}.
-     *
-     * <p>Sequence:
-     * <ol>
-     *   <li>{@code template.placeInWorld} drops the structure.</li>
-     *   <li>Set the {@code mcpirates:ship_anchor} block to air, so neither
-     *       {@code AirshipLiftoffTrigger}'s chunk scan nor any later trigger
-     *       claims this ship as a pirate.</li>
-     *   <li>Spawn a {@link HoneyGlueEntity} covering the structure's bbox.</li>
-     *   <li>Call {@link SimAssemblyHelper#assembleFromSingleBlock} on a known
-     *       solid cell of the structure. Sable walks the glue, gathers blocks,
-     *       and produces a {@link SubLevel}.</li>
-     * </ol>
-     *
-     * <p>Bypassing mcpirates entirely is deliberate: this helper exists to provide
-     * an inert SubLevel platform for test players. Going through
-     * {@code activateAnchor} would also register a pirate brain + spawn a captain
-     * that would attack the test player — fighting the very thing we want to test.
-     *
-     * @return the assembled SubLevel, or null on failure (helper called {@code fail}).
-     */
+    /** Place + glue + assemble a ship NBT bypassing all mcpirates code (anchor is
+     *  stripped to air). Produces an inert SubLevel platform for the test player. */
     public static SubLevel placeAndAssembleAsPassiveTarget(
             GameTestHelper helper, BlockPos origin, String shipName) {
         ServerLevel level = helper.getLevel();
@@ -126,7 +97,7 @@ public final class TestSetup {
         tpl.placeInWorld(level, origin, origin,
                 new StructurePlaceSettings(), level.getRandom(), 2);
 
-        // Strip the ship_anchor so mcpirates ignores this contraption entirely.
+        // Strip the ship_anchor so mcpirates ignores this contraption.
         int[] anchorRel = AnchorNbtPositions.BY_NAME.get(shipName);
         if (anchorRel == null) {
             helper.fail("no AnchorNbtPositions entry for " + shipName);
@@ -135,17 +106,13 @@ public final class TestSetup {
         BlockPos anchorWorld = origin.offset(anchorRel[0], anchorRel[1], anchorRel[2]);
         level.setBlock(anchorWorld, Blocks.AIR.defaultBlockState(), 3);
 
-        // Glue + Sable assembly. The glue defines the volume Sable will gather.
-        // assembleFromSingleBlock walks glue connectivity from the seed and produces
-        // a SubLevel containing every reachable block in that volume.
         net.minecraft.core.Vec3i size = tpl.getSize();
         AABB glueAabb = new AABB(
                 origin.getX(), origin.getY(), origin.getZ(),
                 origin.getX() + size.getX(), origin.getY() + size.getY(), origin.getZ() + size.getZ());
         level.addFreshEntity(new HoneyGlueEntity(level, glueAabb));
 
-        // Find a non-air seed in the placed structure. assembleFromSingleBlock returns
-        // null if toAssemble is air, so we can't reuse the (now-air) anchor cell.
+        // Need a non-air seed; the anchor cell we just cleared is air.
         BlockPos seed = null;
         outer:
         for (int dy = 0; dy < size.getY(); dy++) {

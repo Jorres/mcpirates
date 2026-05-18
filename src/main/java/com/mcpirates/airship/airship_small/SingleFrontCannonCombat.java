@@ -1,6 +1,8 @@
-package com.mcpirates.airship.kind;
+package com.mcpirates.airship.airship_small;
 
 import com.mcpirates.airship.Airship;
+import com.mcpirates.airship.kind.CannonOps;
+import com.mcpirates.airship.kind.CombatBehavior;
 import net.minecraft.world.entity.LivingEntity;
 
 /**

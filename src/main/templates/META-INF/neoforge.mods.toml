@@ -73,6 +73,6 @@ side = "BOTH"
 # and rapier (Sable's f32-precision physics engine) can't integrate sub-block
 # velocity changes at those world coordinates — so airships placed in tests
 # never visibly rise even with totalLift > mass*gravity. See
-# com.mcpirates.mixin.GameTestServerMixin for the patch + comment.
+# com.mcpirates.gametest.mixin.GameTestServerMixin for the patch + comment.
 [[mixins]]
 config = "mcpirates.mixins.json"

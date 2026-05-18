@@ -168,7 +168,7 @@ dependencies {
             include: ['*.jar']
     )
 
-    // Unit tests for pure-numeric helpers (e.g. com.mcpirates.airship.kind.LiftMath) and
+    // Unit tests for pure-numeric helpers (e.g. com.mcpirates.airship.kind.AngleMath) and
     // pure logic extracted from prod classes (e.g. AirshipBrain.decideNextState). Keep test
     // scope narrow — anything that touches Minecraft/Sable classes needs gametest
     // infrastructure, not JUnit. joml is pulled in because Vector3d is the natural value type

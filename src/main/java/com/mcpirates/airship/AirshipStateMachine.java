@@ -4,70 +4,31 @@ import com.mcpirates.airship.AirshipBrain.State;
 import org.joml.Vector3d;
 
 /**
- * Pure logic for the airship brain's state machine — the gate computations and the
- * {@link State} → next-{@link State} transition. Lifted out of {@link AirshipBrain} so
- * the transition rules can be exercised by JUnit without booting Minecraft: this class
- * imports nothing from {@code net.minecraft.*} or NeoForge, so its classfile loads cleanly
- * on a test classpath that only has joml plus the project's own output.
- *
- * <p>The thresholds (engagement range, LIFTOFF gates, hover radius, target-lost debounce)
- * live here so tests can pin behaviour against the exact production values rather than
- * literal magic numbers. The non-state-machine brain constants (orbit math, debug overlay
- * cadence, etc.) stay on {@link AirshipBrain} — they're not part of this seam.
+ * Pure state-machine logic for the airship brain — split out of {@link AirshipBrain} so
+ * JUnit can exercise transitions without booting Minecraft. No MC/NeoForge imports.
  */
 public final class AirshipStateMachine {
 
-    /** Engage/disengage PURSUE if a target enters/leaves this horizontal radius. Was
-     *  12 chunks (192) → 8 chunks (128) → 100 blocks. Each step trimmed how soon the
-     *  ship starts chasing; 100 keeps it inside player render distance while leaving
-     *  enough closing distance for the cannon arc and the ramming run-up. */
     public static final double DISENGAGE_RANGE_SQ = 100 * 100;
-    /** Considered "at airpad" (HOVER) when within this horizontal range. */
     public static final double HOVER_RADIUS_SQ = 16 * 16;
-    /** Max horizontal distance the ship will pursue from its airpad before giving up and
-     *  RETURNing. Without this leash, a chase that drifts past DISENGAGE_RANGE only
-     *  re-engages when the target re-enters ship-relative range — and since the ship
-     *  itself moves toward the player, the pair can drift arbitrarily far from the
-     *  ship's home. 200 blocks ≈ 12 chunks; generous enough to chase a fleeing player
-     *  but tight enough to keep outposts feeling territorial. */
+    /** RETURN past this distance from the airpad so chases don't drag the ship arbitrarily
+     *  far from its outpost. */
     public static final double LEASH_FROM_AIRPAD_SQ = 200 * 200;
-    /** Consecutive steady-altitude ticks before LIFTOFF concludes. ~2 s at 20 tps = 40. */
     static final int LIFTOFF_STEADY_TICKS = 40;
-    /** Hard floor on LIFTOFF duration so we don't bail out before the ship's even moved
-     *  (at t=0 ship is stationary so the steady-tick count is technically high immediately). */
+    /** Floor on LIFTOFF duration so the steady gate doesn't fire while still stationary. */
     static final int LIFTOFF_MIN_TICKS = 60;
-    /** Minimum rise (blocks) for the steady-altitude exit path. Without this guard,
-     *  a ship parked at its anchor — never gained any altitude — looks "steady" for
-     *  40 ticks and exits LIFTOFF, engaging propellers at ground level. */
+    /** Rise gate on the steady-altitude exit, so a parked ship can't look "steady". */
     static final double LIFTOFF_STEADY_MIN_RISE = 8.0;
-    /** Blocks of altitude the ship must gain over its {@link Airship#liftoffStartY} before
-     *  LIFTOFF can end. Closes a real bug: pre-rise stillness (Aeronautics buoyancy
-     *  ramp-up) looks identical to post-ascent steady-state under the per-tick steady-Y
-     *  check, so the steady-tick count reaches the threshold while the ship is still
-     *  parked at the anchor. Without this guard LIFTOFF exits, propellers engage, ship
-     *  crashes into nearby terrain/trees. 25 chosen to match the default
-     *  {@code minAltAboveGround()} (30) less a small buffer. */
+    /** Primary LIFTOFF rise gate; matches default {@code minAltAboveGround()} less buffer.
+     *  Pre-rise buoyancy ramp looks like steady-state under per-tick checks, so without
+     *  this guard the ship exits LIFTOFF at ground level. */
     public static final double LIFTOFF_MIN_RISE = 25.0;
-    /** Ticks of "no target seen" before dropping out of PURSUE back to RETURN. */
     static final int LOST_TARGET_DEBOUNCE = 60;
 
     private AirshipStateMachine() {}
 
-    /**
-     * Given a snapshot of the inputs that drive the brain's decision, return the next
-     * state. No side effects, no mutation, no dependency on a live {@link Airship} —
-     * suitable for branch-coverage JUnit tests in milliseconds. {@link AirshipBrain#tickShip}
-     * is the production caller: it extracts the fields from a live {@code Airship} and
-     * passes them through; the gates ({@code liftoffDone}, {@code atAirpad},
-     * {@code targetLost}, {@code targetTooFar}) are derived locally so each can be flexed
-     * independently in tests.
-     *
-     * <p>The {@code rose} sub-gate is NaN-safe: {@code liftoffStartY = NaN} (the field's
-     * default until tickShip captures the first LIFTOFF Y) makes {@code rose} read false,
-     * keeping the gate closed until real altitude data exists.
-     *
-     * @param targetPos {@code null} if there is no target this tick.
-     */
+    /** {@code targetPos == null} means no target. NaN {@code liftoffStartY} reads as
+     *  no-rise (gate stays closed until tickShip captures the first sample). */
     public static State decideNextState(
             State state,
             long stateEnteredTick,
@@ -83,9 +44,7 @@ public final class AirshipStateMachine {
                 LIFTOFF_MIN_RISE);
     }
 
-    /** Per-kind overload — used by {@link AirshipBrain} which knows the ship's kind
-     *  and can supply a kind-specific {@code minRise}. The no-{@code minRise}
-     *  overload exists for tests that want the default. */
+    /** Per-kind overload taking an explicit {@code minRise}. */
     public static State decideNextState(
             State state,
             long stateEnteredTick,
@@ -100,10 +59,7 @@ public final class AirshipStateMachine {
         long ticksInState = now - stateEnteredTick;
         double rise = Double.isNaN(liftoffStartY) ? 0.0 : (shipPos.y - liftoffStartY);
         boolean rose = !Double.isNaN(liftoffStartY) && rise >= minRise;
-        // Stabilized at altitude — for ships whose lift/mass ratio caps them below
-        // minRise (their pressure ceiling is the actual exit), the steady gate is
-        // the escape. Guarded by LIFTOFF_STEADY_MIN_RISE so a parked ship that
-        // never moved doesn't look "steady" and exit at ground level.
+        // Stabilized: escape gate for ships whose pressure ceiling is below minRise.
         boolean stabilized = !Double.isNaN(liftoffStartY)
                 && rise >= LIFTOFF_STEADY_MIN_RISE
                 && steadyTicks >= LIFTOFF_STEADY_TICKS;
@@ -131,11 +87,8 @@ public final class AirshipStateMachine {
                 if (targetPos != null && !targetTooFar) yield State.PURSUE;
                 yield State.HOVER;
             }
-            // Externally promoted by AirshipLiftoffTrigger when a player arrives on a
-            // SubLevel — the brain itself never leaves MOORED on its own.
+            // MOORED + NAVIGATE are externally driven; the auto machine never exits them.
             case MOORED -> State.MOORED;
-            // NAVIGATE is externally driven (tests + scripted patrols); auto state
-            // machine never enters or leaves it.
             case NAVIGATE -> State.NAVIGATE;
         };
     }
@@ -145,16 +98,8 @@ public final class AirshipStateMachine {
         return dx * dx + dz * dz;
     }
 
-    /** Picks orbit direction (+1 CCW, -1 CW) whose initial tangent best matches the
-     *  ship's current world-forward — minimises the yaw the ship must perform to
-     *  start tracking the orbit. Lives here (not on {@link AirshipBrain}) so JUnit
-     *  can call it without pulling in Minecraft/Sable.
-     *
-     *  <p>{@code yawRad} must match {@code AirshipBrain.currentYawRadians} (world-forward
-     *  is {@code (-sin yaw, cos yaw)}).
-     *
-     *  <p>Degenerate input (ship overlapping target) returns +1 so callers always get a
-     *  defined direction. */
+    /** +1 CCW / -1 CW, chosen by best dot of tangent with current world-forward.
+     *  Degenerate (ship at target) → +1. */
     public static int pickOrbitDir(double shipX, double shipZ,
                                    double targetX, double targetZ,
                                    double yawRad) {

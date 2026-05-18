@@ -1,5 +1,10 @@
 package com.mcpirates.airship.kind;
 
+import com.mcpirates.airship.airship_small.AirshipSmallKind;
+import com.mcpirates.airship.crossbow_board.CrossbowBoardKind;
+import com.mcpirates.airship.galleon.GalleonKind;
+import com.mcpirates.airship.ramship.RamshipKind;
+
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;

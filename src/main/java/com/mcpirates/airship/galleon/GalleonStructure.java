@@ -1,4 +1,4 @@
-package com.mcpirates.airship.worldgen;
+package com.mcpirates.airship.galleon;
 
 import com.mcpirates.registry.MCPStructureTypes;
 import com.mojang.serialization.Codec;

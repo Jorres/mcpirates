@@ -28,6 +28,19 @@ import java.lang.reflect.Field;
  */
 public final class ThrottleLevers {
 
+    /** What kind of 0..15 lever a ship uses for its burner throttle. Both kinds expose an
+     *  integer state in [0, 15], but they're physically different blocks with different BE
+     *  classes — write paths diverge (see {@link #setState}). */
+    public enum Kind {
+        /** Create's {@code create:analog_lever} — used by airship_small, ramship, crossbow_board. */
+        CREATE_ANALOG,
+        /** Simulated-Project's {@code simulated:throttle_lever} — used by galleon. Same
+         *  0..15 semantics, but a separate BE class with its own {@code setSignal(int)}
+         *  setter (no reflection needed for writes). Respects the lever's {@code INVERTED}
+         *  blockstate — passing N to setSignal stores N or 15-N. */
+        SIMULATED_THROTTLE,
+    }
+
     private static Field cachedAnalogStateField;
 
     private ThrottleLevers() {}

@@ -1,7 +1,5 @@
 package com.mcpirates.airship.kind;
 
-import com.mcpirates.airship.kind.LiftMath.LiftSetting;
-import dev.eriksonn.aeronautics.index.AeroLiftingGasTypes;
 import dev.ryanhcode.sable.physics.config.dimension_physics.DimensionPhysicsData;
 import net.minecraft.server.level.ServerLevel;
 import org.joml.Vector3d;
@@ -29,6 +27,21 @@ import java.util.Map;
  */
 public final class PlateauTable {
 
+    /** Aeronautics config default ({@code hot_air_burner_max}). */
+    public static final int BURNER_MAX_VOLUME = 500;
+    /** Hard-coded floor inside {@code HotAirBurnerBlockEntity}. */
+    public static final int BURNER_MIN_VOLUME = 5;
+    /** Wrench-UI quantisation step; writes off-step round on first wrench-open. */
+    public static final int BURNER_VOLUME_STEP = 5;
+
+    /** Burner actuator pair the brain writes each tick; gas output = {@code volume * lever / 15}. */
+    public record LiftSetting(int lever, int volume) {}
+
+    /** Snap a volume down to the nearest {@link #BURNER_VOLUME_STEP}, clamped to {@link #BURNER_MIN_VOLUME}. */
+    public static int snapVolume(int v) {
+        return Math.max(BURNER_MIN_VOLUME, (v / BURNER_VOLUME_STEP) * BURNER_VOLUME_STEP);
+    }
+
     public record Row(int volume, int lever, double totalT, double equilibriumY) {
         public LiftSetting toLiftSetting() { return new LiftSetting(lever, volume); }
     }
@@ -50,7 +63,7 @@ public final class PlateauTable {
             int nBurners,
             int vMaxPerBurner,
             double sampleX, double sampleZ) {
-        int vMaxSnapped = LiftMath.snapVolume(vMaxPerBurner);
+        int vMaxSnapped = snapVolume(vMaxPerBurner);
 
         // Dedupe by total T — many (v, l) pairs collapse to the same output.
         Map<Long, Row> uniqByT = new HashMap<>();
@@ -59,7 +72,7 @@ public final class PlateauTable {
         double yHigh = level.getMaxBuildHeight() - 1;
         Vector3d probe = new Vector3d();
 
-        for (int v = LiftMath.BURNER_MIN_VOLUME; v <= vMaxSnapped; v += LiftMath.BURNER_VOLUME_STEP) {
+        for (int v = BURNER_MIN_VOLUME; v <= vMaxSnapped; v += BURNER_VOLUME_STEP) {
             for (int l = 1; l <= 15; l++) {
                 double tPerBurner = (double) v * l / 15.0;
                 double tTotal = tPerBurner * nBurners;

@@ -58,8 +58,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @EventBusSubscriber(modid = MCPirates.MOD_ID)
 public final class AirshipLiftoffTrigger {
 
-    /** Runtime kill-switch — toggled by {@code /mcpirates lift off} while iterating on
-     *  ship NBT in a flat test world. */
+    /** Toggled by {@code /mcpirates lift off}. */
     public static volatile boolean AUTO_LIFTOFF_ENABLED = true;
 
     public static boolean setAutoLiftoffEnabled(boolean enabled) {
@@ -82,23 +81,19 @@ public final class AirshipLiftoffTrigger {
     private static Method cachedGetSectionMethod;
     private static Method cachedSectionGetStatusMethod;
 
-    /** Ground-combat engagements keyed by ship-anchor world pos. Concurrent because
-     *  the server tick races /mcpirates lift off. Cleared on air-combat takeover
-     *  or captain KILLED/DISCARDED leave-event. */
+    /** Concurrent: server tick races /mcpirates lift off. Cleared on air takeover or
+     *  captain KILLED/DISCARDED. */
     private static final Map<BlockPos, GroundCombatModule.GroundEngagement> GROUND_ENGAGEMENTS =
             new ConcurrentHashMap<>();
 
-    /** Re-entrancy guard for {@link #activateAnchor} — half-second proximity scanner
-     *  must not fire a second assembly while blocks are still being yanked into the SubLevel. */
+    /** Re-entrancy guard so the proximity scanner can't fire a second assembly mid-yank. */
     private static final Set<BlockPos> ACTIVATING = ConcurrentHashMap.newKeySet();
 
-    /** Test/diagnostic accessor. */
     public static boolean hasGroundEngagement(BlockPos anchorPos) {
         return GROUND_ENGAGEMENTS.containsKey(anchorPos);
     }
 
-    /** Despawn tracked defenders + clear map. Returns removed count. Needed for GameTest
-     *  setup (map is JVM-static, leaks across tests). */
+    /** GameTest setup — map is JVM-static, leaks across tests. */
     public static int clearGroundEngagements(ServerLevel level) {
         int removed = 0;
         for (GroundCombatModule.GroundEngagement e : GROUND_ENGAGEMENTS.values()) {
@@ -110,26 +105,14 @@ public final class AirshipLiftoffTrigger {
 
     private AirshipLiftoffTrigger() {}
 
-    /** Resolve kind + rotation, spawn glue, run {@link #activateShip}. Idempotent —
-     *  returns false silently on transient miss (chunk not primed, glue section HIDDEN,
-     *  ship already activating); logs WARN on configuration errors (unknown kind, no BE). */
+    /** Idempotent. Transient miss → false (no log); config error → WARN. */
     public static boolean activateAnchor(ServerLevel level, BlockPos anchorPos) {
         return activateAnchor(level, anchorPos, /*dormant=*/false);
     }
 
-    /**
-     * Variant of {@link #activateAnchor(ServerLevel, BlockPos)} that picks between a full
-     * lift-off ({@code dormant=false}) and a hull-only assembly ({@code dormant=true}).
-     *
-     * <p>{@code dormant=true} assembles the ship into a SubLevel + fuels engines + stamps
-     * the userDataTag, but skips deck-crew spawn and registers the brain in
-     * {@link AirshipBrain.State#MOORED} so the ship sits on its airpad until a player
-     * arrives by airship and {@link #promoteMooredShipsForAirArrival} flips it to LIFTOFF.
-     * Used by the on-foot ground-combat path so the structure becomes a proper Sable
-     * contraption (visible physics, glue-bound hull, rideable) before the defenders spawn
-     * around it. Engines are fuelled even in dormant mode so the LIFTOFF promotion is a
-     * pure state flip with no late block-entity writes.
-     */
+    /** {@code dormant=true}: assembles + fuels engines + stamps userDataTag but skips deck
+     *  crew and registers as MOORED. {@link #promoteMooredShipsForAirArrival} later flips
+     *  it to LIFTOFF as a pure state change. */
     public static boolean activateAnchor(ServerLevel level, BlockPos anchorPos, boolean dormant) {
         if (!ACTIVATING.add(anchorPos)) return false;   // already mid-assembly
         try {
@@ -149,22 +132,19 @@ public final class AirshipLiftoffTrigger {
             BlockPos leverPos = anchorPos.offset(kind.anchorToLeverDelta().rotate(rotation));
             BlockEntity leverBe = level.getBlockEntity(leverPos);
             if (leverBe == null) return false;
-            // Anchor block has no collision so the assembly BFS skips it — the world-side
-            // BE survives the move into the SubLevel. Without this guard the proximity
-            // scanner re-enters on a ghost lever after first liftoff.
+            // Anchor has no collision → assembly BFS skips it → world-side BE survives.
+            // Without this guard the proximity scanner re-enters on a ghost lever.
             for (Airship existing : AirshipBrain.ships()) {
                 if (existing.parentLevel == level && existing.airpadAnchor.equals(leverPos)) {
                     return false;
                 }
             }
-            // Defeated ship is the player's prize — don't respawn a captain (would double-drop the seal).
+            // Defeated ship is the player's prize — don't respawn the captain.
             if (DefeatedAirships.get(level).containsExact(leverPos)) {
                 return false;
             }
             if (!spawnHoneyGlue(level, leverPos, rotation, kind)) return false;
-            // Air takeover: drop surviving ground defenders so the deck crew doesn't double up.
-            // Dormant assembly runs alongside ground combat — caller just populated
-            // GROUND_ENGAGEMENTS, so leave it intact.
+            // Air takeover drops surviving ground defenders; dormant path keeps them.
             if (!dormant) {
                 GroundCombatModule.GroundEngagement engagement = GROUND_ENGAGEMENTS.remove(anchorPos);
                 if (engagement != null) {
@@ -194,8 +174,7 @@ public final class AirshipLiftoffTrigger {
         }
     }
 
-    /** Clear the engagement when the captain leaves with KILLED or DISCARDED. Ignore
-     *  UNLOADED_TO_CHUNK — captain returns on chunk reload, clearing would orphan him. */
+    /** Clear on KILLED/DISCARDED only — UNLOADED_TO_CHUNK returns the captain later. */
     @SubscribeEvent
     public static void onEngagementMobLeave(EntityLeaveLevelEvent event) {
         Entity entity = event.getEntity();
@@ -216,26 +195,19 @@ public final class AirshipLiftoffTrigger {
     }
 
     private static void checkAroundPlayer(ServerLevel level, ServerPlayer player) {
-        // On-SubLevel = air combat (full liftoff); on-foot = ground combat (prize fight).
-        // We can't use Sable.HELPER.getContaining(player) — its chunk-based lookup keys
-        // off the SubLevel's static plot position, not its flying world position, so it
-        // returns null for any player riding a SubLevel that has moved since assembly.
-        // Instead, point-test the player's world coords against every SubLevel's
-        // (world-frame) boundingBox in the parent's container.
+        // On-SubLevel = air, on-foot = ground. Sable.HELPER.getContaining keys off the
+        // SubLevel's static plot pos, not its flying world pos, so we point-test the
+        // player's world coords against each SubLevel's world-frame bounding box.
         SubLevel containing = findSubLevelByWorldBounds(level, player.getX(), player.getY(), player.getZ());
         boolean playerOnAirship = containing != null;
         processNearbyAnchors(level, player.getX(), player.getZ(), playerOnAirship);
     }
 
-    /** Public so GameTests can route directly without going through
-     *  {@link #checkAroundPlayer}'s player-derived inputs. */
+    /** Public for GameTest entry. */
     public static void processNearbyAnchors(ServerLevel level, double x, double z,
                                             boolean playerOnAirship) {
-        // Air arrivals also promote any already-MOORED ship within range — those have had
-        // their anchor BEs moved into a SubLevel by the on-foot dormant-assembly path, so
-        // the chunk-BE scan below would miss them. Order matters: promote first so a ship
-        // that's MOORED *and* still has a chunk-resident anchor (shouldn't happen but
-        // belt-and-suspenders) doesn't get a second activateAnchor call from the loop.
+        // Promote MOORED ships first — their anchor BEs have moved into SubLevels and
+        // wouldn't be found by the chunk scan; order also prevents double-activation.
         if (playerOnAirship) {
             promoteMooredShipsForAirArrival(level, x, z);
         }
@@ -246,7 +218,7 @@ public final class AirshipLiftoffTrigger {
                 if (chunk == null) {
                     continue;
                 }
-                // Snapshot — assembly mutates the chunk's BE map and would NPE a live iterator.
+                // Snapshot: assembly mutates the BE map mid-iteration.
                 for (BlockEntity be : new ArrayList<>(chunk.getBlockEntities().values())) {
                     if (!(be instanceof MCPShipAnchorBlockEntity)) continue;
                     BlockPos anchorPos = be.getBlockPos();
@@ -263,8 +235,7 @@ public final class AirshipLiftoffTrigger {
         }
     }
 
-    /** Promote MOORED ships near (x, z) to LIFTOFF: late deck-crew spawn, drop lingering
-     *  ground defenders, hand off to the normal state machine. */
+    /** MOORED→LIFTOFF: late crew spawn + drop ground defenders. */
     private static void promoteMooredShipsForAirArrival(ServerLevel level, double x, double z) {
         for (Airship a : AirshipBrain.ships()) {
             if (a.parentLevel != level) continue;
@@ -273,7 +244,7 @@ public final class AirshipLiftoffTrigger {
             double pdx = airpad.getX() + 0.5 - x;
             double pdz = airpad.getZ() + 0.5 - z;
             if (pdx * pdx + pdz * pdz > TRIGGER_DISTANCE_SQ) continue;
-            // Defeated ship is the player's prize — leave it MOORED as a captured wreck.
+            // Defeated ship is the player's prize — leave MOORED.
             if (DefeatedAirships.get(level).containsExact(a.airpadAnchor)) continue;
             promoteMooredToLiftoff(level, a);
         }
@@ -281,8 +252,8 @@ public final class AirshipLiftoffTrigger {
 
     private static void promoteMooredToLiftoff(ServerLevel level, Airship a) {
         AirshipKind kind = a.kind;
-        // Rotation + SubLevel-anchor were stamped at dormant assembly; the world-side
-        // anchor BE has since moved into the SubLevel so re-detecting from chunks fails.
+        // Re-detect from chunks fails — anchor BE moved into the SubLevel; read the
+        // stamp the dormant assembly left on userDataTag.
         Rotation rotation;
         BlockPos slPrimaryAnchor;
         if (a.subLevel instanceof ServerSubLevel ssl
@@ -310,7 +281,7 @@ public final class AirshipLiftoffTrigger {
         a.installCrew(crew.anchors(), crew.cannoneerByMount());
         a.state = AirshipBrain.State.LIFTOFF;
         a.stateEnteredTick = level.getGameTime();
-        // Clear MOORED stamp so a post-promotion rehydrate restores in-flight, not MOORED.
+        // Clear MOORED stamp so rehydrate restores in-flight.
         if (a.subLevel instanceof ServerSubLevel sslAfter && sslAfter.getUserDataTag() != null) {
             CompoundTag userTag = sslAfter.getUserDataTag();
             CompoundTag mcp = userTag.getCompound("mcpirates");
@@ -324,8 +295,7 @@ public final class AirshipLiftoffTrigger {
                 crew.anchors().size(), crew.cannoneerByMount().size());
     }
 
-    /** Idempotent: spawns ground defenders if the kind opts in, no engagement is tracked,
-     *  and the ship isn't already defeated. */
+    /** Idempotent. Spawns defenders if the kind opts in and the ship is unbeaten. */
     private static void maybeSpawnGroundCombat(ServerLevel level, BlockPos anchorPos) {
         if (GROUND_ENGAGEMENTS.containsKey(anchorPos)) return;
         BlockEntity be = level.getBlockEntity(anchorPos);
@@ -339,8 +309,7 @@ public final class AirshipLiftoffTrigger {
         // GROUND_ENGAGEMENTS is in-memory; DefeatedAirships persists across restarts.
         if (DefeatedAirships.get(level).containsExact(leverPos)) return;
 
-        // Adopt any existing captain at this lever pos (survived a server restart while
-        // we lost the in-memory engagement) — leave-event handler will clear later.
+        // Adopt captain that survived a restart while we lost the in-memory engagement.
         long leverPosLong = leverPos.asLong();
         AABB scan = new AABB(leverPos).inflate(GroundCombatModule.LEASH_RADIUS + 16);
         List<UUID> existing = new ArrayList<>();
@@ -359,13 +328,8 @@ public final class AirshipLiftoffTrigger {
             return;
         }
 
-        // Assemble the ship into a SubLevel as a dormant (MOORED) contraption *before*
-        // spawning the ground crew so the defenders surround a real Sable contraption,
-        // not a static block structure. activateAnchor(dormant=true) preserves the
-        // ground-engagement map (no preempt) so the order between this call and the
-        // GROUND_ENGAGEMENTS.put below is independent. If assembly fails (chunk section
-        // HIDDEN, missing BE, ...), bail before spawning defenders — we'd otherwise
-        // get crew + a static structure with no liftoff path.
+        // Assemble dormant first so defenders surround a real Sable contraption. Bail
+        // on assembly failure — otherwise we'd leave crew around a non-liftable hull.
         if (!activateAnchor(level, anchorPos, /*dormant=*/true)) {
             MCPirates.LOGGER.info(
                     "ground combat: dormant assembly deferred at anchor {} — retry next pass",
@@ -378,9 +342,8 @@ public final class AirshipLiftoffTrigger {
         GROUND_ENGAGEMENTS.put(anchorPos, engagement);
     }
 
-    /** Try each 90° rotation; the one whose anchor-to-lever delta resolves to a cell
-     *  containing the kind's primary-anchor BE is the ship's rotation. Returns null if
-     *  no rotation produces a match (chunk not yet primed — caller should retry). */
+    /** Try each 90° rotation; match = anchor→lever delta hits the primary-anchor BE.
+     *  Null = chunk not primed; caller should retry. */
     private static Rotation detectRotationFromAnchor(ServerLevel level, BlockPos anchorPos, AirshipKind kind) {
         BlockPos delta = kind.anchorToLeverDelta();
         for (Rotation r : Rotation.values()) {
@@ -393,12 +356,7 @@ public final class AirshipLiftoffTrigger {
         return null;
     }
 
-    /** Full assembly sequence — generic over {@link AirshipKind}.
-     *
-     *  <p>{@code dormant=true} stops short of spawning deck crew and registers the brain
-     *  in {@link AirshipBrain.State#MOORED}. Engines are still fuelled and burners are
-     *  still located so a later promotion to LIFTOFF (driven by an air-arriving player)
-     *  is a pure brain-state flip + crew spawn — no second pass over block entities. */
+    /** Full assembly; {@code dormant=true} skips deck-crew spawn (registers as MOORED). */
     private static void activateShip(ServerLevel level, BlockPos pos, AirshipKind kind,
                                      Rotation rotation, boolean dormant) {
         BlockState anchorState = level.getBlockState(pos);
@@ -452,8 +410,7 @@ public final class AirshipLiftoffTrigger {
         BlockPos slLeftClutch = leftClutchPos.offset(offset);
         BlockPos slRightClutch = rightClutchPos.offset(offset);
 
-        // Burners: scan the plot rather than pair-by-adjacency — galleons wire levers
-        // several blocks away from their burners.
+        // Plot scan, not pair-by-adjacency — galleons wire levers far from burners.
         var plotBox = subLevel.getPlot().getBoundingBox();
         List<BlockPos> slBurnerPositions = HotAirBurners.findAllInBox(
                 subLevel.getLevel(),
@@ -464,10 +421,8 @@ public final class AirshipLiftoffTrigger {
                     kind.name());
         }
 
-        // Stamp identity + layout into userDataTag so AirshipRehydrator can re-register
-        // surviving ships after restart. Sable persists this across save/load.
-        // The "moored" flag distinguishes a dormant assembly so rehydration restores it
-        // as MOORED rather than mistaking the empty-crew ship for a derelict wreck.
+        // userDataTag is persisted by Sable — AirshipRehydrator reads it on restart.
+        // moored=true tells rehydrate it's a dormant ship, not a derelict.
         BlockPos slPrimaryAnchorPos = pos.offset(offset);
         if (subLevel instanceof ServerSubLevel ssl) {
             CompoundTag userTag = ssl.getUserDataTag();
@@ -486,14 +441,12 @@ public final class AirshipLiftoffTrigger {
         Vector3d shipLocalForward = new Vector3d(
                 shipForwardDir.getStepX(), shipForwardDir.getStepY(), shipForwardDir.getStepZ());
 
-        // Dormant ships skip deck-crew spawn — ground combat is the engagement until
-        // promoteMooredShipsForAirArrival runs CaptainSpawner.spawn at LIFTOFF promotion.
         CaptainSpawner.CrewSpawnResult crew = dormant
                 ? CaptainSpawner.CrewSpawnResult.empty()
                 : CaptainSpawner.spawn(subLevel, pos, offset, rotation, kind, slCannonMounts);
 
-        // The rehydrator's SubLevelObserver also caught this allocate; its later
-        // tryRehydrate sees the UUID already registered here and skips.
+        // Rehydrator's SubLevelObserver saw this allocate too; tryRehydrate skips
+        // because the UUID is already registered.
         AirshipBrain.register(
                 level, subLevel, pos, kind,
                 slThrottleLevers, slBurnerPositions, slLeftClutch, slRightClutch,
@@ -503,8 +456,8 @@ public final class AirshipLiftoffTrigger {
                 dormant ? AirshipBrain.State.MOORED : AirshipBrain.State.LIFTOFF);
     }
 
-    /** Returns false if the chunk section is HIDDEN — addFreshEntity stores the entity
-     *  but skips startTracking, so spatial queries miss it. Caller retries next pass. */
+    /** False if the section is HIDDEN (addFreshEntity skips startTracking → spatial
+     *  queries miss the glue). Caller retries. */
     private static boolean spawnHoneyGlue(ServerLevel level, BlockPos anchorPos,
                                           Rotation rotation, AirshipKind kind) {
         BlockPos a = anchorPos.offset(kind.glueMin().rotate(rotation));
@@ -541,8 +494,7 @@ public final class AirshipLiftoffTrigger {
         return true;
     }
 
-    /** Reflective drill into {@code ServerLevel.entityManager.sectionStorage} to read
-     *  EntitySection status (HIDDEN / TICKING / TRACKED). See {@link #spawnHoneyGlue}. */
+    /** Reflective read of EntitySection status. */
     private static String readSectionVisibility(ServerLevel level,
                                                 Entity entity) {
         try {
@@ -573,31 +525,9 @@ public final class AirshipLiftoffTrigger {
         }
     }
 
-    /**
-     * Find the SubLevel whose <em>world-frame</em> bounding box contains (x, y, z), or
-     * null. Used to detect "is this entity physically inside a flying contraption right
-     * now?" — i.e., rider detection.
-     *
-     * <p><b>Do not confuse with {@link dev.ryanhcode.sable.Sable#HELPER Sable.HELPER}'s
-     * {@code getContaining(Entity)}.</b> They look similar and both return a
-     * {@link SubLevel}, but they answer different questions:
-     *
-     * <ul>
-     *   <li>{@code Sable.HELPER.getContaining(entity)} keys off
-     *       {@code entity.chunkPosition()} and consults Sable's plot table — the static
-     *       parent-level chunks that store the SubLevel's source blocks far off-gameplay.
-     *       Useful for "whose source-chunk owns this entity?", e.g. chunk-load
-     *       orchestration. Returns null for any rider of a moving SubLevel because their
-     *       flying chunk doesn't match the SubLevel's fixed plot chunk.</li>
-     *   <li>This method walks every SubLevel and checks each one's current
-     *       {@code boundingBox()}, which tracks the contraption as it flies. Returns the
-     *       SubLevel the rider is physically inside.</li>
-     * </ul>
-     *
-     * <p>O(N) over loaded SubLevels — fine while N is small (handful of pirate ships).
-     * If we ever scale, switch to {@code SubLevelContainer.queryIntersecting(bounds)}
-     * which uses Sable's BVH (O(log N)).
-     */
+    /** SubLevel whose world-frame bbox contains (x, y, z), or null.
+     *  Unlike {@code Sable.HELPER.getContaining} this works for riders of a moving
+     *  contraption (HELPER keys off the static plot chunk). O(N) — fine for our N. */
     private static SubLevel findSubLevelByWorldBounds(ServerLevel level, double x, double y, double z) {
         SubLevelContainer container = SubLevelContainer.getContainer(level);
         if (container == null) return null;

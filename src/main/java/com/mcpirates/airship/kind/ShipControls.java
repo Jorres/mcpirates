@@ -41,11 +41,6 @@ public interface ShipControls {
      */
     void release(Airship a);
 
-    /**
-     * Optional debug snapshot of the actuator state — propeller thrust,
-     * clutch power, reverse flags. Default empty. {@link com.mcpirates.airship.ShipLog#snapshot}
-     * appends this to every log line so we can diagnose hardware-side
-     * problems without the brain knowing what hardware exists.
-     */
+    /** Optional actuator-state snapshot appended to {@link com.mcpirates.airship.ShipTelemetry#snapshot}. */
     default String diagnostics(Airship a) { return ""; }
 }

@@ -15,130 +15,87 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Mutable per-airship state, owned by {@link AirshipBrain}. Fields are public so
- * per-kind {@link com.mcpirates.airship.kind.CombatBehavior} strategies can read and
- * mutate cannon bookkeeping; only {@code airship.*} should touch them.
+ * Mutable per-airship state owned by {@link AirshipBrain}. Public fields so per-kind
+ * combat/movement strategies can read & mutate bookkeeping; nothing else should touch them.
  */
 public final class Airship {
 
     public final ServerLevel parentLevel;
-    /** UUID is the only handle that survives chunk unload/reload — Sable rehydrates the
-     *  SubLevel into a fresh object under the same UUID, so {@link #subLevel} must be
-     *  re-acquired each tick via the container. */
+    /** Only handle that survives chunk reload; Sable swaps the instance under the same UUID. */
     public final UUID subLevelId;
     public SubLevel subLevel;
-    /** True when the SubLevel was last seen loaded by the brain. Flipped on the
-     *  transition edges so the brain can emit one log line per unload/reload event
-     *  instead of spamming every tick. */
+    /** Flipped on load/unload edges so the brain logs once per transition. */
     public boolean wasSubLevelLoaded = true;
     /** Liftoff-lever world-pos; also the RETURN target. */
     public final BlockPos airpadAnchor;
     public final AirshipKind kind;
 
-    // SubLevel-local positions resolved at assembly time.
     public final List<BlockPos> slThrottleLevers;
-    /** Paired 1:1 with throttle levers; resolved as "the block the lever is attached to".
-     *  Levers without an adjacent burner are absent here. */
+    /** Paired 1:1 with throttle levers (block the lever attaches to); absent if no burner. */
     public final List<BlockPos> slBurnerPositions;
     public final BlockPos slLeftClutchLever;
     public final BlockPos slRightClutchLever;
     public final List<BlockPos> slCannonMounts;
-    /** Ship-local forward — for broadside kinds, the first-listed forward. Depends on
-     *  the jigsaw rotation chosen at placement time. */
+    /** Depends on jigsaw rotation chosen at placement. */
     public final Vector3d shipLocalForward;
-    /** Pillagers the brain re-anchors when their Sable plot-position is wiped by a
-     *  chunk reload (the anchor isn't serialised to NBT). Replaced wholesale by
-     *  {@link #installCrew} when a MOORED ship is promoted to LIFTOFF (deck crew
-     *  spawn is deferred until promotion); never mutated in place. */
+    /** Crew the brain re-anchors after chunk reload. Replaced by {@link #installCrew} on
+     *  MOORED→LIFTOFF promotion. */
     public List<AnchoredEntity> anchoredEntities;
 
-    /** Cannon-mount → cannoneer UUID. A mount fires only while its bound cannoneer is
-     *  alive (see {@link #isMountManned}). Cannons with no nearby seat at spawn are
-     *  absent. Replaced by {@link #installCrew} on MOORED→LIFTOFF promotion. */
+    /** Cannon → cannoneer UUID; mount fires only while bound cannoneer is alive. */
     public Map<BlockPos, UUID> cannoneerByMount;
 
     public AirshipBrain.State state = AirshipBrain.State.LIFTOFF;
     public long stateEnteredTick;
 
-    /** Destination for {@link AirshipBrain.State#NAVIGATE}. Externally set; brain steers
-     *  toward (x, z) and idles within arrival radius. Y is unused — altitude tracks
-     *  cruiseRise like RETURN. Null in every other state. */
+    /** NAVIGATE destination; Y is unused. Null in other states. */
     public Vector3d navDestination;
-    /** Last tick steering ({@link com.mcpirates.airship.kind.ShipControls}) ran.
-     *  Decoupled from lift so the brain can re-decide steering on a fast cadence
-     *  (a few ticks) while lift stays on the slow plateau-pick rhythm — hot-air
-     *  balloons can't respond to high-frequency thrust changes anyway, and
-     *  steering needs to catch fast yaw rotation before the ship overshoots. */
     public long lastSteeringTick = Long.MIN_VALUE / 2;
     public long lastLiftTick = Long.MIN_VALUE / 2;
     public long lastFireTick = Long.MIN_VALUE / 2;
     public long lastTargetSeenTick = Long.MIN_VALUE / 2;
 
-    /** Aeronautics balloon capacity in m³, refreshed each decision tick. -1 until the
-     *  balloon attaches. Not block-state derivable. */
+    /** Balloon capacity in m³; -1 until the balloon attaches. */
     public int balloonCapacity = -1;
 
-    /** (volume, lever) → equilibrium-altitude rows, built once the balloon attaches.
-     *  Rebuilt on {@link #balloonCapacity} change. Mass is sampled at build time and
-     *  never refreshed — runtime mass drift biases the lookup. */
+    /** (volume, lever) → equilibrium-altitude rows. Mass sampled at build time only. */
     public PlateauTable plateauTable;
     public int plateauTableCapacity = -1;
 
-    /** Steering actuator for this assembly. Owns all kind-specific hardware
-     *  positions (extra clutches, propellers) privately — the brain only ever
-     *  calls {@link com.mcpirates.airship.kind.ShipControls#applySteering} or
-     *  {@link com.mcpirates.airship.kind.ShipControls#release}. Populated by
-     *  {@link AirshipBrain#register} via the kind's
-     *  {@code makeControls} factory. */
+    /** Steering actuator built by the kind's makeControls factory. Brain calls only
+     *  {@code applySteering}/{@code release}. */
     public com.mcpirates.airship.kind.ShipControls controls;
 
-    /** Last-tick orbit-math outputs, cached so the overlay doesn't recompute them. */
     public double lastGoalX = Double.NaN;
     public double lastGoalZ = Double.NaN;
     public double lastHeadingErrDeg = 0;
 
-    /** Equilibrium altitude of the plateau row {@link AirshipBrain#chooseLiftSetting}
-     *  picked on the most recent decision tick. Written by the brain, read by
-     *  {@link com.mcpirates.airship.ShipLog#snapshot} so the log shows what the brain
-     *  actually committed to (including the {@code maxGroundAhead}-derived floor clamp)
-     *  rather than a parallel recomputation that can diverge. {@code NaN} until the
-     *  first decision with a built plateau table. */
+    /** Equilibrium Y of the plateau row last committed; read by ShipTelemetry so logs reflect
+     *  what the brain actually wrote (including floor clamp). */
     public double lastPickedEquilibriumY = Double.NaN;
-    /** Velocity-damped target altitude the brain handed to
-     *  {@link com.mcpirates.airship.kind.PlateauTable#pickClosest} on the most recent
-     *  decision tick. Distinct from the raw {@code targetY} (state-derived) — this is
-     *  {@code targetY − K·v.y} when an overshoot is projected, else just {@code targetY},
-     *  then clamped to the {@code maxGroundAhead} floor. {@code NaN} until set. */
+    /** Velocity-damped target Y last handed to the plateau picker. */
     public double lastBiasedTargetY = Double.NaN;
 
     public double lastSampledY = Double.NaN;
     public int steadyTicks = 0;
-    /** Captured at the first LIFTOFF tick from the ship's actual pose (not
-     *  {@link #airpadAnchor}, which is the lever's block pos and may sit below the keel).
-     *  Re-captured after chunk reload so the rise check has a stable baseline. */
+    /** Captured at first LIFTOFF tick from the ship's pose (not airpadAnchor — that's the
+     *  lever pos and may sit below the keel). Re-captured after chunk reload. */
     public double liftoffStartY = Double.NaN;
 
-    // Rate-limit aim and throttle logs to one per ~2s wall-clock.
     public long lastAimLogBucket = -1;
     public long lastThrottleLogBucket = -1;
-    /** Per-ship (not static) so a dead ship's flags GC with it. */
     public boolean hasAimedOnce = false;
     public boolean hasFiredOnce = false;
 
-    /** Free-form per-ship state for the kind's combat strategy (broadside uses it as a
-     *  "next cannon to fire" index). -1 = uninitialised. */
+    /** Free-form per-ship state for combat strategy (broadside: next-cannon index). */
     public int combatCursor = -1;
 
-    /** Strategies layer extra cooldowns on top of the brain's per-shot interval (e.g.
-     *  broadside silence after a full rotation). fire() returns false in this window. */
+    /** Strategy-layered cooldown on top of the brain's per-shot interval. */
     public long combatNextFireTick = Long.MIN_VALUE / 2;
 
-    /** Orbit direction during PURSUE: +1 = CCW (tangent = rot90 of ship→target), -1 = CW.
-     *  Picked on PURSUE entry from current heading; flipped mid-pursue if the ship can't
-     *  yaw to the chosen tangent — see {@link AirshipBrain#pickOrbitDir}. */
+    /** +1 = CCW, -1 = CW. Picked on PURSUE entry; flipped if stuck. */
     public int orbitDir = 1;
-    /** Consecutive {@code applyMovement} calls with sustained bad heading. Resets on
-     *  flip or when heading recovers. Crossing the threshold triggers the flip. */
+    /** Consecutive bad-heading decisions; threshold triggers an orbit flip. */
     public int orbitStuckDecisions = 0;
 
     public Airship(ServerLevel parentLevel, SubLevel subLevel, BlockPos airpadAnchor,
@@ -165,10 +122,7 @@ public final class Airship {
         this.cannoneerByMount = cannoneerByMount;
     }
 
-    /** True if at least one anchored crew member is alive in {@link #parentLevel}.
-     *  Empty {@link #anchoredEntities} reads false — rehydrated wrecks scan for surviving
-     *  pillagers and produce an empty list when none remain, which is exactly the defeat
-     *  signal the brain acts on. Live ships always register with a non-empty list. */
+    /** Empty {@link #anchoredEntities} reads false — that's the defeat signal. */
     public boolean isAnyCrewAlive() {
         for (AnchoredEntity ae : anchoredEntities) {
             Entity e = parentLevel.getEntity(ae.uuid());
@@ -177,7 +131,6 @@ public final class Airship {
         return false;
     }
 
-    /** @return true iff the bound cannoneer is alive and present in {@link #parentLevel}. */
     public boolean isMountManned(BlockPos slMount) {
         UUID uuid = cannoneerByMount.get(slMount);
         if (uuid == null) return false;
@@ -185,22 +138,14 @@ public final class Airship {
         return e != null && !e.isRemoved() && e.isAlive();
     }
 
-    /** Replace the deck-crew references after a deferred spawn — used when a MOORED
-     *  ship registered with empty crew is promoted to LIFTOFF and its deck pillagers
-     *  are spawned at that point. The brain's defeat detector ({@link #isAnyCrewAlive})
-     *  reads through these references on the next tick. */
+    /** Replace deck-crew refs after a deferred spawn (MOORED→LIFTOFF promotion). */
     public void installCrew(List<AnchoredEntity> anchors, Map<BlockPos, UUID> cannoneerByMount) {
         this.anchoredEntities = anchors;
         this.cannoneerByMount = cannoneerByMount;
     }
 
-    /** Yaw of the ship's world-frame forward axis, in radians, in {@code [-π, π)}.
-     *  Convention: {@code atan2(-fwd.x, fwd.z)} — zero = facing +Z (south),
-     *  positive = <strong>CW</strong> from above (south→west→north→east is
-     *  the direction of increasing yaw). Note this is the <em>opposite</em> of
-     *  the right-hand-rule convention Sable's rigid-body angular velocity uses;
-     *  {@link com.mcpirates.airship.ShipLog#angularVelocity} negates {@code .y}
-     *  to bring it into this same convention. */
+    /** Yaw in {@code [-π, π)}: zero = +Z, positive = CW from above. Opposite of Sable's
+     *  right-hand-rule angular velocity; {@link ShipTelemetry#angularVelocity} negates .y to match. */
     public double yawRadians() {
         Quaterniond orient = subLevel.logicalPose().orientation();
         Vector3d worldFwd = orient.transform(new Vector3d(shipLocalForward), new Vector3d());

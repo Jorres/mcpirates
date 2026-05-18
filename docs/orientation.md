@@ -92,7 +92,7 @@ For changes that touch any of:
 
 - `airship/` — assembly, liftoff trigger, brain, kind dispatch, ground combat
 - `pirates/` — defender spawning, captain death, ground combat module
-- `LiftMath`, `HotAirBurners`, `ThrottleLevers`, `ClutchLevers`
+- `PlateauTable`, `HotAirBurners`, `ThrottleLevers`, `ClutchLevers`
 - The mixin layer (`mixin/`)
 
 run the gametest suite as the regression check:

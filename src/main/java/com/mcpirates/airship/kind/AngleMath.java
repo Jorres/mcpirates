@@ -2,7 +2,7 @@ package com.mcpirates.airship.kind;
 
 /**
  * Pure-numeric angle helpers — normalisation and periodic clamping. Lives in this
- * subpackage (next to {@link LiftMath}) so the math can be unit-tested without dragging
+ * subpackage (next to {@link PlateauTable}) so the math can be unit-tested without dragging
  * in Minecraft / Sable.
  *
  * <p>Two conventions used throughout:

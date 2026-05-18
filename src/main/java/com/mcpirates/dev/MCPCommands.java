@@ -1,9 +1,9 @@
-package com.mcpirates.commands;
+package com.mcpirates.dev;
 
 import com.mcpirates.MCPirates;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
-import com.mcpirates.airship.GalleonSpawner;
+import com.mcpirates.airship.galleon.GalleonSpawner;
 import com.mcpirates.util.FunnyNames;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
@@ -30,42 +30,7 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import java.util.Optional;
 import java.util.Set;
 
-/**
- * All mcpirates dev/debug chat commands hang off the {@code /mcpirates} root.
- *
- * <h2>Subcommands</h2>
- *
- * <ul>
- *     <li>{@code /mcpirates fire on|off} — toggles cannon firing globally
- *         ({@link AirshipBrain#CANNON_FIRE_ENABLED}). Aiming is always on so
- *         the cannon visually tracks the player; this just gates whether
- *         projectiles actually spawn. Defaults OFF so test sessions don't get
- *         interrupted by cannonballs.</li>
- *     <li>{@code /mcpirates outpost tp} — teleports the issuing player to a
- *         safe surface position near the nearest {@code minecraft:pillager_outpost}
- *         (searches a 100-chunk radius). Useful when iterating on outpost
- *         worldgen / airship lift-off.</li>
- *     <li>{@code /mcpirates outpost spawn [airship_small|crossbow_board]} —
- *         places a pillager outpost 48 blocks east of the issuing player.
- *         With no argument, places {@code minecraft:pillager_outpost} and lets
- *         the worldgen airships pool roll randomly between the two ships. With
- *         an argument, places one of our variant structures
- *         ({@code mcpirates:outpost_with_<ship>}) that uses a single-ship pool,
- *         guaranteeing the requested ship. Bypasses worldgen so a new outpost
- *         can be built without travelling.</li>
- *     <li>{@code /mcpirates sheriff spawn} — spawns a named sheriff villager
- *         two blocks NE of the issuing player. Bypasses the village's natural
- *         POI-claim flow for trade testing.</li>
- *     <li>{@code /mcpirates galleon spawn} — places a galleon 80 blocks east of
- *         the issuing player at heightmap+altitude. Same placement primitive
- *         {@link com.mcpirates.airship.GalleonSpawner} uses for boss-bounty
- *         spawns, just at deterministic close range so liftoff can be tested
- *         without flying 1500 blocks to find the random-far spawn.</li>
- * </ul>
- *
- * <p>All subcommands require op level 2 (vanilla cheats). In dev {@code Dev}
- * is op by default.
- */
+/** Dev/debug chat commands under {@code /mcpirates}. Op level 2 required. */
 @EventBusSubscriber(modid = MCPirates.MOD_ID)
 public final class MCPCommands {
 
@@ -130,8 +95,6 @@ public final class MCPCommands {
 
     // ────────────────────────────── /mcpirates lift ──────────────────────────────
 
-    /** Toggle the auto-liftoff trigger. Off = placed ships stay dormant so flat-world
-     *  iteration on the NBT layout doesn't fire activations every time you /place. */
     private static int setLift(CommandSourceStack source, boolean enabled) {
         AirshipLiftoffTrigger.setAutoLiftoffEnabled(enabled);
         Component msg = Component.literal(
@@ -174,10 +137,8 @@ public final class MCPCommands {
 
     // ────────────────────────────── /mcpirates outpost spawn ──────────────────────────────
 
-    /** @param ship null = vanilla {@code pillager_outpost} (random ship via the
-     *              50/50 airships pool); otherwise {@code "airship_small"} or
-     *              {@code "crossbow_board"} → one of our variant structures whose
-     *              start_pool references a single-ship airship pool. */
+    /** {@code ship == null} → vanilla outpost with random ship; otherwise our
+     *  {@code outpost_with_<ship>} variant pinning the ship choice. */
     private static int spawnOutpost(CommandContext<CommandSourceStack> ctx, String ship) {
         CommandSourceStack src = ctx.getSource();
         ServerLevel level = src.getLevel();
@@ -219,10 +180,7 @@ public final class MCPCommands {
         String sheriffName = FunnyNames.nextSheriffName(level.getRandom());
 
         try {
-            // Build the /summon command via string concat. Funny names come from a
-            // hand-curated list (FunnyNames.SHERIFF_*) so a stray quote is impossible;
-            // if that list ever grows from a config we should switch to a structured
-            // EntityType.PILLAGER.create + setCustomName path.
+            // Funny names are curated literals, no quote injection risk.
             String cmd = "summon minecraft:villager " + x + " " + y + " " + z +
                     " {VillagerData:{profession:\"mcpirates:sheriff\",level:2},PersistenceRequired:1b,CustomName:'\""
                     + sheriffName +
@@ -240,10 +198,7 @@ public final class MCPCommands {
 
     // ────────────────────────────── /mcpirates debug activate ──────────────────────────────
 
-    /** Invoke {@link AirshipLiftoffTrigger#activateAnchor} on the given block. Lets you
-     *  drive a placed airship through the full production startup (assembly + brain
-     *  register + crew spawn) without needing a player on a SubLevel. Pure diagnostic;
-     *  used when iterating on the gametest physics path against a known-good real run. */
+    /** Drive {@link AirshipLiftoffTrigger#activateAnchor} without needing a SubLevel player. */
     private static int debugActivate(CommandContext<CommandSourceStack> ctx) {
         net.minecraft.core.BlockPos pos =
                 net.minecraft.commands.arguments.coordinates.BlockPosArgument.getBlockPos(ctx, "pos");
@@ -255,9 +210,7 @@ public final class MCPCommands {
 
     // ────────────────────────────── /mcpirates debug getblock ──────────────────────────────
 
-    /** Return the {@link BlockState} at the given position as a single text line.
-     *  Works for any block, not just block entities (vanilla {@code /data get block}
-     *  only handles BEs). The Python MCP {@code read_block} uses this as fallback. */
+    /** Single-line BlockState dump (vanilla {@code /data get block} only handles BEs). */
     private static int debugGetBlock(CommandContext<CommandSourceStack> ctx) {
         BlockPos pos =
                 net.minecraft.commands.arguments.coordinates.BlockPosArgument.getBlockPos(ctx, "pos");
@@ -270,9 +223,7 @@ public final class MCPCommands {
 
     // ────────────────────────────── /mcpirates debug physics ──────────────────────────────
 
-    /** Dump physics state for every SubLevel in the current dimension: world pose,
-     *  linear+angular velocity from rapier, plus any attached balloon's lift +
-     *  filled volume. Pure diagnostic — for finding out why ships don't fly. */
+    /** Per-SubLevel pose + rapier velocity + attached-balloon state. */
     private static int debugPhysics(CommandContext<CommandSourceStack> ctx) {
         net.minecraft.server.level.ServerLevel level = ctx.getSource().getLevel();
         dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer container =
@@ -290,9 +241,7 @@ public final class MCPCommands {
             var v = handle == null ? null : handle.getLinearVelocity(new org.joml.Vector3d());
             var av = handle == null ? null : handle.getAngularVelocity(new org.joml.Vector3d());
             var mt = sl.getMassTracker();
-            // v / av come straight off Sable's RigidBodyHandle so they're in
-            // SI units (m/s, rad/s) — labelled explicitly. Per-tick figures
-            // are emitted by ShipLog.snapshot via the brain.
+            // SI units; per-tick figures live in ShipTelemetry.snapshot.
             String msg = String.format(
                     "[debug-physics] subLevel=%s pos=(%.2f,%.2f,%.2f) v_mPerSec=%s av_radPerSec=%s mass=%.2fkg invalidMass=%s",
                     sl.getUniqueId(),
@@ -312,7 +261,7 @@ public final class MCPCommands {
                 var be = sl.getLevel().getBlockEntity(bp);
                 if (be instanceof dev.eriksonn.aeronautics.content.blocks.hot_air.hot_air_burner.HotAirBurnerBlockEntity burner) {
                     String bmsg = "  burner@" + bp.toShortString() + ": "
-                            + com.mcpirates.airship.ShipLog.describe(burner);
+                            + com.mcpirates.airship.ShipTelemetry.describe(burner);
                     MCPirates.LOGGER.info(bmsg);
                     final String bmsgF = bmsg;
                     ctx.getSource().sendSuccess(() -> Component.literal(bmsgF), false);
@@ -329,8 +278,7 @@ public final class MCPCommands {
         ServerLevel level = src.getLevel();
         BlockPos origin = BlockPos.containing(src.getPosition());
 
-        // 80 blocks east of the player. Galleon footprint is 12×28; 80 keeps it clear
-        // of the player's chunk while still close enough to fly to in a few seconds.
+        // 80 east — clears the player's chunk but stays a short flight away.
         int centerX = origin.getX() + 80;
         int centerZ = origin.getZ();
 
@@ -371,11 +319,7 @@ public final class MCPCommands {
         return result != null ? result.getFirst() : null;
     }
 
-    /**
-     * Find a surface block adjacent to {@code origin} that has solid ground, two
-     * blocks of free vertical space, and open sky — i.e. a place the player won't
-     * spawn inside the watchtower or in a cave. Spirals outward up to 48 blocks.
-     */
+    /** Spiral outward (≤48) for ground + 2-tall clearance + open sky. */
     private static Vec3 findSafeTeleportPos(ServerLevel level, BlockPos origin) {
         for (int r = 0; r <= 48; r++) {
             for (int dx = -r; dx <= r; dx++) {
@@ -430,9 +374,7 @@ public final class MCPCommands {
 
     private static int findSafeHeight(ServerLevel level, int x, int z, int startY) {
         int surfaceY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
-        // If the heightmap value is below the outpost anchor (we may be in a cave or
-        // the outpost is on a mesa pillar), start the downward search 40 blocks above
-        // the anchor so we don't shoot straight into the cave ceiling.
+        // Mesa-pillar / cave fallback: start 40 above anchor when heightmap is lower.
         int searchY = Math.max(startY + 40, surfaceY);
 
         for (int y = searchY; y >= level.getMinBuildHeight(); y--) {

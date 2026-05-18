@@ -14,43 +14,17 @@ import java.util.HashSet;
 import java.util.Set;
 
 /**
- * Per-{@link ServerLevel} record of airship-anchor block positions whose captain has
- * been killed. The bounty map item ({@code furled_bounty}) consults this on unfurl
- * to skip outposts whose ship is already defeated, so the player keeps getting
- * pointed at fresh targets.
- *
- * <h2>Why a level-attached {@link SavedData}</h2>
- *
- * <p>Defeat is a long-lived per-world fact: the captain can die hours before a player
- * tries to redeem a scroll, the chunk can be unloaded in between, the player can log
- * out and back in. Per-entity NBT dies with the captain; per-block NBT requires the
- * outpost chunk to be loaded. SavedData lives at world-save-root level and survives
- * everything except outright save deletion.
- *
- * <h2>Key choice — BlockPos vs ChunkPos</h2>
- *
- * <p>Stored as exact {@link BlockPos} (= the analog-lever's world position when the
- * airship was assembled). The {@link #isDefeated(BlockPos)} query snaps the supplied
- * outpost-origin position to its {@link ChunkPos} and looks for any stored anchor
- * inside that chunk (or a 3×3 chunk neighbourhood). The block-precision storage
- * leaves headroom for future fanout (e.g. multiple ships per outpost) without
- * migrating data.
+ * Per-level SavedData of defeated-ship anchor positions. Bounty maps query this so
+ * unfurls skip already-cleared outposts. Stored as exact BlockPos; {@link #isDefeated}
+ * does a 3×3 chunk neighborhood check (outposts straddle chunk boundaries).
  */
 public final class DefeatedAirships extends SavedData {
 
-    /** Underscore-joined (not colon) because Windows file systems reject ':' in filenames
-     *  — MC writes SavedData as {@code world/data/<SAVE_NAME>.dat}. The colon-named form
-     *  that mirrored the {@code mod_id:name} ResourceLocation convention broke /save-all
-     *  on Windows ("Illegal char <:> at index 22"); underscore is a stable substitute. */
+    /** Underscore not colon — Windows rejects ':' in SavedData filenames. */
     public static final String SAVE_NAME = MCPirates.MOD_ID + "_defeated_airships";
 
-    /** All known defeated-ship anchor positions in this level. */
     private final Set<BlockPos> anchors = new HashSet<>();
-    /** Global counter of bounty scrolls unfurled in this level. Bumped by
-     *  {@link com.mcpirates.village.FurledBountyItem} on every successful resolve so it
-     *  can decide when to spawn a boss (galleon) instead of pointing at a regular
-     *  outpost. World-scoped (one counter per dimension); per-player tracking would
-     *  require fanout to player NBT but the gameplay loop doesn't need it. */
+    /** World-scoped boss-bounty pacing counter. */
     private int scrollsUnfurled = 0;
 
     public static DefeatedAirships get(ServerLevel level) {
@@ -69,18 +43,13 @@ public final class DefeatedAirships extends SavedData {
         return this.anchors.size();
     }
 
-    /**
-     * Exact-match query: was this specific lever-world-position stamped by a dead
-     * captain? Distinct from {@link #isDefeated} which does a 3×3 chunk neighborhood
-     * lookup for bounty-map redirection. The lift-off trigger and ground-combat
-     * trigger use this strict form so they don't suppress a sibling ship in the
-     * same outpost just because one of its peers was killed.
-     */
+    /** Strict exact-pos lookup; triggers use this so a defeated peer doesn't suppress
+     *  its still-living siblings in the same outpost. */
     public boolean containsExact(BlockPos leverWorldPos) {
         return this.anchors.contains(leverWorldPos);
     }
 
-    /** Increment and return the new value (1-based: returns 1 the first time it's called). */
+    /** 1-based; returns 1 the first time. */
     public int incrementScrollsUnfurled() {
         this.scrollsUnfurled++;
         this.setDirty();
@@ -91,13 +60,7 @@ public final class DefeatedAirships extends SavedData {
         return this.scrollsUnfurled;
     }
 
-    /**
-     * @return true if the given outpost-origin position has *any* defeated airship
-     * anchor in its chunk or any of the 8 neighbouring chunks. The neighbourhood
-     * widens the check so we don't fail to suppress a defeated outpost just because
-     * the lever happens to sit in a chunk adjacent to the outpost's reported origin
-     * — pillager outposts span ~14 blocks, often straddling chunk boundaries.
-     */
+    /** 3×3 chunk neighborhood check; bounty map uses this to skip the outpost. */
     public boolean isDefeated(BlockPos outpostOrigin) {
         ChunkPos centre = new ChunkPos(outpostOrigin);
         for (BlockPos anchor : this.anchors) {

@@ -1,5 +1,11 @@
-package com.mcpirates.airship.kind;
+package com.mcpirates.airship.ramship;
 
+import com.mcpirates.airship.kind.AirshipKind;
+import com.mcpirates.airship.kind.AnchorNbtPositions;
+import com.mcpirates.airship.kind.CombatBehavior;
+import com.mcpirates.airship.kind.ThrottleLevers;
+import com.mcpirates.airship.kind.MovementBehavior;
+import com.mcpirates.airship.kind.NoCannonCombat;
 import com.mcpirates.pirates.GroundCombatModule;
 import com.simibubi.create.content.redstone.analogLever.AnalogLeverBlockEntity;
 import net.minecraft.core.BlockPos;
@@ -32,7 +38,7 @@ public final class RamshipKind implements AirshipKind {
     @Override public String name() { return "ramship"; }
     @Override public Direction nbtPrimaryFacing() { return Direction.NORTH; }
     @Override public Direction nbtForward() { return Direction.NORTH; }
-    @Override public LeverKind throttleLeverKind() { return LeverKind.CREATE_ANALOG; }
+    @Override public ThrottleLevers.Kind throttleLeverKind() { return ThrottleLevers.Kind.CREATE_ANALOG; }
     /** Ram, don't overfly. The hull's keel sits at the deck the victim's crew stands
      *  on — any positive offset turns the ram into a fly-over. */
     @Override public double pursueAltOffset() { return 0.0; }
@@ -82,7 +88,7 @@ public final class RamshipKind implements AirshipKind {
             com.mcpirates.airship.Airship airship,
             net.minecraft.core.BlockPos slPrimaryAnchor,
             net.minecraft.world.level.block.Rotation rotation) {
-        return new com.mcpirates.airship.kind.RamControls(
+        return new RamControls(
                 airship.subLevel.getLevel(),
                 airship.slLeftClutchLever,
                 airship.slRightClutchLever,
@@ -92,10 +98,9 @@ public final class RamshipKind implements AirshipKind {
                 slPrimaryAnchor.offset(FORWARD_PROPELLER_DELTA.rotate(rotation)));
     }
 
-    // Hull spans NBT (0..8, 0..9, 0..21). Lever-relative (spawnHoneyGlue offsets from
-    // lever, not anchor — see AirshipSmallKind comment for the BFS reasoning):
-    //   min (0-3, 0-3, 0-9)  = (-3,-3,-9)
-    //   max (8-3, 9-3, 21-9) = (+5,+6,+12)
+    // Glue bbox covering the full hull, expressed as lever-relative min/max
+    // (spawnHoneyGlue offsets from lever, not anchor — see AirshipSmallKind for the
+    // BFS reasoning).
     @Override public BlockPos glueMin() { return new BlockPos(-3, -3, -9); }
     @Override public BlockPos glueMax() { return new BlockPos(+5, +6, +12); }
 

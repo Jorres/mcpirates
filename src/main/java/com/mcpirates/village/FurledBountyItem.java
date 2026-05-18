@@ -1,8 +1,8 @@
 package com.mcpirates.village;
 
 import com.mcpirates.MCPirates;
-import com.mcpirates.airship.GalleonSpawner;
-import com.mcpirates.airship.worldgen.GalleonUnlockState;
+import com.mcpirates.airship.galleon.GalleonSpawner;
+import com.mcpirates.airship.galleon.GalleonUnlockState;
 import com.mcpirates.pirates.DefeatedAirships;
 import com.mcpirates.registry.MCPStructureTags;
 import net.minecraft.core.BlockPos;
@@ -23,47 +23,22 @@ import net.minecraft.world.level.saveddata.maps.MapDecorationTypes;
 import net.minecraft.world.level.saveddata.maps.MapItemSavedData;
 
 /**
- * The "furled bounty" scroll. Right-clicking it server-side picks the closest
- * non-{@link DefeatedAirships}-marked pillager outpost and swaps the scroll in
- * the player's hand for a filled bounty map pointing at that outpost.
+ * "Furled bounty" scroll: on right-click, pick the nearest non-defeated outpost and
+ * hand back a filled map. Outpost is chosen at unfurl time (anchored at the player)
+ * so the same scroll resolves differently as the player wanders.
  *
- * <h2>Why scroll → map at *unfurl* time, not at *trade* time</h2>
- *
- * <p>If the sheriff baked the target outpost into the map at trade-gen time
- * (the v0.1 design), every map a given sheriff issued in his lifetime targeted
- * the same outpost — the one closest to the villager's position at first
- * interaction. Deferring outpost selection until the player actually opens the
- * scroll means the search anchors at the player's location at that moment, so
- * the same scroll bought from the same sheriff resolves to different outposts
- * as the player wanders.
- *
- * <h2>Defeated-airship skipping</h2>
- *
- * <p>{@code findNearestMapStructure} doesn't accept a filter, so we use the
- * standard "search → check → retry from a perturbed origin" pattern: locate
- * the nearest outpost, ask {@link DefeatedAirships} whether it's been defeated,
- * and if so try again from an offset origin. {@link #MAX_RETRIES} bounds the
- * search so a heavily-defeated world doesn't lock the unfurl into a loop. If
- * we exhaust retries we still hand out the best candidate we found — better a
- * stale map than no map and lost emeralds.
+ * <p>Defeated outposts are skipped by perturbing the search origin and retrying up to
+ * {@link #MAX_RETRIES} times; we fall back to the best candidate found rather than null.
  */
 public final class FurledBountyItem extends Item {
 
-    /** Map scale (1=1:2, 2=1:4 vanilla treasure, 3=1:8). 3 keeps the player on the
-     *  painted square at typical sheriff→outpost distances. */
     private static final byte MAP_SCALE = 3;
-    /** Translation key for the resulting filled_map's ITEM_NAME component. */
     private static final String MAP_DISPLAY_NAME_KEY = "pirate_bounty";
-    /** {@code findNearestMapStructure}'s searchRadius is in chunks; 200ch = 3200 blocks. */
     private static final int SEARCH_RADIUS_CHUNKS = 200;
-    /** Same units as {@link #SEARCH_RADIUS_CHUNKS}, but wider — the galleon's structure_set
-     *  spacing is large (~64 chunks), so a 200-chunk radius might miss every spawn cell in
-     *  a sparse part of the world. 400ch ≈ 6400 blocks is enough to guarantee at least one
-     *  candidate in every direction. */
+    /** Wider than outpost search — galleon structure_set spacing is ~64 chunks, so a
+     *  smaller radius can miss every spawn cell in sparse regions. */
     private static final int GALLEON_SEARCH_RADIUS_CHUNKS = 400;
-    /** How many times we re-try with a perturbed origin if the result is defeated. */
     private static final int MAX_RETRIES = 6;
-    /** Perturbation distance (blocks) added per retry to nudge the search elsewhere. */
     private static final int RETRY_OFFSET_MIN_BLOCKS = 800;
     private static final int RETRY_OFFSET_MAX_BLOCKS = 2400;
 
@@ -79,24 +54,15 @@ public final class FurledBountyItem extends Item {
             return InteractionResultHolder.pass(held);
         }
 
-        // Atomically bump the world counter so two scrolls unfurled in the same tick don't
-        // both come up "5th". DefeatedAirships is a SavedData; the bump is dirtied to disk.
+        // Atomic bump so two same-tick unfurls don't both come up "5th".
         DefeatedAirships airships = DefeatedAirships.get(serverLevel);
         int unfurlIndex = airships.incrementScrollsUnfurled();
         boolean isBoss = (unfurlIndex % GalleonSpawner.BOSS_INTERVAL) == 0;
 
         BlockPos found;
         if (isBoss) {
-            // Flip the world flag — from this point on, newly-generated chunks may
-            // contain {@code mcpirates:pirate_galleon} structures wherever the
-            // structure_set's spacing grid + biome whitelist say. Then look up the
-            // nearest one with skipExistingChunks=true so the player is steered into
-            // an unexplored direction (chunks already-generated pre-unlock contain no
-            // galleons; the function correctly skips them).
-            //
-            // Note: this is the worldgen path. The /mcpirates galleon spawn dev command
-            // still uses GalleonSpawner.spawnGalleonAt for deterministic close-range
-            // placement when testing.
+            // Unlock the worldgen galleon structure_set, then point at the nearest yet-to-generate
+            // chunk so the player is steered into unexplored territory.
             GalleonUnlockState.get(serverLevel).unlock();
             found = serverLevel.findNearestMapStructure(
                     MCPStructureTags.PIRATE_GALLEONS,
@@ -104,8 +70,7 @@ public final class FurledBountyItem extends Item {
                     GALLEON_SEARCH_RADIUS_CHUNKS,
                     /*skipExistingChunks=*/true);
             if (found == null) {
-                // No valid placement spot within radius. The biome whitelist may have
-                // excluded everything around this player (e.g. ocean spawner) — refund.
+                // Biome whitelist may have excluded everything in range — refund.
                 player.displayClientMessage(
                         Component.translatable("item.mcpirates.furled_bounty.no_target"), true);
                 return InteractionResultHolder.fail(held);
@@ -113,9 +78,7 @@ public final class FurledBountyItem extends Item {
         } else {
             found = findUndefeatedOutpost(serverLevel, player);
             if (found == null) {
-                // No outpost within the search ring. Refund the scroll (don't consume),
-                // tell the player. Treating this as soft-fail so a player on an island
-                // far from any village doesn't burn 16 emeralds worth of scroll.
+                // Soft-fail: refund so an isolated player doesn't burn 16 emeralds.
                 player.displayClientMessage(
                         Component.translatable("item.mcpirates.furled_bounty.no_target"), true);
                 return InteractionResultHolder.fail(held);
@@ -123,8 +86,6 @@ public final class FurledBountyItem extends Item {
         }
 
         ItemStack map = makeBountyMap(serverLevel, found);
-        // Replace the scroll in hand with the filled map. consumeItem handles
-        // creative mode (don't shrink) and 1-stack vs many-stack cases.
         if (!player.getAbilities().instabuild) {
             held.shrink(1);
         }
@@ -148,12 +109,8 @@ public final class FurledBountyItem extends Item {
         return InteractionResultHolder.consume(held);
     }
 
-    /**
-     * Iteratively probe {@code findNearestMapStructure}, perturbing the search origin
-     * each time the result lands in a defeated chunk. Returns the first non-defeated
-     * outpost we find, or the last-seen result if all retries collided with defeats.
-     * Returns null only if vanilla itself returned null on every attempt.
-     */
+    /** Probe; on a defeated hit, perturb the origin. Returns first non-defeated outpost,
+     *  or last-seen if all collided, or null if vanilla never found one. */
     private static BlockPos findUndefeatedOutpost(ServerLevel level, Player player) {
         DefeatedAirships defeated = DefeatedAirships.get(level);
         RandomSource random = level.getRandom();
@@ -166,13 +123,11 @@ public final class FurledBountyItem extends Item {
             if (candidate == null) {
                 continue; // try again with a different origin
             }
-            best = candidate; // remember in case all subsequent attempts also collide
+            best = candidate;
             if (!defeated.isDefeated(candidate)) {
                 return candidate;
             }
-            // Defeated — nudge search origin away from the player by a random vector.
-            // Using a different angle/distance each attempt makes us walk around the
-            // ring rather than re-landing on the same defeated outpost.
+            // Walk around the ring with a random angle/distance per attempt.
             double angle = random.nextDouble() * Math.PI * 2.0;
             int dist = RETRY_OFFSET_MIN_BLOCKS
                     + random.nextInt(RETRY_OFFSET_MAX_BLOCKS - RETRY_OFFSET_MIN_BLOCKS);
@@ -180,7 +135,7 @@ public final class FurledBountyItem extends Item {
             int dz = (int) Math.round(Math.sin(angle) * dist);
             searchOrigin = player.blockPosition().offset(dx, 0, dz);
         }
-        return best; // null if vanilla never found one, else last-seen (possibly defeated)
+        return best;
     }
 
     private static ItemStack makeBountyMap(ServerLevel serverLevel, BlockPos targetPos) {

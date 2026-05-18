@@ -1,4 +1,4 @@
-package com.mcpirates.airship.worldgen;
+package com.mcpirates.airship.galleon;
 
 import com.mcpirates.MCPirates;
 import net.minecraft.core.HolderLookup;

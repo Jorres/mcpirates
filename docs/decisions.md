@@ -306,7 +306,7 @@ in the wrong place for hours.**
 
 ## 2026-05-14 — Mixin into `GameTestServer` to pin test arenas at world origin
 
-**Decision.** Add a tiny SpongePowered Mixin (`com.mcpirates.mixin.GameTestServerMixin`)
+**Decision.** Add a tiny SpongePowered Mixin (`com.mcpirates.gametest.mixin.GameTestServerMixin`)
 that `@Redirect`s the two `RandomSource.nextIntBetweenInclusive(-14999992, 14999992)` calls
 in `net.minecraft.gametest.framework.GameTestServer#startTests` to return 0, so every
 `@GameTest` arena lands near world (0, -59, 0) instead of somewhere up to 15 million

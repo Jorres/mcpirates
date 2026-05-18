@@ -1,5 +1,9 @@
-package com.mcpirates.airship.kind;
+package com.mcpirates.airship.galleon;
 
+import com.mcpirates.airship.kind.AirshipKind;
+import com.mcpirates.airship.kind.AnchorNbtPositions;
+import com.mcpirates.airship.kind.CombatBehavior;
+import com.mcpirates.airship.kind.ThrottleLevers;
 import dev.simulated_team.simulated.content.blocks.throttle_lever.ThrottleLeverBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -43,7 +47,7 @@ public final class GalleonKind implements AirshipKind {
     @Override public String name() { return "galleon"; }
     @Override public Direction nbtPrimaryFacing() { return Direction.NORTH; }
     @Override public Direction nbtForward() { return Direction.NORTH; }
-    @Override public LeverKind throttleLeverKind() { return LeverKind.SIMULATED_THROTTLE; }
+    @Override public ThrottleLevers.Kind throttleLeverKind() { return ThrottleLevers.Kind.SIMULATED_THROTTLE; }
 
     /** Galleon climbs ~100 blocks above its spawn altitude before exiting LIFTOFF —
      *  it has much more lift than airship_small, so the 25-block default exits

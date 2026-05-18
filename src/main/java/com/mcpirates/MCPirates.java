@@ -1,6 +1,6 @@
 package com.mcpirates;
 
-import com.mcpirates.airship.worldgen.GalleonUnlockState;
+import com.mcpirates.airship.galleon.GalleonUnlockState;
 import com.mcpirates.registry.MCPBlockEntityTypes;
 import com.mcpirates.registry.MCPBlocks;
 import com.mcpirates.registry.MCPCreativeTabs;

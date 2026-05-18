@@ -1,4 +1,4 @@
-package com.mcpirates.mixin;
+package com.mcpirates.gametest.mixin;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTestServer;

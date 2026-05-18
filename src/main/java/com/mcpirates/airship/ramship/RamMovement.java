@@ -1,6 +1,7 @@
-package com.mcpirates.airship.kind;
+package com.mcpirates.airship.ramship;
 
 import com.mcpirates.airship.Airship;
+import com.mcpirates.airship.kind.MovementBehavior;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.phys.Vec3;
