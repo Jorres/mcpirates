@@ -6,6 +6,8 @@ import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.pirates.roles.CannoneerRole;
 import com.mcpirates.pirates.roles.CrossbowmanRole;
 import com.mcpirates.pirates.roles.PirateRole;
+import com.mcpirates.pirates.roles.PirateRoleCodec;
+import net.minecraft.nbt.CompoundTag;
 import com.mcpirates.util.FunnyNames;
 import dev.ryanhcode.sable.mixinterface.entity.entities_stick_sublevels.EntityStickExtension;
 import dev.ryanhcode.sable.sublevel.SubLevel;
@@ -45,7 +47,23 @@ public final class CaptainSpawner {
 
     /** Stable handle for a Sable-anchored pillager. {@code role} may be shared
      *  (stateless) or unique (carries per-pirate state). */
-    public record AnchoredEntity(UUID uuid, Vec3 plotPos, PirateRole role) {}
+    public record AnchoredEntity(UUID uuid, Vec3 plotPos, PirateRole role) {
+        public CompoundTag writeNbt() {
+            CompoundTag tag = new CompoundTag();
+            tag.putUUID("uuid", uuid);
+            tag.putDouble("px", plotPos.x);
+            tag.putDouble("py", plotPos.y);
+            tag.putDouble("pz", plotPos.z);
+            tag.put("role", PirateRoleCodec.write(role));
+            return tag;
+        }
+        public static AnchoredEntity readNbt(CompoundTag tag) {
+            return new AnchoredEntity(
+                    tag.getUUID("uuid"),
+                    new Vec3(tag.getDouble("px"), tag.getDouble("py"), tag.getDouble("pz")),
+                    PirateRoleCodec.read(tag.getCompound("role")));
+        }
+    }
 
     public record CrewSpawnResult(List<AnchoredEntity> anchors,
                                   Map<BlockPos, UUID> cannoneerByMount) {
@@ -123,9 +141,7 @@ public final class CaptainSpawner {
                     inner, subLevel, seatToFeetPlot(seat), leverWorldPos,
                     /*tag=*/ null,
                     /*name=*/ Component.literal("Pirate Gunner"),
-                    CannoneerRole.INSTANCE,
-                    /*roleStamp=*/ "cannoneer",
-                    /*cannonMountSlPos=*/ mount);
+                    CannoneerRole.INSTANCE);
             if (ae != null) {
                 anchors.add(ae);
                 cannoneerByMount.put(mount, ae.uuid());
@@ -137,9 +153,7 @@ public final class CaptainSpawner {
                 inner, subLevel, seatToFeetPlot(captainSeat), leverWorldPos,
                 MCPDataKeys.CAPTAIN_TAG,
                 Component.literal(FunnyNames.nextPirateCaptainName(inner.getRandom())),
-                new CrossbowmanRole(now),
-                /*roleStamp=*/ "captain",
-                /*cannonMountSlPos=*/ null);
+                new CrossbowmanRole(now));
         if (captain != null) anchors.add(captain);
 
         // Crossbowmen on remaining crew seats; stagger reloads.
@@ -152,9 +166,7 @@ public final class CaptainSpawner {
                     inner, subLevel, seatToFeetPlot(seat), leverWorldPos,
                     /*tag=*/ null,
                     Component.literal("Pirate Crewmate"),
-                    role,
-                    /*roleStamp=*/ "crewmate",
-                    /*cannonMountSlPos=*/ null);
+                    role);
             if (ae != null) anchors.add(ae);
         }
 
@@ -176,9 +188,7 @@ public final class CaptainSpawner {
             BlockPos airshipAnchorWorldPos,
             String tag,
             Component customName,
-            PirateRole role,
-            String roleStamp,
-            BlockPos cannonMountSlPos) {
+            PirateRole role) {
         Vec3 initialWorldPos = subLevel.logicalPose().transformPosition(plotPos);
 
         Pillager pillager = EntityType.PILLAGER.create(inner);
@@ -200,12 +210,9 @@ public final class CaptainSpawner {
         pillager.setCustomNameVisible(true);
         // Aggressive→CROSSBOW_HOLD pose with arms raised. Skip for unarmed cannoneers.
         pillager.setAggressive(!mainHand.isEmpty());
-        // Anchor stamp is harmless on non-captain crew; keeps promote-to-captain path open.
+        // Anchor stamp is harmless on non-captain crew; keeps promote-to-captain path open
+        // and lets ground-combat adopt orphan captains on restart.
         pillager.getPersistentData().putLong(MCPDataKeys.CAPTAIN_ANCHOR_NBT_KEY, airshipAnchorWorldPos.asLong());
-        pillager.getPersistentData().putString(MCPDataKeys.CREW_ROLE_NBT_KEY, roleStamp);
-        if (cannonMountSlPos != null) {
-            pillager.getPersistentData().putLong(MCPDataKeys.CREW_CANNON_MOUNT_NBT_KEY, cannonMountSlPos.asLong());
-        }
 
         boolean added = inner.addFreshEntity(pillager);
         // Bind AFTER addFreshEntity so Sable's @Unique mixin field is initialised.

@@ -56,6 +56,8 @@ public final class CrossbowmanRole implements PirateRole {
         this.nextFireTick = initialFireDelay;
     }
 
+    long nextFireTick() { return nextFireTick; }
+
     @Override public String name() { return "crossbowman"; }
 
     @Override

@@ -80,6 +80,11 @@ public final class RamshipKind implements AirshipKind {
     private static final BlockPos RIGHT_PROPELLER_DELTA      = new BlockPos(+3, -1, +10);
     private static final BlockPos FORWARD_PROPELLER_DELTA    = new BlockPos(+1, -2, +12);
 
+    /** ramship.nbt has a single propeller palette entry: {@code reversed=true} on all
+     *  three. Hardcoded so rehydrate after a PURSUE-time mutation still has the truth. */
+    private static final boolean NBT_REVERSED_L = true;
+    private static final boolean NBT_REVERSED_R = true;
+
     @Override
     public com.mcpirates.airship.interfaces.ShipControls makeControls(
             com.mcpirates.airship.Airship airship,
@@ -88,13 +93,14 @@ public final class RamshipKind implements AirshipKind {
             net.minecraft.core.BlockPos slPrimaryAnchor,
             net.minecraft.world.level.block.Rotation rotation) {
         return new RamControls(
-                airship.subLevel.getLevel(),
                 slLeftClutchLever,
                 slRightClutchLever,
                 slPrimaryAnchor.offset(FORWARD_CLUTCH_LEVER_DELTA.rotate(rotation)),
                 slPrimaryAnchor.offset(LEFT_PROPELLER_DELTA.rotate(rotation)),
                 slPrimaryAnchor.offset(RIGHT_PROPELLER_DELTA.rotate(rotation)),
-                slPrimaryAnchor.offset(FORWARD_PROPELLER_DELTA.rotate(rotation)));
+                slPrimaryAnchor.offset(FORWARD_PROPELLER_DELTA.rotate(rotation)),
+                NBT_REVERSED_L,
+                NBT_REVERSED_R);
     }
 
     // Glue bbox covering the full hull, expressed as lever-relative min/max

@@ -25,6 +25,7 @@ import org.joml.Quaterniond;
 import org.joml.Vector3d;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 import java.util.List;
@@ -81,8 +82,7 @@ public final class AirshipBrain {
     /** NAVIGATE toward {@code (x, z)}; altitude tracks cruiseRise like RETURN. */
     public static void navigateTo(Airship a, double x, double z) {
         a.navDestination = new Vector3d(x, 0.0, z);
-        a.state = State.NAVIGATE;
-        a.stateEnteredTick = a.parentLevel.getGameTime();
+        transitionState(a, State.NAVIGATE, a.parentLevel.getGameTime());
         a.controls.release(a);
     }
 
@@ -93,19 +93,37 @@ public final class AirshipBrain {
      *  {@code NAVIGATE}: externally-driven XZ target; auto state machine never enters it. */
     public enum State { LIFTOFF, PURSUE, RETURN, HOVER, MOORED, NAVIGATE }
 
-    /** Register a fully-built {@link Airship} (controls already attached) with the brain.
-     *  The kind builds controls; the brain receives them ready-made. */
+    /** Register a fresh ship: stamps initial state + flushes NBT. Used by the liftoff trigger. */
     public static void register(Airship a, State initialState) {
         a.state = initialState;
         // Without this, default 0 makes (now - stateEnteredTick) huge and LIFTOFF_MIN_TICKS no-ops.
         a.stateEnteredTick = a.parentLevel.getGameTime();
         SHIPS.add(a);
+        a.persist();
+        logRegistered(a, "registered");
+    }
+
+    /** Register a ship deserialised from NBT — preserves saved {@code state} +
+     *  {@code stateEnteredTick}. Used by {@link AirshipRehydrator}. */
+    public static void registerRehydrated(Airship a) {
+        SHIPS.add(a);
+        logRegistered(a, "rehydrated");
+    }
+
+    private static void logRegistered(Airship a, String verb) {
         MCPirates.LOGGER.info(
-                "registered pirate airship: kind={} subLevel={} state={} anchor={} mounts={} fwd=({},{},{}) anchoredEntities={} cannoneers={}",
-                a.kind.name(), a.subLevel.getUniqueId(), initialState, a.airpadAnchor,
+                "{} pirate airship: kind={} subLevel={} state={} anchor={} mounts={} fwd=({},{},{}) anchoredEntities={} cannoneers={}",
+                verb, a.kind.name(), a.subLevel.getUniqueId(), a.state, a.airpadAnchor,
                 a.slCannonMounts,
                 a.shipLocalForward.x, a.shipLocalForward.y, a.shipLocalForward.z,
                 a.anchoredEntities.size(), a.cannoneerByMount.size());
+    }
+
+    /** Single write path for {@code state} + {@code stateEnteredTick}; flushes NBT. */
+    public static void transitionState(Airship a, State next, long now) {
+        a.state = next;
+        a.stateEnteredTick = now;
+        a.persist();
     }
 
     @SubscribeEvent
@@ -115,6 +133,16 @@ public final class AirshipBrain {
             if (!tickShip(a, now)) {
                 SHIPS.remove(a);
             }
+        }
+    }
+
+    /** Flush per-ship NBT so per-tick telemetry (lastGoal/steadyTicks/log buckets) isn't
+     *  lost on clean shutdown. Transitions already persist; this picks up the gap. */
+    @SubscribeEvent
+    public static void onServerStopping(ServerStoppingEvent event) {
+        for (Airship a : SHIPS) {
+            if (a.state == State.MOORED) continue;  // dormant — nothing transient worth saving
+            a.persist();
         }
     }
 
@@ -204,8 +232,7 @@ public final class AirshipBrain {
                     String.format("%.1f", shipPos.y),
                     String.format("%.1f", Math.sqrt(horizDistSq(shipPos, a.airpadAnchor))));
             State previous = a.state;
-            a.state = desired;
-            a.stateEnteredTick = now;
+            transitionState(a, desired, now);
             // Off→on edge refreshes Aeronautics' thrust contribution (props can visually
             // spin without applying thrust after reload until toggled).
             if (desired == State.PURSUE || desired == State.HOVER) {

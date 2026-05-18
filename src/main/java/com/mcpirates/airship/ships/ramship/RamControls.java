@@ -48,32 +48,28 @@ public final class RamControls implements ShipControls {
     /** Driven via its clutch lever; surfaced through {@link #diagnostics} only. */
     private final BlockPos slForwardPropeller;
 
-    /** NBT-default REVERSED, captured once; all writes are deltas from these. */
+    /** NBT-default REVERSED for left/right propellers. Passed in by the kind because the
+     *  brain mutates the live block state during steering, so an at-rehydrate block read
+     *  would yield a wrong default. */
     private final boolean nbtReversedL;
     private final boolean nbtReversedR;
 
-    public RamControls(Level subLevel,
-                       BlockPos slLeftClutchLever,
+    public RamControls(BlockPos slLeftClutchLever,
                        BlockPos slRightClutchLever,
                        BlockPos slForwardClutchLever,
                        BlockPos slLeftPropeller,
                        BlockPos slRightPropeller,
-                       BlockPos slForwardPropeller) {
+                       BlockPos slForwardPropeller,
+                       boolean nbtReversedL,
+                       boolean nbtReversedR) {
         this.slLeftClutchLever = slLeftClutchLever;
         this.slRightClutchLever = slRightClutchLever;
         this.slForwardClutchLever = slForwardClutchLever;
         this.slLeftPropeller = slLeftPropeller;
         this.slRightPropeller = slRightPropeller;
         this.slForwardPropeller = slForwardPropeller;
-        this.nbtReversedL = readReversed(subLevel, slLeftPropeller);
-        this.nbtReversedR = readReversed(subLevel, slRightPropeller);
-    }
-
-    private static boolean readReversed(Level subLevel, BlockPos pos) {
-        if (subLevel == null || pos == null) return false;
-        BlockState state = subLevel.getBlockState(pos);
-        if (!state.hasProperty(BasePropellerBlock.REVERSED)) return false;
-        return state.getValue(BasePropellerBlock.REVERSED);
+        this.nbtReversedL = nbtReversedL;
+        this.nbtReversedR = nbtReversedR;
     }
 
     @Override

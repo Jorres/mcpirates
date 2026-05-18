@@ -59,7 +59,10 @@ public class AirshipArchitectureTest {
     /** Phase C target fields (legitimate today, removed by Phase C). */
     private static final Set<String> PHASE_C_DEFERRED_FIELDS = Set.of(
             "slCannonMounts",     // List<BlockPos>
-            "cannoneerByMount"    // Map<BlockPos, UUID>
+            "cannoneerByMount",   // Map<BlockPos, UUID>
+            "slPrimaryAnchor"     // BlockPos — kept so MOORED→LIFTOFF promotion's CaptainSpawner
+                                  // can resolve the SL-frame seat-scan bbox. Phase C: move into
+                                  // an AssemblyMetadata wrapper carried by the SubLevel.
     );
 
     private static final Set<String> DELTA_METHODS = Set.of(
@@ -139,7 +142,8 @@ public class AirshipArchitectureTest {
                 .should().haveRawType(BLOCK_POS)
                 .orShould().haveRawType("java.util.List")
                 .orShould().haveRawType("java.util.Map")
-                .because("hardware addresses live behind ShipLift / ShipControls, not on Airship");
+                .because("hardware addresses live behind ShipLift / ShipControls, not on Airship")
+                .allowEmptyShould(true);
         rule.check(CLASSES);
     }
 

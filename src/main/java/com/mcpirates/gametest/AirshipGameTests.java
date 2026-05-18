@@ -197,19 +197,18 @@ public final class AirshipGameTests {
     }
 
     @GameTest(template = "airship_small", timeoutTicks = 400, setupTicks = 5,
-              batch = "rehydrate_after_restart_hover")
-    public static void rehydrateAtAirpadPicksHover(GameTestHelper helper) {
-        runRehydrateTest(helper, ship -> {}, State.HOVER);
+              batch = "rehydrate_preserves_liftoff")
+    public static void rehydratePreservesLiftoff(GameTestHelper helper) {
+        runRehydrateTest(helper, ship -> {}, State.LIFTOFF);
     }
 
     @GameTest(template = "airship_small", timeoutTicks = 400, setupTicks = 5,
-              batch = "rehydrate_after_restart_return")
-    public static void rehydrateAwayFromAirpadPicksReturn(GameTestHelper helper) {
-        runRehydrateTest(helper, ship -> {
-            // 32 > HOVER_RADIUS (16) → rehydrator picks RETURN.
-            Vector3d pos = ship.subLevel.logicalPose().position();
-            pos.set(pos.x + 32, pos.y, pos.z);
-        }, State.RETURN);
+              batch = "rehydrate_preserves_hover")
+    public static void rehydratePreservesHover(GameTestHelper helper) {
+        runRehydrateTest(helper, ship ->
+                AirshipBrain.transitionState(ship, State.HOVER,
+                        helper.getLevel().getGameTime()),
+                State.HOVER);
     }
 
     private static void runRehydrateTest(GameTestHelper helper,

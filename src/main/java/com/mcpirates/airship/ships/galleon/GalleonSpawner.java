@@ -1,12 +1,9 @@
 package com.mcpirates.airship.ships.galleon;
 
 import com.mcpirates.MCPirates;
-import com.mcpirates.airship.AirshipLiftoffTrigger;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.util.RandomSource;
-import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
@@ -18,49 +15,29 @@ import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemp
 import java.util.Optional;
 
 /**
- * Spawn a galleon at a far location relative to a player. Called by every {@value
- * #BOSS_INTERVAL}th bounty unfurl — the galleon is intentionally not in the worldgen
- * pool so it stays a "boss" moment.
+ * Dev-command path for placing a galleon hull (no pad) at fixed coords. The real
+ * gameplay placement happens via worldgen — see {@link GalleonStructure} +
+ * {@link GalleonUnlockState}; {@code FurledBountyItem} flips the unlock flag on a 5th
+ * unfurl and points the bounty map at the nearest yet-to-generate galleon cell.
  *
  * <p>Footprint chunks are force-loaded before placement so {@code placeInWorld} doesn't
  * no-op. {@link JigsawReplacementProcessor} resolves the keel jigsaw → air.
- *
- * <p>No retry on bad terrain (caller refunds the scroll), no dedup of overlapping bosses.
  */
 public final class GalleonSpawner {
 
     private static final ResourceLocation GALLEON_NBT =
             ResourceLocation.fromNamespaceAndPath(MCPirates.MOD_ID, "galleon");
-    /** Hull only — pad is the {@code galleon_pad} piece, applied at worldgen. */
     private static final int GALLEON_SIZE_X = 12;
     private static final int GALLEON_SIZE_Z = 28;
 
-    /** Aligned with {@link com.mcpirates.village.SheriffLifetimeCap#LIFETIME_CAP}. */
+    /** Read by {@code FurledBountyItem} — every Nth unfurl flips
+     *  {@link GalleonUnlockState} so worldgen starts placing galleons. */
     public static final int BOSS_INTERVAL = 5;
 
-    private static final int MIN_DISTANCE_BLOCKS = 800;
-    private static final int MAX_DISTANCE_BLOCKS = 2000;
-    /** Only used by the dev command; worldgen reads pad jigsaw Y instead. */
+    /** Worldgen reads pad jigsaw Y; this only applies to the dev command. */
     private static final int ALTITUDE_ABOVE_GROUND = 35;
 
     private GalleonSpawner() {}
-
-    /** Random direction, {@link #MIN_DISTANCE_BLOCKS}..{@link #MAX_DISTANCE_BLOCKS} away.
-     *  Returns the lever pos, or null on failure. */
-    public static BlockPos spawnGalleon(ServerLevel level, Player player) {
-        RandomSource rng = level.getRandom();
-        double angle = rng.nextDouble() * Math.PI * 2.0;
-        int dist = MIN_DISTANCE_BLOCKS + rng.nextInt(MAX_DISTANCE_BLOCKS - MIN_DISTANCE_BLOCKS);
-        int centerX = player.blockPosition().getX() + (int) Math.round(Math.cos(angle) * dist);
-        int centerZ = player.blockPosition().getZ() + (int) Math.round(Math.sin(angle) * dist);
-        BlockPos anchor = spawnGalleonAt(level, centerX, centerZ);
-        if (anchor != null) {
-            MCPirates.LOGGER.info(
-                    "spawned galleon for {}: primaryAnchor={} (random-far placement)",
-                    player.getName().getString(), anchor);
-        }
-        return anchor;
-    }
 
     /** Land the throttle lever at (centerX, terrain+altitude, centerZ). Returns lever
      *  pos, or null on failure (NBT missing / placeInWorld false). */
@@ -104,16 +81,7 @@ public final class GalleonSpawner {
             return null;
         }
         BlockPos leverWorld = origin.offset(anchorNbtDelta);
-        BlockPos anchorWorld = leverWorld.subtract(GalleonKind.INSTANCE.anchorToLeverDelta());
-        MCPirates.LOGGER.info("placed galleon: origin={} lever={} anchor={}",
-                origin, leverWorld, anchorWorld);
-
-        // Galleon NBT bakes lever already active, so the proximity trigger no-ops.
-        // We need an explicit kick.
-        boolean activated = AirshipLiftoffTrigger.activateAnchor(level, anchorWorld);
-        if (!activated) {
-            MCPirates.LOGGER.warn("galleon spawn: activateAnchor returned false at {}", anchorWorld);
-        }
+        MCPirates.LOGGER.info("placed galleon: origin={} lever={}", origin, leverWorld);
         return leverWorld;
     }
 

@@ -5,7 +5,6 @@ import com.mcpirates.MCPirates;
 import com.mcpirates.airship.anchor.MCPShipAnchorBlockEntity;
 import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.airship.ships.AirshipKinds;
-import com.mcpirates.airship.hardware.HotAirBurners;
 import com.mcpirates.airship.hardware.ThrottleLevers;
 import com.mcpirates.pirates.CaptainSpawner;
 import com.mcpirates.pirates.DefeatedAirships;
@@ -21,7 +20,6 @@ import dev.simulated_team.simulated.util.SimAssemblyHelper.AssemblyResult;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
-import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.FullChunkStatus;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -40,7 +38,6 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
-import org.joml.Vector3d;
 import rbasamoyai.createbigcannons.cannon_control.cannon_mount.CannonMountBlockEntity;
 
 import java.lang.reflect.Field;
@@ -252,22 +249,6 @@ public final class AirshipLiftoffTrigger {
 
     private static void promoteMooredToLiftoff(ServerLevel level, Airship a) {
         AirshipKind kind = a.kind;
-        // Re-detect from chunks fails — anchor BE moved into the SubLevel; read the
-        // stamp the dormant assembly left on userDataTag.
-        Rotation rotation;
-        BlockPos slPrimaryAnchor;
-        if (a.subLevel instanceof ServerSubLevel ssl
-                && ssl.getUserDataTag() != null
-                && ssl.getUserDataTag().contains("mcpirates")) {
-            CompoundTag mcp = ssl.getUserDataTag().getCompound("mcpirates");
-            rotation = Rotation.values()[mcp.getInt("rotation")];
-            slPrimaryAnchor = BlockPos.of(mcp.getLong("slPrimaryAnchor"));
-        } else {
-            MCPirates.LOGGER.warn(
-                    "promoteMooredToLiftoff: SubLevel {} ({}) missing mcpirates stamp — cannot spawn deck crew",
-                    a.subLevel.getUniqueId(), kind.name());
-            return;
-        }
         GroundCombatModule.GroundEngagement engagement = GROUND_ENGAGEMENTS.remove(a.airpadAnchor);
         if (engagement != null) {
             int removed = GroundCombatModule.SHARED.despawn(level, engagement);
@@ -275,20 +256,11 @@ public final class AirshipLiftoffTrigger {
                     "ground combat: MOORED→LIFTOFF promotion at anchor {} cleared {} surviving defender(s)",
                     a.airpadAnchor, removed);
         }
-        BlockPos offset = slPrimaryAnchor.subtract(a.airpadAnchor);
+        BlockPos offset = a.slPrimaryAnchor.subtract(a.airpadAnchor);
         CaptainSpawner.CrewSpawnResult crew = CaptainSpawner.spawn(
-                a.subLevel, a.airpadAnchor, offset, rotation, kind, a.slCannonMounts);
+                a.subLevel, a.airpadAnchor, offset, a.rotation, kind, a.slCannonMounts);
         a.installCrew(crew.anchors(), crew.cannoneerByMount());
-        a.state = AirshipBrain.State.LIFTOFF;
-        a.stateEnteredTick = level.getGameTime();
-        // Clear MOORED stamp so rehydrate restores in-flight.
-        if (a.subLevel instanceof ServerSubLevel sslAfter && sslAfter.getUserDataTag() != null) {
-            CompoundTag userTag = sslAfter.getUserDataTag();
-            CompoundTag mcp = userTag.getCompound("mcpirates");
-            mcp.putBoolean("moored", false);
-            userTag.put("mcpirates", mcp);
-            sslAfter.setUserDataTag(userTag);
-        }
+        AirshipBrain.transitionState(a, AirshipBrain.State.LIFTOFF, level.getGameTime());
         MCPirates.LOGGER.info(
                 "ship {} ({}): MOORED → LIFTOFF after air arrival, deck crew={} cannoneers={}",
                 a.subLevel.getUniqueId(), kind.name(),
@@ -405,52 +377,16 @@ public final class AirshipLiftoffTrigger {
                     kind.name(), slCannonMounts.size(), cannonMountPositions.size());
         }
 
-        List<BlockPos> slThrottleLevers = new ArrayList<>(throttleLeverPositions.size());
-        for (BlockPos w : throttleLeverPositions) slThrottleLevers.add(w.offset(offset));
-        BlockPos slLeftClutch = leftClutchPos.offset(offset);
-        BlockPos slRightClutch = rightClutchPos.offset(offset);
-
-        // Plot scan, not pair-by-adjacency — galleons wire levers far from burners.
-        var plotBox = subLevel.getPlot().getBoundingBox();
-        List<BlockPos> slBurnerPositions = HotAirBurners.findAllInBox(
-                subLevel.getLevel(),
-                plotBox.minX(), plotBox.minY(), plotBox.minZ(),
-                plotBox.maxX(), plotBox.maxY(), plotBox.maxZ());
-        if (slBurnerPositions.isEmpty()) {
-            MCPirates.LOGGER.warn("({}) no Hot Air Burners found in SubLevel plot; lift control disabled",
-                    kind.name());
-        }
-
-        // userDataTag is persisted by Sable — AirshipRehydrator reads it on restart.
-        // moored=true tells rehydrate it's a dormant ship, not a derelict.
         BlockPos slPrimaryAnchorPos = pos.offset(offset);
-        if (subLevel instanceof ServerSubLevel ssl) {
-            CompoundTag userTag = ssl.getUserDataTag();
-            if (userTag == null) userTag = new CompoundTag();
-            CompoundTag mcp = new CompoundTag();
-            mcp.putString("kind", kind.name());
-            mcp.putLong("airpad", pos.asLong());
-            mcp.putInt("rotation", rotation.ordinal());
-            mcp.putLong("slPrimaryAnchor", slPrimaryAnchorPos.asLong());
-            mcp.putBoolean("moored", dormant);
-            userTag.put("mcpirates", mcp);
-            ssl.setUserDataTag(userTag);
-        }
-
-        Direction shipForwardDir = rotation.rotate(kind.nbtForward());
-        Vector3d shipLocalForward = new Vector3d(
-                shipForwardDir.getStepX(), shipForwardDir.getStepY(), shipForwardDir.getStepZ());
 
         CaptainSpawner.CrewSpawnResult crew = dormant
                 ? CaptainSpawner.CrewSpawnResult.empty()
                 : CaptainSpawner.spawn(subLevel, pos, offset, rotation, kind, slCannonMounts);
 
-        Airship airship = new Airship(level, subLevel, pos, kind,
-                slCannonMounts, shipLocalForward,
+        Airship airship = new Airship(level, subLevel, pos, kind, rotation,
+                slPrimaryAnchorPos, slCannonMounts,
                 crew.anchors(), crew.cannoneerByMount());
-        airship.controls = kind.makeControls(airship, slLeftClutch, slRightClutch,
-                slPrimaryAnchorPos, rotation);
-        airship.lift = kind.makeLift(slThrottleLevers, slBurnerPositions);
+        Airship.rebuildActuators(airship);
 
         // Rehydrator's SubLevelObserver saw this allocate too; tryRehydrate skips
         // because the UUID is already registered.
