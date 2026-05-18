@@ -179,6 +179,12 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testImplementation 'org.joml:joml:1.10.5'
     testImplementation 'com.google.code.gson:gson:2.10.1'
+
+    // ArchUnit — boundary rules for the airship module. Catches physical-detail leaks
+    // (e.g. brain holding BlockPos fields, callers reaching for kind.*Delta() methods).
+    // Each rule is scoped to a refactor milestone; rules that fail today are @Disabled
+    // with a pointer to the step that turns them on.
+    testImplementation 'com.tngtech.archunit:archunit-junit5:1.3.0'
 }
 
 tasks.named('test', Test) {
