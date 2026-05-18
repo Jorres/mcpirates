@@ -34,7 +34,7 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noFields;
  *   <li>Hardware-address fields on {@code Airship}: {@code slThrottleLevers},
  *       {@code slBurnerPositions}, {@code slLeftClutchLever}, {@code slRightClutchLever},
  *       {@code slCannonMounts}, {@code cannoneerByMount}.</li>
- *   <li>{@code AirshipLiftoffTrigger}, {@code AirshipRehydrator}, {@code CaptainSpawner}
+ *   <li>{@code AirshipLiftoffTrigger}, {@code CaptainSpawner}
  *       call {@code AirshipKind} delta methods to resolve those positions.</li>
  *   <li>{@code AirshipBrain.register} calls {@code AirshipKind.makeControls(...)} itself
  *       instead of receiving a pre-built {@code ShipControls}.</li>

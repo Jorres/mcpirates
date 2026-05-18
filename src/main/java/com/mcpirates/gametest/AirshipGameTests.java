@@ -6,7 +6,6 @@ import com.mcpirates.airship.Airship;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipBrain.State;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
-import com.mcpirates.airship.AirshipRehydrator;
 import com.mcpirates.airship.hardware.ClutchLevers;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
@@ -253,7 +252,7 @@ public final class AirshipGameTests {
                     }
                 })
                 .thenExecute(() -> {
-                    int n = AirshipRehydrator.rehydrateLevel(helper.getLevel());
+                    int n = AirshipBrain.rehydrateLevel(helper.getLevel());
                     if (n != 1) {
                         helper.fail("rehydrateLevel returned " + n + ", expected 1");
                     }
@@ -371,7 +370,7 @@ public final class AirshipGameTests {
                 .thenIdle(2)
                 .thenExecute(() -> AirshipBrain.unregisterAll(helper.getLevel()))
                 .thenExecute(() -> {
-                    int n = AirshipRehydrator.rehydrateLevel(helper.getLevel());
+                    int n = AirshipBrain.rehydrateLevel(helper.getLevel());
                     if (n != 0) {
                         helper.fail("rehydrateLevel returned " + n + ", expected 0 (stamp stripped)");
                     }
@@ -435,7 +434,7 @@ public final class AirshipGameTests {
                 })
                 .thenExecute(() -> AirshipBrain.unregisterAll(helper.getLevel()))
                 .thenExecute(() -> {
-                    int n = AirshipRehydrator.rehydrateLevel(helper.getLevel());
+                    int n = AirshipBrain.rehydrateLevel(helper.getLevel());
                     if (n != 2) {
                         helper.fail("rehydrateLevel returned " + n + ", expected 2");
                     }

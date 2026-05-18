@@ -14,7 +14,10 @@ import com.mcpirates.pirates.PirateBrain;
 import dev.ryanhcode.sable.mixinterface.entity.entities_stick_sublevels.EntityStickExtension;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
+import dev.ryanhcode.sable.api.sublevel.SubLevelObserver;
+import dev.ryanhcode.sable.sublevel.storage.SubLevelRemovalReason;
 import net.minecraft.ChatFormatting;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
@@ -25,10 +28,14 @@ import org.joml.Quaterniond;
 import org.joml.Vector3d;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /** Per-tick flight controller. State machine (LIFTOFF → PURSUE → RETURN → HOVER) +
@@ -104,7 +111,7 @@ public final class AirshipBrain {
     }
 
     /** Register a ship deserialised from NBT — preserves saved {@code state} +
-     *  {@code stateEnteredTick}. Used by {@link AirshipRehydrator}. */
+     *  {@code stateEnteredTick}. Used by the rehydration path below. */
     public static void registerRehydrated(Airship a) {
         SHIPS.add(a);
         logRegistered(a, "rehydrated");
@@ -144,6 +151,86 @@ public final class AirshipBrain {
             if (a.state == State.MOORED) continue;  // dormant — nothing transient worth saving
             a.persist();
         }
+    }
+
+    // ───────────────────────────── Rehydration ─────────────────────────────
+    // Re-register persisted SubLevels with the brain on restart / chunk reload. Reads
+    // everything from userDataTag.mcpirates written by Airship.persist(); no world
+    // rescan. Fresh assemblies register directly via AirshipLiftoffTrigger; the
+    // duplicate-skip in tryRehydrate bails when the trigger beat the observer.
+
+    /** Queued because {@code onSubLevelAdded} fires before {@code setUserDataTag};
+     *  {@link #drainPendingRehydrates} retries once the tag is in place. */
+    private static final Set<UUID> PENDING_REHYDRATE = ConcurrentHashMap.newKeySet();
+
+    @SubscribeEvent
+    public static void onServerStarted(ServerStartedEvent event) {
+        for (ServerLevel level : event.getServer().getAllLevels()) {
+            SubLevelContainer container = SubLevelContainer.getContainer(level);
+            if (container == null) continue;
+            for (SubLevel sl : container.getAllSubLevels()) {
+                if (!sl.isRemoved()) tryRehydrate(level, sl);
+            }
+            container.addObserver(new SubLevelObserver() {
+                @Override public void onSubLevelAdded(SubLevel subLevel) {
+                    PENDING_REHYDRATE.add(subLevel.getUniqueId());
+                }
+                @Override public void onSubLevelRemoved(SubLevel subLevel, SubLevelRemovalReason reason) {
+                    PENDING_REHYDRATE.remove(subLevel.getUniqueId());
+                }
+            });
+        }
+    }
+
+    @SubscribeEvent
+    public static void drainPendingRehydrates(ServerTickEvent.Post event) {
+        if (PENDING_REHYDRATE.isEmpty()) return;
+        for (ServerLevel level : event.getServer().getAllLevels()) {
+            SubLevelContainer container = SubLevelContainer.getContainer(level);
+            if (container == null) continue;
+            for (UUID uuid : PENDING_REHYDRATE) {
+                SubLevel sl = container.getSubLevel(uuid);
+                if (sl == null || sl.isRemoved()) {
+                    PENDING_REHYDRATE.remove(uuid);
+                    continue;
+                }
+                if (!(sl instanceof ServerSubLevel ssl)) {
+                    PENDING_REHYDRATE.remove(uuid);
+                    continue;
+                }
+                if (ssl.getUserDataTag() == null) continue; // still loading — retry next tick
+                PENDING_REHYDRATE.remove(uuid);
+                tryRehydrate(level, sl);
+            }
+        }
+    }
+
+    /** Public for GameTests. Returns the number of ships registered. */
+    public static int rehydrateLevel(ServerLevel level) {
+        SubLevelContainer container = SubLevelContainer.getContainer(level);
+        if (container == null) return 0;
+        int registered = 0;
+        for (SubLevel sl : container.getAllSubLevels()) {
+            if (sl.isRemoved()) continue;
+            if (tryRehydrate(level, sl)) registered++;
+        }
+        return registered;
+    }
+
+    private static boolean tryRehydrate(ServerLevel parentLevel, SubLevel subLevel) {
+        if (!(subLevel instanceof ServerSubLevel ssl)) return false;
+        for (Airship existing : SHIPS) {
+            if (existing.subLevelId.equals(ssl.getUniqueId())) return false;
+        }
+        CompoundTag userTag = ssl.getUserDataTag();
+        if (userTag == null || !userTag.contains(Airship.NBT_ROOT_KEY)) return false;
+        Airship airship = Airship.readNbt(parentLevel, ssl, userTag.getCompound(Airship.NBT_ROOT_KEY));
+        if (airship == null) {
+            MCPirates.LOGGER.warn("rehydrate: failed to deserialize SubLevel {}", ssl.getUniqueId());
+            return false;
+        }
+        registerRehydrated(airship);
+        return true;
     }
 
     private static boolean tickShip(Airship a, long now) {
