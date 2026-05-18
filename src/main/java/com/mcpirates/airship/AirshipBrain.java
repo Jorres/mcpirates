@@ -335,12 +335,7 @@ public final class AirshipBrain {
         int maxGroundAhead = maxGroundAhead(a, shipPos);
         LiftSetting lift = chooseLiftSetting(a, a.state, shipPos, target, maxGroundAhead);
         if (lift != null) {
-            for (BlockPos lever : a.slThrottleLevers) {
-                ThrottleLevers.setState(subLevelLevel, lever, lift.lever());
-            }
-            for (BlockPos burner : a.slBurnerPositions) {
-                HotAirBurners.setVolume(subLevelLevel, burner, lift.volume());
-            }
+            a.lift.apply(a, lift);
         }
         long bucket = System.currentTimeMillis() / 2000;
         if (bucket != a.lastThrottleLogBucket) {
