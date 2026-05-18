@@ -1,4 +1,4 @@
-package com.mcpirates.airship.kind;
+package com.mcpirates.airship.movement;
 
 import com.mcpirates.MCPirates;
 import com.mcpirates.airship.Airship;
@@ -9,7 +9,7 @@ import net.minecraft.world.entity.LivingEntity;
 import org.joml.Vector3d;
 
 /**
- * Default movement: orbit the player target at {@link AirshipKind#orbitRadius()}.
+ * Default movement: orbit the player target at {@link com.mcpirates.airship.kind.AirshipKind#orbitRadius()}.
  * Goal = current pos + look-ahead along (tangent + radial-error blend). Direction
  * (CCW/CW) is picked at PURSUE entry and flipped if the ship can't yaw to it.
  */

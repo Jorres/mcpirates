@@ -1,7 +1,9 @@
-package com.mcpirates.airship.kind;
+package com.mcpirates.airship.lift;
 
 import com.mcpirates.airship.Airship;
+import com.mcpirates.airship.kind.HotAirBurners;
 import com.mcpirates.airship.kind.PlateauTable.LiftSetting;
+import com.mcpirates.airship.kind.ThrottleLevers;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 

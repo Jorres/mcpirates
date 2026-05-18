@@ -4,7 +4,7 @@ import com.mcpirates.airship.kind.AirshipKind;
 import com.mcpirates.airship.kind.AnchorNbtPositions;
 import com.mcpirates.airship.kind.CombatBehavior;
 import com.mcpirates.airship.kind.ThrottleLevers;
-import com.mcpirates.airship.kind.MovementBehavior;
+import com.mcpirates.airship.movement.MovementBehavior;
 import com.mcpirates.airship.kind.NoCannonCombat;
 import com.mcpirates.pirates.GroundCombatModule;
 import com.simibubi.create.content.redstone.analogLever.AnalogLeverBlockEntity;

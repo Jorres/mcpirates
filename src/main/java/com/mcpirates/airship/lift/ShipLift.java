@@ -1,4 +1,4 @@
-package com.mcpirates.airship.kind;
+package com.mcpirates.airship.lift;
 
 import com.mcpirates.airship.Airship;
 import com.mcpirates.airship.kind.PlateauTable.LiftSetting;

@@ -3,7 +3,7 @@ package com.mcpirates.airship;
 import com.mcpirates.MCPirates;
 import com.mcpirates.airship.kind.AirshipKind;
 import com.mcpirates.airship.kind.AngleMath;
-import com.mcpirates.airship.kind.MovementBehavior;
+import com.mcpirates.airship.movement.MovementBehavior;
 import com.mcpirates.airship.kind.PlateauTable;
 import com.mcpirates.airship.kind.PlateauTable.LiftSetting;
 import dev.eriksonn.aeronautics.index.AeroLiftingGasTypes;

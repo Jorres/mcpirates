@@ -1,5 +1,9 @@
 package com.mcpirates.airship.kind;
 
+import com.mcpirates.airship.lift.HotAirBalloonLift;
+import com.mcpirates.airship.lift.ShipLift;
+import com.mcpirates.airship.movement.MovementBehavior;
+import com.mcpirates.airship.movement.OrbitMovement;
 import com.mcpirates.pirates.GroundCombatModule;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;

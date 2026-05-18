@@ -63,7 +63,7 @@ public final class Airship {
 
     /** Lift actuator built by the kind's makeLift factory. Brain calls only
      *  {@code apply}/{@code queryBalloonCapacity}. */
-    public com.mcpirates.airship.kind.ShipLift lift;
+    public com.mcpirates.airship.lift.ShipLift lift;
 
     public double lastGoalX = Double.NaN;
     public double lastGoalY = Double.NaN;

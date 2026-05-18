@@ -1,4 +1,4 @@
-package com.mcpirates.airship.kind;
+package com.mcpirates.airship.movement;
 
 import com.mcpirates.airship.Airship;
 import dev.ryanhcode.sable.sublevel.SubLevel;
