@@ -53,17 +53,17 @@ public final class OrbitMovementTests {
     private static final int ARRIVAL_Y_WINDOW_TICKS = 40;
     private static final double ARRIVAL_Y_WINDOW_DELTA = 1.0;
     private static final int ARRIVAL_Y_STABLE_TICKS = 40;
-    /** Sustained-orbit invariants. Tolerances are wide because galleon's heavier
-     *  inertia pushes its dynamic-equilibrium radius substantially beyond the
-     *  configured orbitRadius — the test catches gross drift / collapse, not the
-     *  controller's known steady-state offset. */
-    private static final double ORBIT_MEAN_R_TOLERANCE = 30.0;
-    private static final double ORBIT_MEAN_Y_TOLERANCE = 10.0;
-    private static final double ORBIT_RANGE_R_TOLERANCE = 10.0;
-    private static final double ORBIT_RANGE_Y_TOLERANCE = 6.0;
+    /** Sustained-orbit invariants. Tolerances are sized to bracket observed worst-case
+     *  per-kind values (mean r offset ≤ 17, range r ≤ 4.3, mean y offset ≤ 6, range y ≤
+     *  4.3, |sweep| ≥ 53° / 400 ticks) so a kind-specific regression trips the band
+     *  rather than getting masked. */
+    private static final double ORBIT_MEAN_R_TOLERANCE = 18.0;
+    private static final double ORBIT_MEAN_Y_TOLERANCE = 7.0;
+    private static final double ORBIT_RANGE_R_TOLERANCE = 5.0;
+    private static final double ORBIT_RANGE_Y_TOLERANCE = 5.0;
     private static final int ORBIT_SAMPLE_TICKS = 400;
-    private static final double MIN_SWEEP_DEG = 30.0;
-    private static final int LOG_INTERVAL = 10;
+    private static final double MIN_SWEEP_DEG = 45.0;
+    private static final int LOG_INTERVAL = 40;
     /** 6-chunk radius (~96 blocks) covers each kind's actual orbit, including galleon. */
     private static final int FORCE_LOAD_RADIUS_CHUNKS = 6;
 
@@ -244,19 +244,11 @@ public final class OrbitMovementTests {
                         stable = 0;
                     }
                     if (helper.getTick() % LOG_INTERVAL == 0) {
-                        Vector3d vel = com.mcpirates.airship.ShipTelemetry.velocity(ship);
-                        double hSpeed = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
-                        String liftStr = ship.lift == null ? "—" : ship.lift.describe(ship);
-                        String ctrlStr = ship.controls == null ? "—" : ship.controls.diagnostics(ship);
                         MCPirates.LOGGER.info(String.format(Locale.ROOT,
-                                "[orbit-test:%s] approach state=%s r=%.2f orbitR=%.2f pos=(%.2f,%.2f,%.2f) targetY=%.2f windowDy=%.3f stable=%d/%d v=(%.3f,%.3f,%.3f) hSpeed=%.3f lift=%s ctrl=%s pickedY=%.2f balloonCap=%d",
+                                "[orbit-test:%s] approach r=%.2f orbitR=%.2f y=%.2f targetY=%.2f windowDy=%.3f stable=%d/%d",
                                 ship.kind.name(),
-                                ship.state,
-                                r, orbitR, sp.x, sp.y, sp.z, expectedY, windowDy,
-                                stable, ARRIVAL_Y_STABLE_TICKS,
-                                vel.x, vel.y, vel.z, hSpeed,
-                                liftStr, ctrlStr,
-                                ship.lastPickedEquilibriumY, ship.balloonCapacity));
+                                r, orbitR, sp.y, expectedY, windowDy,
+                                stable, ARRIVAL_Y_STABLE_TICKS));
                     }
                     helper.assertTrue(stable >= ARRIVAL_Y_STABLE_TICKS,
                             String.format(Locale.ROOT,
