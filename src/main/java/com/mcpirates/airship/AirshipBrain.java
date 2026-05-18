@@ -96,19 +96,12 @@ public final class AirshipBrain {
      *  {@code NAVIGATE}: externally-driven XZ target; auto state machine never enters it. */
     public enum State { LIFTOFF, PURSUE, RETURN, HOVER, MOORED, NAVIGATE }
 
-    /** Register a pre-built {@link Airship} with the brain. Caller (trigger / rehydrator)
-     *  constructs the Airship + resolves all hardware positions; brain just stamps state,
-     *  builds controls, and starts ticking. The {@code slPrimaryAnchor} + {@code rotation}
-     *  pair is still needed for {@link AirshipKind#makeControls} — that lift goes away in
-     *  Step 2. */
-    public static void register(Airship a,
-                                BlockPos slPrimaryAnchor,
-                                net.minecraft.world.level.block.Rotation rotation,
-                                State initialState) {
+    /** Register a fully-built {@link Airship} (controls already attached) with the brain.
+     *  The kind builds controls; the brain receives them ready-made. */
+    public static void register(Airship a, State initialState) {
         a.state = initialState;
         // Without this, default 0 makes (now - stateEnteredTick) huge and LIFTOFF_MIN_TICKS no-ops.
         a.stateEnteredTick = a.parentLevel.getGameTime();
-        a.controls = a.kind.makeControls(a, slPrimaryAnchor, rotation);
         SHIPS.add(a);
         MCPirates.LOGGER.info(
                 "registered pirate airship: kind={} subLevel={} state={} anchor={} mounts={} throttles={} burners={} clutches=({},{}) fwd=({},{},{}) anchoredEntities={} cannoneers={}",

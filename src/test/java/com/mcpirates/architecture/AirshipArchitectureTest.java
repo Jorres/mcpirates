@@ -109,16 +109,14 @@ public class AirshipArchitectureTest {
         }
     }
 
-    // ─── Disabled, target Step 2 ─────────────────────────────────────────
+    // ─── Enforced from Step 2 ────────────────────────────────────────────
 
     /**
-     * AirshipBrain stops calling {@code AirshipKind.makeControls(...)} — caller (trigger /
-     * rehydrator) builds the {@code ShipControls} and passes it to {@code register}.
-     *
-     * <p>Fails today: {@code AirshipBrain.register} calls {@code kind.makeControls(...)}.
+     * AirshipBrain doesn't construct {@code ShipControls} — the kind builds it,
+     * caller (trigger / rehydrator) assigns it onto {@code Airship}, brain receives
+     * the fully-formed instance and just reads {@code a.controls} at tick time.
      */
     @Test
-    @Disabled("enabled after Step 2 — controls construction inverted")
     void brainDoesNotConstructShipControls() {
         ArchRule rule = noClasses()
                 .that().haveSimpleName("AirshipBrain")

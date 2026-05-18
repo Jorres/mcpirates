@@ -197,7 +197,8 @@ public final class AirshipRehydrator {
                 slLeftClutch, slRightClutch,
                 slCannonMounts, shipLocalForward,
                 anchors, cannoneerByMount);
-        AirshipBrain.register(airship, slPrimaryAnchor, rotation, initialState);
+        airship.controls = kind.makeControls(airship, slPrimaryAnchor, rotation);
+        AirshipBrain.register(airship, initialState);
         MCPirates.LOGGER.info("rehydrate: re-registered {} (subLevel={}, airpad={}, rotation={}, crew={}, state={})",
                 kind.name(), ssl.getUniqueId(), airpadAnchor, rotation, anchors.size(), initialState);
         return true;

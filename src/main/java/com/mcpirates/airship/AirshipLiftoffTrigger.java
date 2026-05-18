@@ -450,10 +450,11 @@ public final class AirshipLiftoffTrigger {
                 slLeftClutch, slRightClutch,
                 slCannonMounts, shipLocalForward,
                 crew.anchors(), crew.cannoneerByMount());
+        airship.controls = kind.makeControls(airship, slPrimaryAnchorPos, rotation);
 
         // Rehydrator's SubLevelObserver saw this allocate too; tryRehydrate skips
         // because the UUID is already registered.
-        AirshipBrain.register(airship, slPrimaryAnchorPos, rotation,
+        AirshipBrain.register(airship,
                 dormant ? AirshipBrain.State.MOORED : AirshipBrain.State.LIFTOFF);
     }
 
