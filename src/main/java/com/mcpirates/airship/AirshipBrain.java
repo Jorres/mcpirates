@@ -387,9 +387,12 @@ public final class AirshipBrain {
         double cruiseY = a.airpadAnchor.getY() + a.kind.cruiseRise();
         double targetY = switch (state) {
             case LIFTOFF, RETURN, HOVER, NAVIGATE -> Math.max(cruiseY, floor);
-            case PURSUE -> target == null
+            // PURSUE altitude comes from the movement strategy's 3D goal (set by
+            // applySteering). Falls back to cruiseY if the strategy returned no goal
+            // (e.g. target lost between steering and lift ticks).
+            case PURSUE -> Double.isNaN(a.lastGoalY)
                     ? Math.max(cruiseY, floor)
-                    : Math.max(target.getEyeY() + a.kind.pursueAltOffset(), floor);
+                    : Math.max(a.lastGoalY, floor);
             case MOORED -> throw new IllegalStateException("chooseLiftSetting unreachable for MOORED");
         };
         // Conditional velocity damping: only apply when extrapolated v.y overshoots target.
