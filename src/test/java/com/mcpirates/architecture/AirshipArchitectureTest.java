@@ -91,6 +91,31 @@ public class AirshipArchitectureTest {
         }
     }
 
+    /**
+     * Methods on {@link com.mcpirates.airship.interfaces.AirshipKind} are an API surface —
+     * every method is a contract that 4 implementations have to honour and every caller
+     * couples to. Each addition deserves explicit thought, not a reflexive "throw it on the
+     * interface". This rule pins the count so adding (or removing) a method requires
+     * updating {@link #EXPECTED_AIRSHIP_KIND_METHODS} alongside, which forces the
+     * conversation.
+     */
+    private static final int EXPECTED_AIRSHIP_KIND_METHODS = 13;
+
+    @Test
+    void airshipKindInterfaceMethodCount() {
+        var kind = CLASSES.stream()
+                .filter(c -> c.getName().equals(AIRSHIP_KIND))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("AirshipKind not found in imported classes"));
+        int actual = kind.getMethods().size();
+        if (actual != EXPECTED_AIRSHIP_KIND_METHODS) {
+            throw new AssertionError(
+                    "AirshipKind has " + actual + " methods, expected "
+                            + EXPECTED_AIRSHIP_KIND_METHODS
+                            + ". If this fails, you may abort and consult whether we can modify the interface.");
+        }
+    }
+
     // ─── Enforced from Step 2 ────────────────────────────────────────────
 
     /**

@@ -14,14 +14,18 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Each ship NBT listed in {@link AnchorNbtPositions} must contain exactly one
  * {@code mcpirates:ship_anchor} block at the coordinates the game code names, with a
- * matching {@code kind} block-entity tag. Failing here means the source NBT drifted from
- * the kind's anchor-to-lever delta math (or vice versa).
+ * matching {@code kind} block-entity tag, and <strong>no</strong> {@code Properties} on
+ * its palette entry (the block must load via its default {@code FACING=NORTH} state so
+ * structure-template placement rotates the property into the correct world-frame value;
+ * see {@code MCPShipAnchorBlock.NBT_FACING}). Failing here means the source NBT drifted
+ * from the kind's anchor-to-lever delta math, or was re-saved with an explicit FACING.
  */
 class ShipAnchorTest {
 
@@ -59,6 +63,15 @@ class ShipAnchorTest {
         }
         assertTrue(anchorPaletteIdx >= 0,
                 shipId + " palette has no '" + ANCHOR_BLOCK + "' — ship NBT must bake the anchor in directly");
+
+        // Anchor palette entry must carry no Properties: the block then loads via its default
+        // state (FACING=NORTH), and structure-template placement rotates the FACING into the
+        // correct world-frame value. If someone re-saves an NBT in-game and bakes a non-NORTH
+        // facing into the palette, AirshipKind.detectRotation will misread the rotation.
+        Object props = s.palette.get(anchorPaletteIdx).get("Properties");
+        assertNull(props,
+                shipId + " ship_anchor palette entry has unexpected Properties: " + props
+                        + " — strip them so the block uses its default state. See MCPShipAnchorBlock.NBT_FACING.");
 
         List<BlockRef> hits = new ArrayList<>();
         for (BlockRef b : s.blocks) {
