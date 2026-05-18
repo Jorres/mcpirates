@@ -3,7 +3,6 @@ package com.mcpirates.airship.ships.airship_small;
 import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.airship.ships.AnchorNbtPositions;
 import com.mcpirates.airship.interfaces.CombatBehavior;
-import com.mcpirates.airship.hardware.ThrottleLevers;
 import com.mcpirates.pirates.GroundCombatModule;
 import com.simibubi.create.content.redstone.analogLever.AnalogLeverBlockEntity;
 import net.minecraft.core.BlockPos;
@@ -29,9 +28,7 @@ public final class AirshipSmallKind implements AirshipKind {
     private AirshipSmallKind() {}
 
     @Override public String name() { return "airship_small"; }
-    @Override public Direction nbtPrimaryFacing() { return Direction.EAST; }
     @Override public Direction nbtForward() { return Direction.NORTH; }
-    @Override public ThrottleLevers.Kind throttleLeverKind() { return ThrottleLevers.Kind.CREATE_ANALOG; }
 
     @Override
     public boolean isPrimaryAnchorBE(BlockEntity be) {

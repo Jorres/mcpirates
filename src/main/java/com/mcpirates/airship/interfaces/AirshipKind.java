@@ -3,7 +3,6 @@ package com.mcpirates.airship.interfaces;
 import com.mcpirates.airship.common.HotAirBalloonLift;
 import com.mcpirates.airship.common.OrbitMovement;
 import com.mcpirates.airship.common.TankSteerControls;
-import com.mcpirates.airship.hardware.ThrottleLevers;
 import com.mcpirates.pirates.GroundCombatModule;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -18,10 +17,11 @@ import java.util.Optional;
  * live here.
  *
  * <p>Positional methods return <strong>NBT-frame deltas from the primary-anchor lever</strong>.
- * The trigger detects worldgen rotation by comparing the anchor's world FACING to
- * {@link #nbtPrimaryFacing()} and rotates every delta accordingly. Ships are identified by
- * a hidden {@link com.mcpirates.airship.anchor.MCPShipAnchorBlock} that stores the kind name;
- * the trigger walks from the anchor to the primary lever via {@link #anchorToLeverDelta()}.
+ * The trigger detects worldgen rotation by walking the 4 rotations and asking each kind if its
+ * primary-anchor BE sits at {@code anchorPos + anchorToLeverDelta.rotate(r)}. Ships are
+ * identified by a hidden {@link com.mcpirates.airship.anchor.MCPShipAnchorBlock} that stores
+ * the kind name; the trigger walks from the anchor to the primary lever via
+ * {@link #anchorToLeverDelta()}.
  */
 public interface AirshipKind {
 
@@ -29,13 +29,8 @@ public interface AirshipKind {
 
     // ───────────── orientation / identification ─────────────
 
-    /** NBT-frame FACING of the primary-anchor lever; used to derive worldgen rotation. */
-    Direction nbtPrimaryFacing();
-
     /** NBT-frame "ship forward" — the bow direction. Rotated into world frame at trigger. */
     Direction nbtForward();
-
-    ThrottleLevers.Kind throttleLeverKind();
 
     /** Cheap pre-filter the trigger uses before reading the anchor's pointed-at lever. */
     boolean isPrimaryAnchorBE(BlockEntity be);
@@ -84,12 +79,6 @@ public interface AirshipKind {
     BlockPos glueMin();
 
     BlockPos glueMax();
-
-    /** Where assembly BFS seeds from. Default: the block the lever is mounted on. */
-    default BlockPos seedDelta(Direction leverConnectedDir) {
-        Direction into = leverConnectedDir.getOpposite();
-        return new BlockPos(into.getStepX(), into.getStepY(), into.getStepZ());
-    }
 
     // ───────────── combat & movement ─────────────
 

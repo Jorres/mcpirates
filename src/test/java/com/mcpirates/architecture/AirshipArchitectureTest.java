@@ -73,8 +73,7 @@ public class AirshipArchitectureTest {
             "cannonMountDeltas",
             "anchorToLeverDelta",
             "glueMin",
-            "glueMax",
-            "seedDelta"
+            "glueMax"
     );
 
     /** Packages that legitimately read deltas as part of their own assembly recipe. */

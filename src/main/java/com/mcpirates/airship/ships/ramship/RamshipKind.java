@@ -3,7 +3,6 @@ package com.mcpirates.airship.ships.ramship;
 import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.airship.ships.AnchorNbtPositions;
 import com.mcpirates.airship.interfaces.CombatBehavior;
-import com.mcpirates.airship.hardware.ThrottleLevers;
 import com.mcpirates.airship.interfaces.MovementBehavior;
 import com.mcpirates.airship.common.NoCannonCombat;
 import com.mcpirates.pirates.GroundCombatModule;
@@ -36,9 +35,7 @@ public final class RamshipKind implements AirshipKind {
     private RamshipKind() {}
 
     @Override public String name() { return "ramship"; }
-    @Override public Direction nbtPrimaryFacing() { return Direction.NORTH; }
     @Override public Direction nbtForward() { return Direction.NORTH; }
-    @Override public ThrottleLevers.Kind throttleLeverKind() { return ThrottleLevers.Kind.CREATE_ANALOG; }
 
     /** Ramming low-altitude targets requires giving up most of the ground-clearance
      *  safety margin — a 30-block floor (the default) would prevent the ramship from

@@ -3,7 +3,6 @@ package com.mcpirates.airship.ships.galleon;
 import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.airship.ships.AnchorNbtPositions;
 import com.mcpirates.airship.interfaces.CombatBehavior;
-import com.mcpirates.airship.hardware.ThrottleLevers;
 import dev.simulated_team.simulated.content.blocks.throttle_lever.ThrottleLeverBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -18,7 +17,7 @@ import java.util.List;
  *
  * <p>Important difference from airship_small/crossbow-board: throttle uses
  * {@code simulated:throttle_lever}, not {@code create:analog_lever}. The two block kinds
- * have identical 0..15 semantics but different BE classes; {@link ThrottleLevers}
+ * have identical 0..15 semantics but different BE classes; {@code ThrottleLevers}
  * dispatches by BE type at write time.
  *
  * <p>Primary anchor: the leftmost throttle lever (face=floor, facing=NORTH). Absolute
@@ -45,9 +44,7 @@ public final class GalleonKind implements AirshipKind {
     }
 
     @Override public String name() { return "galleon"; }
-    @Override public Direction nbtPrimaryFacing() { return Direction.NORTH; }
     @Override public Direction nbtForward() { return Direction.NORTH; }
-    @Override public ThrottleLevers.Kind throttleLeverKind() { return ThrottleLevers.Kind.SIMULATED_THROTTLE; }
 
     /** Galleon climbs ~100 blocks above its spawn altitude before exiting LIFTOFF —
      *  it has much more lift than airship_small, so the 25-block default exits

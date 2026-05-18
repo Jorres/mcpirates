@@ -3,7 +3,6 @@ package com.mcpirates.airship.ships.crossbow_board;
 import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.airship.ships.AnchorNbtPositions;
 import com.mcpirates.airship.interfaces.CombatBehavior;
-import com.mcpirates.airship.hardware.ThrottleLevers;
 import com.mcpirates.airship.common.NoCannonCombat;
 import com.mcpirates.pirates.GroundCombatModule;
 import com.simibubi.create.content.redstone.analogLever.AnalogLeverBlockEntity;
@@ -34,9 +33,7 @@ public final class CrossbowBoardKind implements AirshipKind {
     private CrossbowBoardKind() {}
 
     @Override public String name() { return "crossbow_board"; }
-    @Override public Direction nbtPrimaryFacing() { return Direction.SOUTH; }
     @Override public Direction nbtForward() { return Direction.NORTH; }
-    @Override public ThrottleLevers.Kind throttleLeverKind() { return ThrottleLevers.Kind.CREATE_ANALOG; }
 
     @Override
     public boolean isPrimaryAnchorBE(BlockEntity be) {
