@@ -66,6 +66,10 @@ public final class Airship {
      *  {@code applySteering}/{@code release}. */
     public com.mcpirates.airship.kind.ShipControls controls;
 
+    /** Lift actuator built by the kind's makeLift factory. Brain calls only
+     *  {@code apply}/{@code queryBalloonCapacity}. */
+    public com.mcpirates.airship.kind.ShipLift lift;
+
     public double lastGoalX = Double.NaN;
     public double lastGoalZ = Double.NaN;
     public double lastHeadingErrDeg = 0;

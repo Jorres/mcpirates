@@ -62,6 +62,13 @@ public interface AirshipKind {
         return new TankSteerControls(airship.slLeftClutchLever, airship.slRightClutchLever);
     }
 
+    /** Build lift actuator bound to this assembly's burners + throttle levers.
+     *  Default: hot-air balloon lift across every throttle/burner pair. Kinds with a
+     *  different lift scheme would override. */
+    default ShipLift makeLift(com.mcpirates.airship.Airship airship) {
+        return new HotAirBalloonLift(airship.slThrottleLevers, airship.slBurnerPositions);
+    }
+
     /** CBC cannon mounts to assemble; may be empty. */
     List<BlockPos> cannonMountDeltas();
 

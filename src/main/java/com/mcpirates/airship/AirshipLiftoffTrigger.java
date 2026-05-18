@@ -451,6 +451,7 @@ public final class AirshipLiftoffTrigger {
                 slCannonMounts, shipLocalForward,
                 crew.anchors(), crew.cannoneerByMount());
         airship.controls = kind.makeControls(airship, slPrimaryAnchorPos, rotation);
+        airship.lift = kind.makeLift(airship);
 
         // Rehydrator's SubLevelObserver saw this allocate too; tryRehydrate skips
         // because the UUID is already registered.
