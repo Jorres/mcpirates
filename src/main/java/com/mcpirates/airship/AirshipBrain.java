@@ -3,12 +3,9 @@ package com.mcpirates.airship;
 import com.mcpirates.MCPirates;
 import com.mcpirates.airship.kind.AirshipKind;
 import com.mcpirates.airship.kind.AngleMath;
-import com.mcpirates.airship.kind.ClutchLevers;
-import com.mcpirates.airship.kind.HotAirBurners;
 import com.mcpirates.airship.kind.MovementBehavior;
 import com.mcpirates.airship.kind.PlateauTable;
 import com.mcpirates.airship.kind.PlateauTable.LiftSetting;
-import com.mcpirates.airship.kind.ThrottleLevers;
 import dev.eriksonn.aeronautics.index.AeroLiftingGasTypes;
 import dev.ryanhcode.sable.api.physics.mass.MassData;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
@@ -104,10 +101,9 @@ public final class AirshipBrain {
         a.stateEnteredTick = a.parentLevel.getGameTime();
         SHIPS.add(a);
         MCPirates.LOGGER.info(
-                "registered pirate airship: kind={} subLevel={} state={} anchor={} mounts={} throttles={} burners={} clutches=({},{}) fwd=({},{},{}) anchoredEntities={} cannoneers={}",
+                "registered pirate airship: kind={} subLevel={} state={} anchor={} mounts={} fwd=({},{},{}) anchoredEntities={} cannoneers={}",
                 a.kind.name(), a.subLevel.getUniqueId(), initialState, a.airpadAnchor,
-                a.slCannonMounts, a.slThrottleLevers, a.slBurnerPositions,
-                a.slLeftClutchLever, a.slRightClutchLever,
+                a.slCannonMounts,
                 a.shipLocalForward.x, a.shipLocalForward.y, a.shipLocalForward.z,
                 a.anchoredEntities.size(), a.cannoneerByMount.size());
     }
@@ -416,7 +412,7 @@ public final class AirshipBrain {
         if (md == null || md.isInvalid()) return null;
         double mass = md.getMass();
         double liftStrength = AeroLiftingGasTypes.DEFAULT_GAS.get().getLiftStrength();
-        int nBurners = Math.max(1, a.slBurnerPositions.size());
+        int nBurners = Math.max(1, a.lift.burnerCount());
         int vMaxPerBurner = Math.max(PlateauTable.BURNER_MIN_VOLUME,
                 Math.min(PlateauTable.BURNER_MAX_VOLUME, cap / nBurners));
         a.plateauTable = PlateauTable.build(
@@ -455,15 +451,7 @@ public final class AirshipBrain {
         }
         if (closest == null) return;
 
-        // Read helpers return "_"/0 sentinels for missing blocks so the overlay can't crash.
-        Level subLevelLevel = a.subLevel.getLevel();
-        String engines =
-                (ClutchLevers.isEngaged(subLevelLevel, a.slLeftClutchLever) ? "L" : "_")
-                        + (ClutchLevers.isEngaged(subLevelLevel, a.slRightClutchLever) ? "R" : "_");
-        int throttle = a.slThrottleLevers.isEmpty() ? 0
-                : ThrottleLevers.readState(subLevelLevel, a.slThrottleLevers.get(0));
-        int burnerVolume = a.slBurnerPositions.isEmpty() ? 0
-                : HotAirBurners.readVolume(subLevelLevel, a.slBurnerPositions.get(0));
+        String liftStr = a.lift == null ? "" : a.lift.describe(a);
         String goalStr = Double.isNaN(a.lastGoalX)
                 ? "—"
                 : String.format("(%.0f,%.0f)", a.lastGoalX, a.lastGoalZ);
@@ -489,12 +477,10 @@ public final class AirshipBrain {
         Component msg = Component.empty()
                 .append(Component.literal("[" + a.state.name() + ":" + a.kind.name() + "] ").withStyle(stateColor))
                 .append(Component.literal(String.format(
-                        "pos=(%.0f,%.1f,%.0f) thr=%d vol=%dm³ balloonVol=%s %s goal=%s yaw_err=%.0f° %s%s%s",
+                        "pos=(%.0f,%.1f,%.0f) %s balloonVol=%s goal=%s yaw_err=%.0f° %s%s%s",
                         shipPos.x, shipPos.y, shipPos.z,
-                        throttle,
-                        burnerVolume,
+                        liftStr,
                         ShipTelemetry.balloonVol(a.balloonCapacity),
-                        engines,
                         goalStr,
                         a.lastHeadingErrDeg,
                         targetStr,

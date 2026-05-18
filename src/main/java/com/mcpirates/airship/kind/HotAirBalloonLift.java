@@ -39,6 +39,11 @@ public final class HotAirBalloonLift implements ShipLift {
     }
 
     @Override
+    public int burnerCount() {
+        return slBurnerPositions.size();
+    }
+
+    @Override
     public int queryBalloonCapacity(Airship a) {
         Level subLevel = a.subLevel.getLevel();
         if (subLevel == null) return -1;
@@ -47,5 +52,18 @@ public final class HotAirBalloonLift implements ShipLift {
             if (c > 0) return c;
         }
         return -1;
+    }
+
+    /** Reads the first throttle/burner pair — matches the per-tick lock-step write,
+     *  so one sample reflects the whole assembly's state. */
+    @Override
+    public String describe(Airship a) {
+        Level subLevel = a.subLevel.getLevel();
+        if (subLevel == null) return "";
+        int throttle = slThrottleLevers.isEmpty() ? 0
+                : ThrottleLevers.readState(subLevel, slThrottleLevers.get(0));
+        int burnerVolume = slBurnerPositions.isEmpty() ? 0
+                : HotAirBurners.readVolume(subLevel, slBurnerPositions.get(0));
+        return "thr=" + throttle + " vol=" + burnerVolume + "m³";
     }
 }

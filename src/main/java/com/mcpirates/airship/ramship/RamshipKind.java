@@ -86,12 +86,14 @@ public final class RamshipKind implements AirshipKind {
     @Override
     public com.mcpirates.airship.kind.ShipControls makeControls(
             com.mcpirates.airship.Airship airship,
+            net.minecraft.core.BlockPos slLeftClutchLever,
+            net.minecraft.core.BlockPos slRightClutchLever,
             net.minecraft.core.BlockPos slPrimaryAnchor,
             net.minecraft.world.level.block.Rotation rotation) {
         return new RamControls(
                 airship.subLevel.getLevel(),
-                airship.slLeftClutchLever,
-                airship.slRightClutchLever,
+                slLeftClutchLever,
+                slRightClutchLever,
                 slPrimaryAnchor.offset(FORWARD_CLUTCH_LEVER_DELTA.rotate(rotation)),
                 slPrimaryAnchor.offset(LEFT_PROPELLER_DELTA.rotate(rotation)),
                 slPrimaryAnchor.offset(RIGHT_PROPELLER_DELTA.rotate(rotation)),

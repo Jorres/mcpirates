@@ -332,12 +332,8 @@ public final class AirshipGameTests {
                                 + AirshipBrain.ships().size());
                     }
                     Airship ship = shipRef.get();
-                    Level subLevelLevel = ship.subLevel.getLevel();
-                    if (ClutchLevers.isEngaged(subLevelLevel, ship.slLeftClutchLever)) {
-                        helper.fail("left clutch still engaged after crew defeat");
-                    }
-                    if (ClutchLevers.isEngaged(subLevelLevel, ship.slRightClutchLever)) {
-                        helper.fail("right clutch still engaged after crew defeat");
+                    if (ship.controls.isActive(ship)) {
+                        helper.fail("controls still active after crew defeat");
                     }
                 })
                 .thenExecute(() -> TestSetup.reset(helper))
@@ -526,15 +522,9 @@ public final class AirshipGameTests {
                         helper.fail("did not transition to PURSUE; state=" + ship.state);
                         return;
                     }
-                    Level slLevel = ship.subLevel.getLevel();
-                    boolean leftEngaged = ClutchLevers.isEngaged(slLevel, ship.slLeftClutchLever);
-                    boolean rightEngaged = ClutchLevers.isEngaged(slLevel, ship.slRightClutchLever);
-                    if (!leftEngaged && !rightEngaged) {
-                        BlockState left = slLevel.getBlockState(ship.slLeftClutchLever);
-                        BlockState right = slLevel.getBlockState(ship.slRightClutchLever);
-                        helper.fail("PURSUE reached but neither clutch engaged "
-                                + "(L@" + ship.slLeftClutchLever + "=" + left.getBlock()
-                                + " R@" + ship.slRightClutchLever + "=" + right.getBlock() + ")");
+                    if (!ship.controls.isActive(ship)) {
+                        helper.fail("PURSUE reached but controls not active "
+                                + "(diagnostics=" + ship.controls.diagnostics(ship) + ")");
                     }
                 })
                 .thenExecute(() -> TestSetup.reset(helper))

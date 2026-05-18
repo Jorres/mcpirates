@@ -55,18 +55,21 @@ public interface AirshipKind {
     BlockPos rightClutchLeverDelta();
 
     /** Build steering controls bound to this assembly's already-resolved hardware positions.
-     *  Default: tank-steer on the two clutch levers. Kinds with extra hardware override. */
+     *  Default: tank-steer on the two clutch levers. Kinds with extra hardware override
+     *  and use {@code slPrimaryAnchor + rotation} to compute their own deltas. */
     default ShipControls makeControls(com.mcpirates.airship.Airship airship,
+                                      BlockPos slLeftClutchLever,
+                                      BlockPos slRightClutchLever,
                                       BlockPos slPrimaryAnchor,
                                       net.minecraft.world.level.block.Rotation rotation) {
-        return new TankSteerControls(airship.slLeftClutchLever, airship.slRightClutchLever);
+        return new TankSteerControls(slLeftClutchLever, slRightClutchLever);
     }
 
     /** Build lift actuator bound to this assembly's burners + throttle levers.
-     *  Default: hot-air balloon lift across every throttle/burner pair. Kinds with a
-     *  different lift scheme would override. */
-    default ShipLift makeLift(com.mcpirates.airship.Airship airship) {
-        return new HotAirBalloonLift(airship.slThrottleLevers, airship.slBurnerPositions);
+     *  Default: hot-air balloon lift across every throttle/burner pair. */
+    default ShipLift makeLift(List<BlockPos> slThrottleLevers,
+                              List<BlockPos> slBurnerPositions) {
+        return new HotAirBalloonLift(slThrottleLevers, slBurnerPositions);
     }
 
     /** CBC cannon mounts to assemble; may be empty. */

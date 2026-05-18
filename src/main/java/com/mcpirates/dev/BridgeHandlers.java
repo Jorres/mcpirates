@@ -81,8 +81,7 @@ public final class BridgeHandlers {
         o.addProperty("lastTargetSeenTick", a.lastTargetSeenTick);
         o.addProperty("combatCursor", a.combatCursor);
         o.addProperty("cannonMounts", a.slCannonMounts.size());
-        o.addProperty("throttleLevers", a.slThrottleLevers.size());
-        o.addProperty("burners", a.slBurnerPositions.size());
+        if (a.lift != null) o.addProperty("burners", a.lift.burnerCount());
         o.addProperty("anchoredEntities", a.anchoredEntities.size());
 
         // Live pose + velocity. Re-acquire SubLevel by UUID — see AirshipBrain.tickShip note.

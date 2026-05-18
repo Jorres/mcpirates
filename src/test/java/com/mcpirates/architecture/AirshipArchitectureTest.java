@@ -125,18 +125,14 @@ public class AirshipArchitectureTest {
         rule.check(CLASSES);
     }
 
-    // ─── Disabled, target Step 6 ─────────────────────────────────────────
+    // ─── Enforced from Step 6 ────────────────────────────────────────────
 
     /**
      * Airship has no {@code BlockPos} / {@code List} / {@code Map} field except the
      * allowlist {@link #LEGITIMATE_FIELDS} plus the Phase-C-deferred set. Lift and
-     * steering hardware moves behind {@code ShipLift} / {@code ShipControls}.
-     *
-     * <p>Fails today: {@code slThrottleLevers}, {@code slBurnerPositions},
-     * {@code slLeftClutchLever}, {@code slRightClutchLever} are all on {@code Airship}.
+     * steering hardware lives behind {@code ShipLift} / {@code ShipControls}.
      */
     @Test
-    @Disabled("enabled after Step 6 — throttle/burner/clutch fields removed from Airship")
     void airshipHasNoHardwareFields_exceptCannons() {
         ArchRule rule = noFields()
                 .that().areDeclaredInClassesThat().haveSimpleName("Airship")
@@ -150,14 +146,12 @@ public class AirshipArchitectureTest {
 
     /**
      * Delta methods on {@code AirshipKind} are an assembly-time concern; only the kind's
-     * own packages may read them. After Step 6 the trigger and rehydrator go through an
-     * assembly-recipe / {@code AssembledShip} shape instead.
-     *
-     * <p>Fails today: 21 calls across {@code AirshipLiftoffTrigger},
-     * {@code AirshipRehydrator}, {@code CaptainSpawner}.
+     * own packages may read them. (NOTE: this rule remains a goal — the trigger / rehydrator
+     * / CaptainSpawner still call delta methods. The full migration to an assembly-recipe /
+     * {@code AssembledShip} shape is a separate piece of work, not part of Phase B.)
      */
     @Test
-    @Disabled("enabled after Step 6 — physical-detail callers migrated to AssembledShip / recipe")
+    @Disabled("future work — physical-detail callers migrated to AssembledShip / recipe")
     void onlyKindPackageReadsAirshipKindDeltas() {
         ArchRule rule = noClasses()
                 .that().resideOutsideOfPackages(KIND_AND_PER_KIND_PACKAGES)

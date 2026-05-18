@@ -446,12 +446,11 @@ public final class AirshipLiftoffTrigger {
                 : CaptainSpawner.spawn(subLevel, pos, offset, rotation, kind, slCannonMounts);
 
         Airship airship = new Airship(level, subLevel, pos, kind,
-                slThrottleLevers, slBurnerPositions,
-                slLeftClutch, slRightClutch,
                 slCannonMounts, shipLocalForward,
                 crew.anchors(), crew.cannoneerByMount());
-        airship.controls = kind.makeControls(airship, slPrimaryAnchorPos, rotation);
-        airship.lift = kind.makeLift(airship);
+        airship.controls = kind.makeControls(airship, slLeftClutch, slRightClutch,
+                slPrimaryAnchorPos, rotation);
+        airship.lift = kind.makeLift(slThrottleLevers, slBurnerPositions);
 
         // Rehydrator's SubLevelObserver saw this allocate too; tryRehydrate skips
         // because the UUID is already registered.

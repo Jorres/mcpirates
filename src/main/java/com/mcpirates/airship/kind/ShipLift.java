@@ -20,4 +20,13 @@ public interface ShipLift {
     /** Current balloon capacity in m³, or {@code -1} until a balloon attaches.
      *  Used by the brain to decide whether the plateau table can be rebuilt. */
     int queryBalloonCapacity(Airship a);
+
+    /** How many independent lift units the assembly has. For hot-air kinds this is the
+     *  burner count; total gas output = {@code count · volume · lever / 15}. The brain
+     *  feeds this into the plateau-table sizing. */
+    int burnerCount();
+
+    /** Compact debug snapshot of the current lift state (lever / volume / etc.) for the
+     *  brain's debug overlay. Default: empty string. */
+    default String describe(Airship a) { return ""; }
 }

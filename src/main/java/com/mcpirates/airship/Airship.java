@@ -30,11 +30,6 @@ public final class Airship {
     public final BlockPos airpadAnchor;
     public final AirshipKind kind;
 
-    public final List<BlockPos> slThrottleLevers;
-    /** Paired 1:1 with throttle levers (block the lever attaches to); absent if no burner. */
-    public final List<BlockPos> slBurnerPositions;
-    public final BlockPos slLeftClutchLever;
-    public final BlockPos slRightClutchLever;
     public final List<BlockPos> slCannonMounts;
     /** Depends on jigsaw rotation chosen at placement. */
     public final Vector3d shipLocalForward;
@@ -104,9 +99,6 @@ public final class Airship {
 
     public Airship(ServerLevel parentLevel, SubLevel subLevel, BlockPos airpadAnchor,
                    AirshipKind kind,
-                   List<BlockPos> slThrottleLevers,
-                   List<BlockPos> slBurnerPositions,
-                   BlockPos slLeftClutchLever, BlockPos slRightClutchLever,
                    List<BlockPos> slCannonMounts,
                    Vector3d shipLocalForward,
                    List<AnchoredEntity> anchoredEntities,
@@ -116,10 +108,6 @@ public final class Airship {
         this.subLevelId = subLevel.getUniqueId();
         this.airpadAnchor = airpadAnchor;
         this.kind = kind;
-        this.slThrottleLevers = slThrottleLevers;
-        this.slBurnerPositions = slBurnerPositions;
-        this.slLeftClutchLever = slLeftClutchLever;
-        this.slRightClutchLever = slRightClutchLever;
         this.slCannonMounts = slCannonMounts;
         this.shipLocalForward = shipLocalForward;
         this.anchoredEntities = anchoredEntities;

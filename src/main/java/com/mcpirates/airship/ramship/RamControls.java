@@ -164,4 +164,13 @@ public final class RamControls implements ShipControls {
         Propellers.setReversed(subLevel, slLeftPropeller, nbtReversedL);
         Propellers.setReversed(subLevel, slRightPropeller, nbtReversedR);
     }
+
+    @Override
+    public boolean isActive(Airship a) {
+        Level subLevel = a.subLevel.getLevel();
+        if (subLevel == null) return false;
+        return ClutchLevers.isEngaged(subLevel, slLeftClutchLever)
+                || ClutchLevers.isEngaged(subLevel, slRightClutchLever)
+                || ClutchLevers.isEngaged(subLevel, slForwardClutchLever);
+    }
 }

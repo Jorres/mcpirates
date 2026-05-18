@@ -41,6 +41,11 @@ public interface ShipControls {
      */
     void release(Airship a);
 
+    /** True iff any propulsion is currently engaged. Tests use this to assert that
+     *  {@code release} fully shut the ship down or that {@code applySteering} engaged
+     *  something during PURSUE, without reaching into hardware fields. */
+    default boolean isActive(Airship a) { return false; }
+
     /** Optional actuator-state snapshot appended to {@link com.mcpirates.airship.ShipTelemetry#snapshot}. */
     default String diagnostics(Airship a) { return ""; }
 }

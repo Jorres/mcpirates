@@ -108,7 +108,7 @@ public final class ShipTelemetry {
                         t.size(), t.minY(), t.maxY());
         // gas = burnerCount · volume · lever / 15 — same quantity Aeronautics exposes
         // as HotAirBurnerBlockEntity.getGasOutput(), summed across all burners.
-        int burnerCount = Math.max(1, a.slBurnerPositions.size());
+        int burnerCount = Math.max(1, a.lift == null ? 1 : a.lift.burnerCount());
         String liftStr = lift == null ? "—" :
                 String.format(Locale.ROOT, "lever=%d vol=%dm³ gas=%.1f",
                         lift.lever(), lift.volume(),

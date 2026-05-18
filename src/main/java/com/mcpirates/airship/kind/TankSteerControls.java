@@ -55,4 +55,12 @@ public final class TankSteerControls implements ShipControls {
         ClutchLevers.setPowered(subLevel, slLeftClutchLever, /*powered=disengaged=*/true);
         ClutchLevers.setPowered(subLevel, slRightClutchLever, /*powered=disengaged=*/true);
     }
+
+    @Override
+    public boolean isActive(Airship a) {
+        Level subLevel = a.subLevel.getLevel();
+        if (subLevel == null) return false;
+        return ClutchLevers.isEngaged(subLevel, slLeftClutchLever)
+                || ClutchLevers.isEngaged(subLevel, slRightClutchLever);
+    }
 }
