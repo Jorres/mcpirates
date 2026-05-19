@@ -10,12 +10,6 @@ import net.neoforged.neoforge.registries.DeferredRegister;
 
 import java.util.function.Supplier;
 
-/**
- * {@link #IS_GALLEON_BOUNTY} — Unit-typed flag stamped on the 5th furled_bounty
- * minted by the sheriff GUI. {@code FurledBountyItem.use} treats a stamped scroll
- * as galleon regardless of any per-world unfurl counter; unstamped scrolls always
- * resolve to a regular outpost.
- */
 public final class MCPDataComponents {
     public static final DeferredRegister.DataComponents DATA_COMPONENTS =
             DeferredRegister.createDataComponents(Registries.DATA_COMPONENT_TYPE, MCPirates.MOD_ID);

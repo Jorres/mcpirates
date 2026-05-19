@@ -11,14 +11,8 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 
-/**
- * Right-click on a {@code mcpirates:sheriff} villager opens {@link SheriffMenu}
- * instead of falling through to vanilla's {@code Villager.mobInteract} → trade GUI.
- *
- * <p>We cancel the event before vanilla's {@code getOffers()} is consulted, which
- * also dodges the "empty {@code Offers:{}} permanently breaks trade-GUI" footgun
- * documented in the project memory — we never call {@code getOffers()} at all.
- */
+// Cancel the interact before vanilla calls getOffers() — never touching MerchantOffers
+// also dodges the "Offers:{} permanently breaks trade GUI" footgun.
 @EventBusSubscriber(modid = MCPirates.MOD_ID)
 public final class SheriffInteract {
 

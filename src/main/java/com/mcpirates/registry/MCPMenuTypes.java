@@ -9,12 +9,6 @@ import net.neoforged.neoforge.common.extensions.IMenuTypeExtension;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
 
-/**
- * {@link #SHERIFF} — opened from {@code SheriffInteract} on right-click. Server passes
- * the villager's entity id through the extra-data {@code RegistryFriendlyByteBuf};
- * client resolves it via {@code playerInv.player.level().getEntity(id)} to wire up
- * the state-driven slot rules.
- */
 public final class MCPMenuTypes {
     public static final DeferredRegister<MenuType<?>> MENUS =
             DeferredRegister.create(Registries.MENU, MCPirates.MOD_ID);

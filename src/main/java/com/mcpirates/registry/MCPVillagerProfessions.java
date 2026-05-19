@@ -9,32 +9,11 @@ import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
 
-/**
- * Villager profession registry for mcpirates.
- *
- * <p>{@link #SHERIFF} — the bounty-issuing villager. Workstation is
- * {@link MCPPoiTypes#SHERIFF_WORKSTATION}; right-click opens
- * {@link com.mcpirates.village.sheriff.SheriffMenu} via
- * {@link com.mcpirates.village.sheriff.SheriffInteract} — vanilla trade GUI is
- * bypassed entirely.
- *
- * <h2>Predicate signatures</h2>
- * {@link VillagerProfession}'s constructor takes two POI predicates:
- * <ol>
- *     <li><b>heldJobSite</b> — POIs the villager will only consider once they already hold
- *         this profession. Used to reclaim a job site after server restart.</li>
- *     <li><b>acquirableJobSite</b> — POIs unemployed villagers will look at to acquire
- *         this profession.</li>
- * </ol>
- * Both point to the same single POI here.
- *
- * <p>Work sound is reused from vanilla cartographer for v0.1 — the sound is small and
- * shipping a custom mcpirates sound event would balloon the PoC scope.
- */
 public final class MCPVillagerProfessions {
     public static final DeferredRegister<VillagerProfession> PROFESSIONS =
             DeferredRegister.create(Registries.VILLAGER_PROFESSION, MCPirates.MOD_ID);
 
+    // Cartographer work sound is a placeholder; shipping a custom one isn't worth the asset weight yet.
     public static final DeferredHolder<VillagerProfession, VillagerProfession> SHERIFF =
             PROFESSIONS.register("sheriff", () -> new VillagerProfession(
                     /*name=*/"sheriff",
