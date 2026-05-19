@@ -34,11 +34,13 @@ public final class MCPDataKeys {
      *  airship is in the *world*. The lever pos can. */
     public static final String CAPTAIN_ANCHOR_NBT_KEY = "mcpirates.airship_anchor";
 
-    /** Key into a sheriff villager's {@code persistentData} compound counting
-     *  the number of bounty scrolls he's sold over his entire lifetime. Read by
-     *  {@code SheriffLifetimeCap} to enforce a hard cap that survives
-     *  work-cycle restocks. */
-    public static final String SHERIFF_SCROLLS_SOLD_NBT_KEY = "mcpirates.bounty_scrolls_sold";
+    /** Counters on a sheriff villager's {@code persistentData} driving the custom
+     *  {@code SheriffMenu} state machine. Invariants enforced in {@code SheriffMenu}:
+     *  {@code seals <= maps <= seals + 1} and {@code rewards <= seals}. All three cap
+     *  at 5 — the sheriff retires when {@code seals == 5}. */
+    public static final String SHERIFF_MAPS_CLAIMED_NBT_KEY = "mcpirates.sheriff_maps_claimed";
+    public static final String SHERIFF_SEALS_RETURNED_NBT_KEY = "mcpirates.sheriff_seals_returned";
+    public static final String SHERIFF_REWARDS_CLAIMED_NBT_KEY = "mcpirates.sheriff_rewards_claimed";
 
     /** Scoreboard tag on a player who wants pirate AI to ignore them — for
      *  visiting a running gametest server without becoming the target. Brain

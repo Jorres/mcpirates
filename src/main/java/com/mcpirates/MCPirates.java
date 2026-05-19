@@ -4,7 +4,9 @@ import com.mcpirates.airship.ships.galleon.GalleonUnlockState;
 import com.mcpirates.registry.MCPBlockEntityTypes;
 import com.mcpirates.registry.MCPBlocks;
 import com.mcpirates.registry.MCPCreativeTabs;
+import com.mcpirates.registry.MCPDataComponents;
 import com.mcpirates.registry.MCPItems;
+import com.mcpirates.registry.MCPMenuTypes;
 import com.mcpirates.registry.MCPPoiTypes;
 import com.mcpirates.registry.MCPStructureTypes;
 import com.mcpirates.registry.MCPVillagerProfessions;
@@ -12,6 +14,7 @@ import com.mcpirates.village.SheriffNameAssigner;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.Level;
 import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
@@ -23,17 +26,21 @@ public class MCPirates {
     public static final String MOD_ID = "mcpirates";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
-    public MCPirates(IEventBus modBus) {
+    public MCPirates(IEventBus modBus, ModContainer container) {
         LOGGER.info("[{}] initializing", MOD_ID);
+
+        MCPConfig.register(container);
 
         // Registry order: blocks first because MCPItems pulls in block-items, and
         // MCPPoiTypes references MCPBlocks at register-time. MCPVillagerProfessions
         // references MCPPoiTypes. Creative tabs last so the iteration finds everything.
         MCPBlocks.register(modBus);
         MCPBlockEntityTypes.register(modBus);
+        MCPDataComponents.register(modBus);
         MCPItems.register(modBus);
         MCPPoiTypes.register(modBus);
         MCPVillagerProfessions.register(modBus);
+        MCPMenuTypes.register(modBus);
         MCPCreativeTabs.register(modBus);
         MCPStructureTypes.register(modBus);
 

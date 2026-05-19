@@ -68,6 +68,13 @@ versionRange = "[${cbc_mod_version},)"
 ordering = "AFTER"
 side = "BOTH"
 
+[[dependencies.${mod_id}]]
+modId = "patchouli"
+type = "required"
+versionRange = "[${patchouli_mod_version},)"
+ordering = "AFTER"
+side = "BOTH"
+
 # Mixin: pin gametest arena positions at world origin. Without this the vanilla
 # MC GameTestServer randomises test positions across a 30-million-block range,
 # and rapier (Sable's f32-precision physics engine) can't integrate sub-block

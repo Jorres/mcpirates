@@ -13,9 +13,10 @@ import net.neoforged.neoforge.registries.DeferredRegister;
  * Villager profession registry for mcpirates.
  *
  * <p>{@link #SHERIFF} — the bounty-issuing villager. Workstation is
- * {@link MCPPoiTypes#SHERIFF_WORKSTATION}; trades are wired in
- * {@link com.mcpirates.village.SheriffTrades}. For v0.1 the sheriff offers a single
- * trade: turn in a {@link MCPItems#CAPTAIN_SEAL} for emeralds.
+ * {@link MCPPoiTypes#SHERIFF_WORKSTATION}; right-click opens
+ * {@link com.mcpirates.village.sheriff.SheriffMenu} via
+ * {@link com.mcpirates.village.sheriff.SheriffInteract} — vanilla trade GUI is
+ * bypassed entirely.
  *
  * <h2>Predicate signatures</h2>
  * {@link VillagerProfession}'s constructor takes two POI predicates:

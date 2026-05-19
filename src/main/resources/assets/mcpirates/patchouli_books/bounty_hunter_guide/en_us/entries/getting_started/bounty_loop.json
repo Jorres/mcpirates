@@ -1,0 +1,26 @@
+{
+  "name": "patchouli.mcpirates.bounty_hunter_guide.entry.bounty_loop",
+  "icon": "mcpirates:furled_bounty",
+  "category": "mcpirates:getting_started",
+  "sortnum": 1,
+  "pages": [
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.mcpirates.bounty_hunter_guide.entry.bounty_loop.page1"
+    },
+    {
+      "type": "patchouli:spotlight",
+      "item": "mcpirates:furled_bounty",
+      "text": "patchouli.mcpirates.bounty_hunter_guide.entry.bounty_loop.page2"
+    },
+    {
+      "type": "patchouli:spotlight",
+      "item": "mcpirates:captain_seal",
+      "text": "patchouli.mcpirates.bounty_hunter_guide.entry.bounty_loop.page3"
+    },
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.mcpirates.bounty_hunter_guide.entry.bounty_loop.page4"
+    }
+  ]
+}

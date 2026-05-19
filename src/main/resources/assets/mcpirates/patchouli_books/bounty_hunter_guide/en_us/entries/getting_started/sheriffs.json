@@ -1,0 +1,16 @@
+{
+  "name": "patchouli.mcpirates.bounty_hunter_guide.entry.sheriffs",
+  "icon": "mcpirates:bounty_board",
+  "category": "mcpirates:getting_started",
+  "sortnum": 0,
+  "pages": [
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.mcpirates.bounty_hunter_guide.entry.sheriffs.page1"
+    },
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.mcpirates.bounty_hunter_guide.entry.sheriffs.page2"
+    }
+  ]
+}

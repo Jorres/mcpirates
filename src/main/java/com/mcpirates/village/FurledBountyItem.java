@@ -1,9 +1,9 @@
 package com.mcpirates.village;
 
 import com.mcpirates.MCPirates;
-import com.mcpirates.airship.ships.galleon.GalleonSpawner;
 import com.mcpirates.airship.ships.galleon.GalleonUnlockState;
 import com.mcpirates.pirates.DefeatedAirships;
+import com.mcpirates.registry.MCPDataComponents;
 import com.mcpirates.registry.MCPStructureTags;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
@@ -54,13 +54,14 @@ public final class FurledBountyItem extends Item {
             return InteractionResultHolder.pass(held);
         }
 
-        // Atomic bump so two same-tick unfurls don't both come up "5th".
+        // Telemetry counter only; galleon mode is decided by the IS_GALLEON_BOUNTY
+        // component stamped on the 5th map minted by SheriffMenu.
         DefeatedAirships airships = DefeatedAirships.get(serverLevel);
         int unfurlIndex = airships.incrementScrollsUnfurled();
-        boolean isBoss = (unfurlIndex % GalleonSpawner.BOSS_INTERVAL) == 0;
+        boolean isGalleon = held.has(MCPDataComponents.IS_GALLEON_BOUNTY.get());
 
         BlockPos found;
-        if (isBoss) {
+        if (isGalleon) {
             // Unlock the worldgen galleon structure_set, then point at the nearest yet-to-generate
             // chunk so the player is steered into unexplored territory.
             GalleonUnlockState.get(serverLevel).unlock();
@@ -103,7 +104,7 @@ public final class FurledBountyItem extends Item {
         MCPirates.LOGGER.info(
                 "{} unfurled bounty scroll #{} ({}) → {} (defeated set has {})",
                 player.getName().getString(), unfurlIndex,
-                isBoss ? "BOSS galleon" : "regular outpost",
+                isGalleon ? "BOSS galleon" : "regular outpost",
                 found, airships.defeatedCount());
 
         return InteractionResultHolder.consume(held);

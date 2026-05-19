@@ -9,5 +9,30 @@
 
   "entity.minecraft.villager.mcpirates.sheriff": "Sheriff",
 
-  "pirate_bounty": "Pirate Bounty Map"
+  "gui.mcpirates.sheriff.retired": "RETIRED",
+  "gui.mcpirates.sheriff.row.maps": "Maps",
+  "gui.mcpirates.sheriff.row.seals": "Seals",
+  "gui.mcpirates.sheriff.row.rewards": "Rewards",
+  "gui.mcpirates.sheriff.row.guide": "Guide",
+
+  "pirate_bounty": "Pirate Bounty Map",
+
+  "item.mcpirates.bounty_hunter_guide.name": "Guide for the Bounty Hunters",
+  "item.mcpirates.bounty_hunter_guide.landing": "Welcome, bounty hunter. The sheriff has entrusted you with this guide. Read on to learn how to track and dismantle the pillager airship operations.$(br2)$(playername), let's get to work.",
+
+  "patchouli.mcpirates.bounty_hunter_guide.cat.getting_started": "Getting Started",
+  "patchouli.mcpirates.bounty_hunter_guide.cat.getting_started.desc": "The bounty system from the ground up: who hands out the work, how the loop runs, and what the final reward looks like.",
+
+  "patchouli.mcpirates.bounty_hunter_guide.entry.sheriffs": "The Sheriff",
+  "patchouli.mcpirates.bounty_hunter_guide.entry.sheriffs.page1": "Every village holds a $(item)Sheriff$() — a villager stationed at a $(item)bounty board$(). Right-click them to open the board they keep. Don't expect them to trade emeralds for trinkets: sheriffs only deal in furled bounty maps, captain's seals, and a small purse of emeralds for finished work.",
+  "patchouli.mcpirates.bounty_hunter_guide.entry.sheriffs.page2": "A sheriff retires after handing out five complete cycles. If the board looks $(red)RETIRED$(), find another village — there'll be another sheriff somewhere along the road.",
+
+  "patchouli.mcpirates.bounty_hunter_guide.entry.bounty_loop": "The Bounty Loop",
+  "patchouli.mcpirates.bounty_hunter_guide.entry.bounty_loop.page1": "The sheriff's board has three rows of five slots. Each cycle works the same way: take a $(item)Furled Bounty$() from the top row, hunt the airship it points at, return with the dead captain's seal, and collect your reward.",
+  "patchouli.mcpirates.bounty_hunter_guide.entry.bounty_loop.page2": "Right-click a furled scroll to unfurl it — you'll get a $(item)bounty map$() pointing at the nearest pillager outpost. The airship lifts off when you get close enough. Kill the captain to drop their $(item)Captain's Seal$().",
+  "patchouli.mcpirates.bounty_hunter_guide.entry.bounty_loop.page3": "Hand the seal in to the sheriff by placing it in the highlighted slot of the seals row. The next map and reward unlock immediately.",
+  "patchouli.mcpirates.bounty_hunter_guide.entry.bounty_loop.page4": "Repeat. The sheriff will line up the next four cycles for you, each pointing at a different outpost. Don't skip turning in seals — without a seal, the next slot stays locked.",
+
+  "patchouli.mcpirates.bounty_hunter_guide.entry.galleon": "The Fifth Map",
+  "patchouli.mcpirates.bounty_hunter_guide.entry.galleon.page1": "The fifth and final map of a sheriff's cycle is special. It points not at a pillager outpost but at a $(red)pirate Galleon$() — a much larger ship with a tougher crew. Defeating one is the climax of the bounty hunter's path. Once you take that last map, the sheriff's work is done and the board reads $(red)RETIRED$()."
 }

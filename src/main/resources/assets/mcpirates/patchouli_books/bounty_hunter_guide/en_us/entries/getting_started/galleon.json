@@ -1,0 +1,12 @@
+{
+  "name": "patchouli.mcpirates.bounty_hunter_guide.entry.galleon",
+  "icon": "mcpirates:furled_bounty",
+  "category": "mcpirates:getting_started",
+  "sortnum": 2,
+  "pages": [
+    {
+      "type": "patchouli:text",
+      "text": "patchouli.mcpirates.bounty_hunter_guide.entry.galleon.page1"
+    }
+  ]
+}

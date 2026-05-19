@@ -152,6 +152,10 @@ dependencies {
 
     implementation "maven.modrinth:rpl:hZ6B2Z0x" // 2.1.2+mc.1.21.1
 
+    // Patchouli — guidebook engine; hard dep so players can always open the
+    // sheriff-given "Guide for the Bounty Hunters".
+    implementation "maven.modrinth:patchouli:BIogJv2D" // 1.21.1-93-neoforge
+
     // Create Aeronautics bundled jar
     aeronauticsBundled aeronauticsArtifact
     implementation aeronauticsArtifact // 1.2.1+mc1.21.1
@@ -217,7 +221,8 @@ var generateModMetadata = tasks.register('generateModMetadata', ProcessResources
             flywheel_mod_version         : flywheel_mod_version,
             aeronautics_mod_version      : aeronautics_mod_version,
             lithostitched_mod_version    : lithostitched_mod_version,
-            cbc_mod_version              : cbc_mod_version
+            cbc_mod_version              : cbc_mod_version,
+            patchouli_mod_version        : patchouli_mod_version
     ]
 
     inputs.properties(replaceProperties)
