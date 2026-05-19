@@ -5,6 +5,13 @@
     "minecraft:trapped_chest",
     "minecraft:ender_chest",
     "minecraft:barrel",
-    "#minecraft:beds"
+    "#minecraft:beds",
+
+    "minecraft:lever",
+    "simulated:throttle_lever",
+    "create:analog_lever",
+    "aeronautics:adjustable_burner",
+    "aeronautics:propeller_bearing",
+    "aeronautics:gyroscopic_propeller_bearing"
   ]
 }
