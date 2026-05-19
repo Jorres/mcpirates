@@ -6,9 +6,13 @@ import com.mcpirates.MCPirates;
 import com.mcpirates.registry.MCPDataComponents;
 import com.mcpirates.registry.MCPItems;
 import com.mcpirates.registry.MCPMenuTypes;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.util.Unit;
 import net.minecraft.world.Container;
@@ -48,6 +52,8 @@ public final class SheriffMenu extends AbstractContainerMenu {
 
     private final Container board;
     @Nullable private final Villager sheriff;
+    /** Menu owner — used to peek inventory for the "already has the book" check. */
+    private final Player player;
     private final int cycleLength;
 
     // persistentData is server-only; DataSlots are the per-tick sync channel to client.
@@ -63,6 +69,7 @@ public final class SheriffMenu extends AbstractContainerMenu {
     public SheriffMenu(int windowId, Inventory playerInv, @Nullable Villager sheriff, int explicitCycleLength) {
         super(MCPMenuTypes.SHERIFF.get(), windowId);
         this.sheriff = sheriff;
+        this.player = playerInv.player;
         this.board = new SimpleContainer(BOARD_SIZE);
         this.cycleLength = Mth.clamp(explicitCycleLength, 1, MAX_CYCLES);
 
@@ -159,6 +166,17 @@ public final class SheriffMenu extends AbstractContainerMenu {
         return PatchouliAPI.get().getBookStack(BOUNTY_HUNTER_GUIDE_ID);
     }
 
+    /** Sheriff plays the affirm sound + emits happy-villager particles when a seal lands. */
+    private void playSealAcceptedFeedback() {
+        if (sheriff == null || !sheriff.isAlive()) return;
+        if (!(sheriff.level() instanceof ServerLevel sl)) return;
+        sl.playSound(null, sheriff.blockPosition(),
+                SoundEvents.VILLAGER_YES, SoundSource.NEUTRAL, 1.0f, 1.0f);
+        sl.sendParticles(ParticleTypes.HAPPY_VILLAGER,
+                sheriff.getX(), sheriff.getEyeY(), sheriff.getZ(),
+                /*count=*/8, /*xSpread=*/0.4, /*ySpread=*/0.4, /*zSpread=*/0.4, /*speed=*/0.0);
+    }
+
     private void refreshBoard() {
         int activeMap = activeMapIndex();
         int activeReward = activeRewardIndex();
@@ -168,7 +186,22 @@ public final class SheriffMenu extends AbstractContainerMenu {
             board.setItem(REWARD_ROW_OFFSET + i,
                     i == activeReward ? mintReward() : ItemStack.EMPTY);
         }
-        board.setItem(BOOK_SLOT_INDEX, mintBook());
+        // Skip the dispenser if the player is already holding a guide (in inv or cursor).
+        board.setItem(BOOK_SLOT_INDEX, playerHasGuideBook() ? ItemStack.EMPTY : mintBook());
+    }
+
+    /** True if the menu's owning player already carries a {@code bounty_hunter_guide}
+     *  book either in their inventory or in the cursor (carried) slot. */
+    private boolean playerHasGuideBook() {
+        if (player == null) return false;
+        ItemStack reference = mintBook();
+        if (reference.isEmpty()) return false;
+        if (ItemStack.isSameItemSameComponents(getCarried(), reference)) return true;
+        Inventory inv = player.getInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            if (ItemStack.isSameItemSameComponents(inv.getItem(i), reference)) return true;
+        }
+        return false;
     }
 
     @Override
@@ -189,6 +222,7 @@ public final class SheriffMenu extends AbstractContainerMenu {
                 here.shrink(1);
                 board.setItem(SEAL_ROW_OFFSET + activeSeal, here.isEmpty() ? ItemStack.EMPTY : here);
                 setSealsReturned(sealsReturned() + 1);
+                playSealAcceptedFeedback();
             }
         }
         refreshBoard();

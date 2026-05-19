@@ -47,6 +47,14 @@ public final class FurledBountyItem extends Item {
     }
 
     @Override
+    public Component getName(ItemStack stack) {
+        if (stack.has(MCPDataComponents.IS_GALLEON_BOUNTY.get())) {
+            return Component.translatable("item.mcpirates.furled_bounty.galleon");
+        }
+        return super.getName(stack);
+    }
+
+    @Override
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
         ItemStack held = player.getItemInHand(hand);
         if (level.isClientSide() || !(level instanceof ServerLevel serverLevel)) {

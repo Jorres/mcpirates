@@ -2,5 +2,11 @@
   "parent": "minecraft:item/generated",
   "textures": {
     "layer0": "mcpirates:item/furled_bounty"
-  }
+  },
+  "overrides": [
+    {
+      "predicate": { "mcpirates:is_galleon_bounty": 1.0 },
+      "model": "mcpirates:item/furled_bounty_galleon"
+    }
+  ]
 }
