@@ -350,3 +350,67 @@ template. It targets Mojang's class directly (no fork of MC or NeoForge), only r
 when `GameTestServer` is loaded (i.e. only under `runGameTestServer` — production
 `runServer` / `runClientQuick` never load that class), and the redirect is one
 six-line method. The blast radius is exactly the gametest entry point, nothing else.
+
+---
+
+## 2026-05-19 — Sheriff GUI is a custom `AbstractContainerMenu`, not `MerchantOffers`
+
+**Decision.** Right-clicking a sheriff villager is intercepted in `SheriffInteract`
+(`PlayerInteractEvent.EntityInteract`); the event is cancelled before vanilla's
+`Villager.mobInteract` runs, and the player is opened into `SheriffMenu` instead of
+`MerchantMenu`.
+
+**Why.** Three constraints rule out the vanilla trade path:
+1. **Structured state.** The bounty loop has order dependencies ("can't take map N+1
+   until seal N is turned in", "reward N unlocks with seal N") that don't map onto
+   `MerchantOffer`'s `(cost, result, uses, maxUses)` shape. Encoding it as N separate
+   trades that lock and unlock each other would need multiple tick handlers re-pegging
+   `out_of_stock` flags after work-cycle restocks, with no compile-time invariant
+   linking them.
+2. **`MerchantScreen` footgun.** Passing `Offers:{}` (or any non-null `MerchantOffers`)
+   to `/summon` permanently breaks the trade GUI: `AbstractVillager.getOffers()` only
+   triggers lazy population when `offers == null`, not `.isEmpty()`. Bypassing the
+   vanilla path means we never call `getOffers()` and the footgun goes away.
+3. **Custom visuals.** Active/taken/locked overlays per slot, row labels, an
+   always-available Patchouli book slot, "?" markers on locked rewards. Not reachable
+   inside `MerchantScreen` without mixins.
+
+**Shape.**
+- **State.** Three ints on the villager's `getPersistentData()` (server-side source of
+  truth): `mcpirates.sheriff_maps_claimed`, `…seals_returned`, `…rewards_claimed`.
+  Invariant: `seals <= maps <= seals + 1` and `rewards <= seals`, all in
+  `[0, cycleLength]`. Sheriff is "retired" when `seals == cycleLength`.
+- **Sync.** `Entity.getPersistentData()` is **not** synced — client reads return 0.
+  Each counter is mirrored to a `DataSlot.standalone()` registered via `addDataSlot`;
+  vanilla's per-tick `broadcastChanges` diff-syncs them. Writes go through
+  `writeCounter(slot, key, value)` which updates both the DataSlot and the NBT.
+- **Layout.** 196 × 182 GUI. Board: 5×3 stateful slots at x∈{64,82,100,118,136} /
+  y∈{18,40,62} with row labels in the left margin; an always-available book slot at
+  (160, 18). The book slot's `mayPickup` is unconditional and the cell re-mints on
+  every `refreshBoard`, so it works as an unlimited dispenser — including on retired
+  sheriffs.
+- **Seal consumption.** `SealSlot.mayPlace` accepts a `captain_seal` into the active
+  slot but doesn't immediately bump the counter; consumption happens in the next
+  `broadcastChanges`. Visual effect: player sees the seal land, then disappear, then
+  the next map + reward slots light up.
+- **Galleon trigger.** The last map in a sheriff's cycle (index `cycleLength - 1`) is
+  stamped with the `mcpirates:is_galleon_bounty` data component at mint time;
+  `FurledBountyItem.use` reads the component directly to switch between outpost and
+  galleon paths. The galleon trigger is exactly the last map a sheriff hands you.
+- **Cycle length** is read from `MCPConfig.cycleLength()` (NeoForge `ModConfigSpec`,
+  range 1..5, default 5) at menu-construction time and snapshotted as a final field —
+  config reloads mid-session don't desync server and client menu instances.
+- **Sheriff pinning.** Vanilla trade GUI gates wandering via brain hooks we don't
+  have wired. The menu's `broadcastChanges` clears the villager's navigation +
+  horizontal delta-movement each server tick while open; head-tracking and ambient
+  sounds keep working. Without this the sheriff drifts out of `stillValid` range
+  mid-interaction.
+
+**Tests.** `SheriffMenuTests` drives the server-side menu directly (`SimpleMenuProvider`
++ `AbstractContainerMenu.clicked(...)`) bypassing the network layer. Each scenario
+asserts on the three counters + carried slot state. The visual layer (slot overlays,
+row labels, locked-reward "?", retired banner) is **not** gametest-covered — gametest
+server is headless; verified manually under `runClientQuick`. JUnit-style menu tests
+under `src/test/java` were rejected: `AbstractContainerMenu` reaches into `MenuType`
+static fields and ServerPlayer machinery that JUnit can't bootstrap without a real
+`MinecraftServer`.
