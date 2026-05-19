@@ -28,7 +28,8 @@ public final class SingleFrontCannonCombat implements CombatBehavior {
         // Skip aiming when the gunner is dead — cosmetically the barrel freezes at its
         // last aim, signalling "this cannon is out of action".
         if (!ship.isMountManned(mount)) return;
-        CannonOps.aimAt(ship, mount, target);
+        CannonOps.Aim a = CannonOps.aimAt(ship, mount, target);
+        if (a != null) ship.lastAimByMount.put(mount, a);
     }
 
     @Override
@@ -36,8 +37,11 @@ public final class SingleFrontCannonCombat implements CombatBehavior {
         if (ship.slCannonMounts.isEmpty()) return false;
         BlockPos mount = ship.slCannonMounts.get(0);
         if (!ship.isMountManned(mount)) return false;
-        CannonOps.Aim aim = CannonOps.computeAim(ship, mount, target);
-        if (aim.outOfRange()) return false;
+        // aim() runs at a higher cadence than fire() so the cache is normally populated
+        // by the time we get here; the miss path covers first-tick startup.
+        CannonOps.Aim aim = ship.lastAimByMount.get(mount);
+        if (aim == null) aim = CannonOps.computeAim(ship, mount, target);
+        if (!aim.canFire()) return false;
         return CannonOps.fireOnce(ship, mount);
     }
 }

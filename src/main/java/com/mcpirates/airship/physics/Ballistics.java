@@ -11,8 +11,8 @@ package com.mcpirates.airship.physics;
  */
 public final class Ballistics {
 
-    public static final double GRAVITY = 0.05;
-    public static final double DRAG    = 0.01;
+    static final double GRAVITY = 0.05;
+    static final double DRAG    = 0.01;
 
     private static final int SOLVER_ITERATIONS = 20;
     private static final int MAX_TICKS = 200;

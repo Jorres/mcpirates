@@ -271,10 +271,27 @@ neoForge.ideSyncTask tasks.named("extractAeronauticsJarJar")
 
 tasks.named("compileJava") {
     dependsOn tasks.named("extractAeronauticsJarJar")
+    dependsOn tasks.named("installGitHooks")
 }
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
+}
+
+// Copies scripts/git-hooks/* into .git/hooks/ so cloning the repo + running any compile
+// gets you the precommit gate. The hook runs `./gradlew test runGameTestServer` before
+// letting a commit land — adds ~30-50s per commit, matches what CI would catch anyway.
+// Skips silently when .git isn't a directory (worktrees, sparse checkouts) so the build
+// doesn't break for unusual layouts.
+tasks.register('installGitHooks', Copy) {
+    description = 'Install scripts/git-hooks/* into .git/hooks/.'
+    group = 'verification'
+    File hooksDir = rootProject.file('.git/hooks')
+    onlyIf { hooksDir.isDirectory() }
+    from('scripts/git-hooks')
+    into(hooksDir)
+    filePermissions { unix(0755) }
+    inputs.dir('scripts/git-hooks')
 }
 
 jar {

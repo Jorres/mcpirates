@@ -1,0 +1,15 @@
+#!/bin/sh
+# mcpirates pre-commit hook — runs every test suite before letting a commit land.
+# Installed by `./gradlew installGitHooks`, which is wired into compileJava so a fresh
+# clone gets the hook on first build.
+#
+#   - junit + arch + nbtcheck:  ./gradlew test
+#   - gametest server:          ./gradlew runGameTestServer
+#
+# Bypass with `git commit --no-verify` — but doing that locally defeats the point of
+# the hook. If a test is broken on master, fix it instead.
+
+set -e
+
+echo "[pre-commit] ./gradlew test runGameTestServer  (~30-50s warm cache)"
+./gradlew test runGameTestServer

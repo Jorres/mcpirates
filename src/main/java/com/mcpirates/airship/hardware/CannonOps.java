@@ -40,6 +40,11 @@ public final class CannonOps {
     private static final ResourceLocation SOLID_SHOT_ID =
             ResourceLocation.fromNamespaceAndPath("createbigcannons", "solid_shot");
 
+    /** Powder charges loaded per shot. Sets the muzzle velocity at 1.0 b/tick per charge
+     *  (CBC's propellant arithmetic). When per-kind variation actually has a use case,
+     *  promote this to an {@code AirshipKind} method — until then it's a global constant. */
+    private static final int MUZZLE_CHARGE_COUNT = 2;
+
     private static Field cachedMountedContraptionField;
     private static Field cachedCannonYawField;
     private static Field cachedCannonPitchField;
@@ -48,10 +53,22 @@ public final class CannonOps {
 
     /** Yaw/pitch in DEGREES, ship-local frame. {@code yaw} follows the same
      *  {@code atan2(-x, z)} convention as the original aimCannon helper: NORTH = 180°,
-     *  SOUTH = 0°, EAST = -90°, WEST = +90°. {@code outOfRange} flags shots the ballistic
-     *  solver couldn't reach — the angle is still a usable "best-effort" (45° world pitch
-     *  toward target) so barrels track visually; callers suppress fire. */
-    public record Aim(float yaw, float pitch, boolean outOfRange) {}
+     *  SOUTH = 0°, EAST = -90°, WEST = +90°.
+     *  <ul>
+     *    <li>{@code outOfRange} — ballistic solver couldn't reach; angle is a 45° "best
+     *        effort" toward the target so the barrel still tracks visually. Callers
+     *        suppress fire.</li>
+     *    <li>{@code yawClamped} — the actual {@code yaw} written to the mount differs from
+     *        the solver's ideal yaw because a per-kind clamp (e.g. {@code BroadsideCombat}'s
+     *        ±N° from rest yaw) kicked in. Cannon is pointing at the limit of its arc,
+     *        not at the target. Callers must suppress fire.</li>
+     *  </ul>
+     *  Computed by {@link #computeAim} with {@code yawClamped = false}; callers that
+     *  post-process yaw construct a new Aim with the flag set. */
+    public record Aim(float yaw, float pitch, boolean outOfRange, boolean yawClamped) {
+        /** True iff the cannon is pointing at the target within its physical limits. */
+        public boolean canFire() { return !outOfRange && !yawClamped; }
+    }
 
     /** Compute the (yaw, pitch) a cannon at {@code slMountPos} needs to land a solid shot
      *  on {@code target}, in ship-local degrees. World-frame ballistic solve (gravity is
@@ -67,7 +84,7 @@ public final class CannonOps {
         double dz = target.getZ()    - muzzle.z;
         double horiz = Math.sqrt(dx * dx + dz * dz);
 
-        double v0 = ship.muzzleVelocity();
+        double v0 = MUZZLE_CHARGE_COUNT;
         double worldPitch = Ballistics.solvePitch(horiz, dy, v0);
         boolean outOfRange = Double.isNaN(worldPitch);
         if (outOfRange) worldPitch = Math.PI / 4;
@@ -84,7 +101,7 @@ public final class CannonOps {
         double localHoriz = Math.sqrt(localDir.x * localDir.x + localDir.z * localDir.z);
         float yaw   = (float) Math.toDegrees(Math.atan2(-localDir.x, localDir.z));
         float pitch = (float) Math.toDegrees(Math.atan2(localDir.y, localHoriz));
-        return new Aim(yaw, pitch, outOfRange);
+        return new Aim(yaw, pitch, outOfRange, false);
     }
 
     /** Write yaw/pitch onto the cannon mount BE. Idempotent at the BE level (CBC won't
@@ -118,8 +135,6 @@ public final class CannonOps {
 
     private static void logAim(Airship ship, BlockPos slMountPos,
                                CannonMountBlockEntity mount, float yaw, float pitch) {
-
-        // (continued logAim body — diagnostic only)
         long bucket = System.currentTimeMillis() / 2000;
         boolean firstAim = !ship.hasAimedOnce;
         ship.hasAimedOnce = true;
@@ -143,7 +158,7 @@ public final class CannonOps {
     public static boolean fireOnce(Airship ship, BlockPos slMountPos) {
         Level subLevelLevel = ship.subLevel.getLevel();
         if (!(subLevelLevel instanceof ServerLevel ssub)) return false;
-        boolean fired = fireRawAt(ssub, ship.parentLevel, slMountPos, ship.muzzleChargeCount);
+        boolean fired = fireRawAt(ssub, ship.parentLevel, slMountPos, MUZZLE_CHARGE_COUNT);
         if (fired && !ship.hasFiredOnce) {
             ship.hasFiredOnce = true;
             MCPirates.LOGGER.info("ship {} ({}) first fire at mount {}",

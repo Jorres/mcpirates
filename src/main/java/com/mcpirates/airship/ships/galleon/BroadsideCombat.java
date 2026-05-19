@@ -72,6 +72,13 @@ public final class BroadsideCombat implements CombatBehavior {
             float restYaw = (ms.side() == Side.LEFT) ? portRestYaw : starboardRestYaw;
             float clampedYaw = AngleMath.clampYaw(raw.yaw(), restYaw, yawClampDegrees);
             CannonOps.applyAim(ship, slMount, clampedYaw, raw.pitch());
+            // Cache the Aim that reflects what the mount is actually pointing at, with the
+            // yawClamped flag set when the clamp moved us off-target. fire() then refuses
+            // to shoot a cannon whose barrel is at the limit of its arc rather than at the
+            // target — otherwise we'd send shells into the hull or the sky.
+            boolean clamped = clampedYaw != raw.yaw();
+            ship.lastAimByMount.put(slMount,
+                    new CannonOps.Aim(clampedYaw, raw.pitch(), raw.outOfRange(), clamped));
         }
     }
 
@@ -95,7 +102,9 @@ public final class BroadsideCombat implements CombatBehavior {
         BlockPos firingMount = manned.get(next);
         // Cursor advances either way so we don't lock onto an unreachable cannon — next
         // fire tick will try the next slot in the rotation.
-        if (CannonOps.computeAim(ship, firingMount, target).outOfRange()) return false;
+        CannonOps.Aim cached = ship.lastAimByMount.get(firingMount);
+        if (cached == null) cached = CannonOps.computeAim(ship, firingMount, target);
+        if (!cached.canFire()) return false;
         boolean fired = CannonOps.fireOnce(ship, firingMount);
         if (fired && next == manned.size() - 1) {
             ship.combatNextFireTick = now + SALVO_COOLDOWN_TICKS;

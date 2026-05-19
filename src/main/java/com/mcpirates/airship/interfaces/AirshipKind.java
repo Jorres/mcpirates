@@ -105,9 +105,4 @@ public interface AirshipKind {
      *  {@code maxGroundAhead + this + 2} in non-PURSUE; in PURSUE it lower-bounds the
      *  target-eye + offset. Ramships override low so they can actually connect. */
     default double minAltAboveGround() { return 30.0; }
-
-    /** Powder charges loaded per shot. Sets muzzle velocity at 1.0 blocks/tick per charge.
-     *  Default of 2 = the "+1 over the CBC baseline" boost; per-kind overrides tune
-     *  threat level (ramship leans on its hull, capital ships want range). */
-    default int defaultMuzzleChargeCount() { return 2; }
 }

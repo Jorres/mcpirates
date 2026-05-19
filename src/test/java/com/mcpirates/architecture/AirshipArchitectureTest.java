@@ -60,6 +60,10 @@ public class AirshipArchitectureTest {
     private static final Set<String> PHASE_C_DEFERRED_FIELDS = Set.of(
             "slCannonMounts",     // List<BlockPos>
             "cannoneerByMount",   // Map<BlockPos, UUID>
+            "lastAimByMount",     // Map<BlockPos, CannonOps.Aim> — per-cannon cached aim so
+                                  // CombatBehavior.fire() doesn't re-solve the ballistic each
+                                  // tick. Same Phase-C target as cannoneerByMount: moves into
+                                  // CombatBehavior alongside slCannonMounts.
             "slPrimaryAnchor"     // BlockPos — kept so MOORED→LIFTOFF promotion's CaptainSpawner
                                   // can resolve the SL-frame seat-scan bbox. Phase C: move into
                                   // an AssemblyMetadata wrapper carried by the SubLevel.
