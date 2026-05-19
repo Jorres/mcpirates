@@ -48,6 +48,7 @@ public final class TestSetup {
 
     public static void reset(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
+        logArena(helper);
         AirshipBrain.unregisterAll(level);
         AirshipLiftoffTrigger.clearGroundEngagements(level);
         AirshipBrain.targetOverride = null;
@@ -57,6 +58,18 @@ public final class TestSetup {
             server.getPlayerList().setViewDistance(0);
         }
         purgeSubLevels(level);
+    }
+
+    /** Print the world coordinates of the arena bbox so test logs can correlate
+     *  "test foo started" with "ramship at (x, y, z)" — useful when chasing cross-test
+     *  state leaks where the symptom shows up in one test but is caused by another's
+     *  leftover entities in nearby chunks. */
+    private static void logArena(GameTestHelper helper) {
+        AABB bb = helper.getBounds();
+        MCPirates.LOGGER.info(
+                "[gametest-arena] reset for test arena min=({},{},{}) max=({},{},{})",
+                (int) Math.floor(bb.minX), (int) Math.floor(bb.minY), (int) Math.floor(bb.minZ),
+                (int) Math.ceil(bb.maxX), (int) Math.ceil(bb.maxY), (int) Math.ceil(bb.maxZ));
     }
 
     /** Reflection trick mirrored from testframework's AbstractTest.onGameTest. */
