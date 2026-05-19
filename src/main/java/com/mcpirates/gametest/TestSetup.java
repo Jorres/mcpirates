@@ -4,7 +4,7 @@ import com.mcpirates.MCPirates;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
 import com.mcpirates.airship.anchor.MCPShipAnchorBlockEntity;
-import com.mcpirates.airship.ships.AnchorNbtPositions;
+import com.mcpirates.airship.ships.AirshipKinds;
 import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.sublevel.SubLevel;
@@ -98,11 +98,12 @@ public final class TestSetup {
                 new StructurePlaceSettings(), level.getRandom(), 2);
 
         // Strip the ship_anchor so mcpirates ignores this contraption.
-        int[] anchorRel = AnchorNbtPositions.BY_NAME.get(shipName);
-        if (anchorRel == null) {
-            helper.fail("no AnchorNbtPositions entry for " + shipName);
+        com.mcpirates.airship.interfaces.AirshipKind k = AirshipKinds.byName(shipName);
+        if (k == null) {
+            helper.fail("no kind for " + shipName);
             return null;
         }
+        int[] anchorRel = k.nbtSpec().anchorNbtPos();
         BlockPos anchorWorld = origin.offset(anchorRel[0], anchorRel[1], anchorRel[2]);
         level.setBlock(anchorWorld, Blocks.AIR.defaultBlockState(), 3);
 

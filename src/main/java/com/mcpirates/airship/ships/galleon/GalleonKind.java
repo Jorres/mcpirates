@@ -1,8 +1,10 @@
 package com.mcpirates.airship.ships.galleon;
 
+import com.mcpirates.airship.Airship;
+import com.mcpirates.airship.common.TankSteerControls;
 import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.airship.interfaces.Layout;
-import com.mcpirates.airship.ships.AnchorNbtPositions;
+import com.mcpirates.airship.interfaces.ShipControls;
 import com.mcpirates.airship.interfaces.CombatBehavior;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Rotation;
@@ -19,9 +21,9 @@ import java.util.List;
  * have identical 0..15 semantics but different BE classes; {@code ThrottleLevers}
  * dispatches by BE type at write time.
  *
- * <p>Primary anchor: the leftmost throttle lever (face=floor, facing=NORTH). Absolute
- * anchor coords in {@link AnchorNbtPositions}; the right throttle is at a fixed
- * lever-relative offset (see {@code THROTTLES} below), written in lock-step.
+ * <p>Primary anchor: the leftmost throttle lever (face=floor, facing=NORTH). Layout
+ * data in {@link GalleonNbtSpec}; the right throttle is at a fixed lever-relative
+ * offset (see {@code THROTTLES} below), written in lock-step.
  */
 public final class GalleonKind implements AirshipKind {
 
@@ -42,7 +44,8 @@ public final class GalleonKind implements AirshipKind {
                 new BroadsideCombat.MountSide(BroadsideCombat.Side.RIGHT)));
     }
 
-    @Override public String name() { return "galleon"; }
+    @Override public String name() { return GalleonNbtSpec.INSTANCE.shipId(); }
+    @Override public GalleonNbtSpec nbtSpec() { return GalleonNbtSpec.INSTANCE; }
 
     /** Galleon climbs ~100 blocks above its spawn altitude before exiting LIFTOFF —
      *  it has much more lift than airship_small, so the 25-block default exits
@@ -58,7 +61,8 @@ public final class GalleonKind implements AirshipKind {
     //   engines (4,5,8),(7,5,8); right throttle (7,8,13); clutches at (4,6,9),(7,6,9);
     //   port cannons x=3, starboard x=8, z=8/11/16/19 at y=1.
     // Left throttle is +X, -Y of the anchor — unambiguously the LEFT of the pair.
-    private static final BlockPos ANCHOR_TO_LEVER = new BlockPos(+1, -1, 0);
+    // NBT-frame deltas. Propeller/anchor data lives in GalleonNbtSpec.
+    private static final BlockPos ANCHOR_TO_LEVER = arr(GalleonNbtSpec.INSTANCE.anchorToLever());
     private static final List<BlockPos> ENGINES   = List.of(
             new BlockPos(0, -3, -5),
             new BlockPos(+3, -3, -5));
@@ -95,4 +99,23 @@ public final class GalleonKind implements AirshipKind {
     }
 
     @Override public CombatBehavior combat() { return combat; }
+
+    @Override
+    public ShipControls makeControls(Airship airship,
+                                     BlockPos slLeftClutchLever,
+                                     BlockPos slRightClutchLever,
+                                     BlockPos slPrimaryAnchor,
+                                     Rotation rotation) {
+        GalleonNbtSpec spec = GalleonNbtSpec.INSTANCE;
+        return new TankSteerControls(
+                slLeftClutchLever, slRightClutchLever,
+                rotateOffsets(spec.leftPropellersLeverRel(), slPrimaryAnchor, rotation),
+                rotateOffsets(spec.rightPropellersLeverRel(), slPrimaryAnchor, rotation),
+                spec.nbtReversedL(), spec.nbtReversedR());
+    }
+
+    private static BlockPos arr(int[] a) { return new BlockPos(a[0], a[1], a[2]); }
+    private static List<BlockPos> rotateOffsets(int[][] deltas, BlockPos base, Rotation r) {
+        return java.util.Arrays.stream(deltas).map(d -> base.offset(arr(d).rotate(r))).toList();
+    }
 }

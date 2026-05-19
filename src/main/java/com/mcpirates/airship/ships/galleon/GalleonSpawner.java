@@ -30,10 +30,6 @@ public final class GalleonSpawner {
     private static final int GALLEON_SIZE_X = 12;
     private static final int GALLEON_SIZE_Z = 28;
 
-    /** Read by {@code FurledBountyItem} — every Nth unfurl flips
-     *  {@link GalleonUnlockState} so worldgen starts placing galleons. */
-    public static final int BOSS_INTERVAL = 5;
-
     /** Worldgen reads pad jigsaw Y; this only applies to the dev command. */
     private static final int ALTITUDE_ABOVE_GROUND = 35;
 

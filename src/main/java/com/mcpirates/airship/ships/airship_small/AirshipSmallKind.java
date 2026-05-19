@@ -1,8 +1,10 @@
 package com.mcpirates.airship.ships.airship_small;
 
+import com.mcpirates.airship.Airship;
+import com.mcpirates.airship.common.TankSteerControls;
 import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.airship.interfaces.Layout;
-import com.mcpirates.airship.ships.AnchorNbtPositions;
+import com.mcpirates.airship.interfaces.ShipControls;
 import com.mcpirates.airship.interfaces.CombatBehavior;
 import com.mcpirates.pirates.GroundCombatModule;
 import net.minecraft.core.BlockPos;
@@ -16,7 +18,7 @@ import java.util.Optional;
  * one Create analog lever burner, two propeller clutches.
  *
  * <p>All deltas are taken relative to the analog lever (face=ceiling, facing=EAST),
- * which is the trigger anchor. Absolute anchor coords in {@link AnchorNbtPositions}.
+ * which is the trigger anchor. Layout data in {@link AirshipSmallNbtSpec}.
  */
 public final class AirshipSmallKind implements AirshipKind {
 
@@ -26,10 +28,12 @@ public final class AirshipSmallKind implements AirshipKind {
 
     private AirshipSmallKind() {}
 
-    @Override public String name() { return "airship_small"; }
+    @Override public String name() { return AirshipSmallNbtSpec.INSTANCE.shipId(); }
+    @Override public AirshipSmallNbtSpec nbtSpec() { return AirshipSmallNbtSpec.INSTANCE; }
 
-    // NBT-frame deltas — private impl detail. Lever sits one block NBT-south of the anchor.
-    private static final BlockPos ANCHOR_TO_LEVER = new BlockPos(0, 0, +1);
+    // NBT-frame deltas. Propeller/anchor data lives in AirshipSmallNbtSpec (source of truth
+    // for the nbtcheck JUnit tests). Other deltas stay private here.
+    private static final BlockPos ANCHOR_TO_LEVER = arr(AirshipSmallNbtSpec.INSTANCE.anchorToLever());
     private static final BlockPos ENGINE          = new BlockPos(0, -1, 0);
     private static final BlockPos THROTTLE        = BlockPos.ZERO;
     private static final BlockPos LEFT_CLUTCH     = new BlockPos(-2, -1, 2);
@@ -64,6 +68,27 @@ public final class AirshipSmallKind implements AirshipKind {
                 List.of(leverRef.offset(CANNON_MOUNT.rotate(r))),
                 leverRef.offset(GLUE_MIN.rotate(r)),
                 leverRef.offset(GLUE_MAX.rotate(r)));
+    }
+
+    @Override
+    public ShipControls makeControls(Airship airship,
+                                     BlockPos slLeftClutchLever,
+                                     BlockPos slRightClutchLever,
+                                     BlockPos slPrimaryAnchor,
+                                     Rotation rotation) {
+        // slPrimaryAnchor is the LEVER's SL position (see AirshipLiftoffTrigger:
+        // slPrimaryAnchorPos = pos.offset(offset), where pos is the world lever).
+        AirshipSmallNbtSpec spec = AirshipSmallNbtSpec.INSTANCE;
+        return new TankSteerControls(
+                slLeftClutchLever, slRightClutchLever,
+                rotateOffsets(spec.leftPropellersLeverRel(), slPrimaryAnchor, rotation),
+                rotateOffsets(spec.rightPropellersLeverRel(), slPrimaryAnchor, rotation),
+                spec.nbtReversedL(), spec.nbtReversedR());
+    }
+
+    private static BlockPos arr(int[] a) { return new BlockPos(a[0], a[1], a[2]); }
+    private static List<BlockPos> rotateOffsets(int[][] deltas, BlockPos base, Rotation r) {
+        return java.util.Arrays.stream(deltas).map(d -> base.offset(arr(d).rotate(r))).toList();
     }
 
     @Override public CombatBehavior combat() { return combat; }

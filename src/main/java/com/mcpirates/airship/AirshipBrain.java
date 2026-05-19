@@ -136,22 +136,30 @@ public final class AirshipBrain {
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
-        long now = event.getServer().getTickCount();
+        // Use per-level getGameTime (persists across server restarts). Every other
+        // tick source in the brain (register, transitionState, navigateTo, persist)
+        // uses getGameTime, and a saved world has gameTime != getTickCount on boot —
+        // mixing the two makes ticksInState negative and breaks the LIFTOFF gate.
         for (Airship a : SHIPS) {
-            if (!tickShip(a, now)) {
+            if (!tickShip(a, a.parentLevel.getGameTime())) {
                 SHIPS.remove(a);
             }
         }
     }
 
-    /** Flush per-ship NBT so per-tick telemetry (lastGoal/steadyTicks/log buckets) isn't
-     *  lost on clean shutdown. Transitions already persist; this picks up the gap. */
+    /** Flush per-ship NBT so per-tick telemetry isn't lost on clean shutdown, then
+     *  clear the JVM-static list. Without the clear, single-player world quits leave
+     *  zombie Airships pointing at the destroyed ServerLevel; opening any later world
+     *  (same JVM) starts with stale ships that {@link #unregisterAll}'s level-equality
+     *  filter can't purge. {@link #onServerStarted} re-registers from NBT. */
     @SubscribeEvent
     public static void onServerStopping(ServerStoppingEvent event) {
         for (Airship a : SHIPS) {
             if (a.state == State.MOORED) continue;  // dormant — nothing transient worth saving
             a.persist();
         }
+        SHIPS.clear();
+        PENDING_REHYDRATE.clear();
     }
 
     // ───────────────────────────── Rehydration ─────────────────────────────

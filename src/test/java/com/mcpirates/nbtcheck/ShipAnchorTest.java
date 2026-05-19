@@ -1,6 +1,6 @@
 package com.mcpirates.nbtcheck;
 
-import com.mcpirates.airship.ships.AnchorNbtPositions;
+import com.mcpirates.airship.ships.ShipNbtSpec;
 import com.mcpirates.nbtcheck.StructureBundle.BlockRef;
 import com.mcpirates.nbtcheck.StructureBundle.ParsedStructure;
 import org.junit.jupiter.api.DynamicTest;
@@ -8,7 +8,6 @@ import org.junit.jupiter.api.TestFactory;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -19,13 +18,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Each ship NBT listed in {@link AnchorNbtPositions} must contain exactly one
- * {@code mcpirates:ship_anchor} block at the coordinates the game code names, with a
- * matching {@code kind} block-entity tag, and <strong>no</strong> {@code Properties} on
- * its palette entry (the block must load via its default {@code FACING=NORTH} state so
- * structure-template placement rotates the property into the correct world-frame value;
- * see {@code MCPShipAnchorBlock.NBT_FACING}). Failing here means the source NBT drifted
- * from the kind's anchor-to-lever delta math, or was re-saved with an explicit FACING.
+ * Each ship NBT must contain exactly one {@code mcpirates:ship_anchor} block at the
+ * coordinates the kind's {@link com.mcpirates.airship.ships.ShipNbtSpec#anchorNbtPos()}
+ * names, with a matching {@code kind} block-entity tag, and <strong>no</strong>
+ * {@code Properties} on its palette entry (the block must load via its default
+ * {@code FACING=NORTH} state so structure-template placement rotates the property into
+ * the correct world-frame value; see {@code MCPShipAnchorBlock.NBT_FACING}). Failing
+ * here means the source NBT drifted from the kind's NbtSpec, or the NBT was re-saved
+ * with an explicit FACING.
  */
 class ShipAnchorTest {
 
@@ -37,10 +37,9 @@ class ShipAnchorTest {
     @TestFactory
     Stream<DynamicTest> eachShipNbtHasAnchorAtSpecifiedPosition() {
         List<DynamicTest> tests = new ArrayList<>();
-        for (Map.Entry<String, int[]> entry : AnchorNbtPositions.BY_NAME.entrySet()) {
-            String shipName = entry.getKey();
-            int[] expected = entry.getValue();
-            String shipId = NS + ":" + shipName;
+        for (ShipNbtSpec spec : ShipNbtSpecDiscovery.all()) {
+            int[] expected = spec.anchorNbtPos();
+            String shipId = NS + ":" + spec.shipId();
             tests.add(DynamicTest.dynamicTest(
                     shipId + " anchor @ (" + expected[0] + "," + expected[1] + "," + expected[2] + ")",
                     () -> assertAnchor(shipId, expected)
@@ -83,7 +82,7 @@ class ShipAnchorTest {
         BlockRef anchor = hits.get(0);
         assertArrayEquals(expected, anchor.pos,
                 shipId + " anchor block at NBT (" + anchor.pos[0] + "," + anchor.pos[1] + "," + anchor.pos[2]
-                        + ") but AnchorNbtPositions says (" + expected[0] + "," + expected[1] + "," + expected[2] + ")");
+                        + ") but kind's NbtSpec says (" + expected[0] + "," + expected[1] + "," + expected[2] + ")");
 
         Object kind = anchor.nbt == null ? null : anchor.nbt.get("kind");
         if (!(kind instanceof String ks) || !shipId.endsWith(":" + ks)) {

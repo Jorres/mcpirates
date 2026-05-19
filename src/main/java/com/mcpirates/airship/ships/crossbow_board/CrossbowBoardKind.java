@@ -1,8 +1,10 @@
 package com.mcpirates.airship.ships.crossbow_board;
 
+import com.mcpirates.airship.Airship;
+import com.mcpirates.airship.common.TankSteerControls;
 import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.airship.interfaces.Layout;
-import com.mcpirates.airship.ships.AnchorNbtPositions;
+import com.mcpirates.airship.interfaces.ShipControls;
 import com.mcpirates.airship.interfaces.CombatBehavior;
 import com.mcpirates.airship.common.NoCannonCombat;
 import com.mcpirates.pirates.GroundCombatModule;
@@ -17,8 +19,8 @@ import java.util.Optional;
  * platform with no cannon — currently a flying observation post. Two Create analog
  * levers side-by-side, each gating its own portable engine.
  *
- * <p>Primary anchor: the left lever (face=ceiling, facing=SOUTH). Absolute coords in
- * {@link AnchorNbtPositions}; all in-class deltas are anchor-relative.
+ * <p>Primary anchor: the left lever (face=ceiling, facing=SOUTH). Layout data in
+ * {@link CrossbowBoardNbtSpec}; all in-class deltas are lever-relative.
  *
  * <p>Combat is currently {@link NoCannonCombat} — placeholder until a turret-crossbow
  * block exists.
@@ -31,10 +33,11 @@ public final class CrossbowBoardKind implements AirshipKind {
 
     private CrossbowBoardKind() {}
 
-    @Override public String name() { return "crossbow_board"; }
+    @Override public String name() { return CrossbowBoardNbtSpec.INSTANCE.shipId(); }
+    @Override public CrossbowBoardNbtSpec nbtSpec() { return CrossbowBoardNbtSpec.INSTANCE; }
 
-    // NBT-frame deltas — private impl detail. Lever sits one block NBT-south of the anchor.
-    private static final BlockPos ANCHOR_TO_LEVER = new BlockPos(0, 0, +1);
+    // NBT-frame deltas. Propeller/anchor data lives in CrossbowBoardNbtSpec.
+    private static final BlockPos ANCHOR_TO_LEVER = arr(CrossbowBoardNbtSpec.INSTANCE.anchorToLever());
     private static final List<BlockPos> ENGINES = List.of(
             new BlockPos(-1, -1, -3),
             new BlockPos(+2, -1, -3));
@@ -64,6 +67,25 @@ public final class CrossbowBoardKind implements AirshipKind {
                 List.of(),
                 leverRef.offset(GLUE_MIN.rotate(r)),
                 leverRef.offset(GLUE_MAX.rotate(r)));
+    }
+
+    @Override
+    public ShipControls makeControls(Airship airship,
+                                     BlockPos slLeftClutchLever,
+                                     BlockPos slRightClutchLever,
+                                     BlockPos slPrimaryAnchor,
+                                     Rotation rotation) {
+        CrossbowBoardNbtSpec spec = CrossbowBoardNbtSpec.INSTANCE;
+        return new TankSteerControls(
+                slLeftClutchLever, slRightClutchLever,
+                rotateOffsets(spec.leftPropellersLeverRel(), slPrimaryAnchor, rotation),
+                rotateOffsets(spec.rightPropellersLeverRel(), slPrimaryAnchor, rotation),
+                spec.nbtReversedL(), spec.nbtReversedR());
+    }
+
+    private static BlockPos arr(int[] a) { return new BlockPos(a[0], a[1], a[2]); }
+    private static List<BlockPos> rotateOffsets(int[][] deltas, BlockPos base, Rotation r) {
+        return java.util.Arrays.stream(deltas).map(d -> base.offset(arr(d).rotate(r))).toList();
     }
 
     @Override public CombatBehavior combat() { return combat; }

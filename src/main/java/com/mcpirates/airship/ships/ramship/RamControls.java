@@ -3,11 +3,15 @@ package com.mcpirates.airship.ships.ramship;
 import com.mcpirates.airship.Airship;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.ShipTelemetry;
+import com.mcpirates.airship.common.TurnPolicy;
 import com.mcpirates.airship.hardware.ClutchLevers;
 import com.mcpirates.airship.hardware.Propellers;
 import com.mcpirates.airship.interfaces.ShipControls;
 import dev.eriksonn.aeronautics.content.blocks.propeller.small.BasePropellerBlock;
 import dev.eriksonn.aeronautics.content.blocks.propeller.small.BasePropellerBlockEntity;
+import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
+import dev.ryanhcode.sable.companion.math.BoundingBox3dc;
+import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -23,42 +27,37 @@ import org.joml.Vector3d;
  * NBT defaults at construction and writes deltas. Writing absolute REVERSED clobbers
  * the intentional orientation (ship moves south while facing north).
  *
- * <p><b>Three regimes:</b>
+ * <p>Regime selection (ALIGNED / TANK_STEER / COUNTER_ROTATE) comes from the shared
+ * {@link TurnPolicy}; this class only maps each regime to the three-propeller hardware
+ * (forward prop, two outboards) and layers the retreat phase on top:
  * <ul>
  *   <li><b>Retreat</b> (post-collision): all three propellers flipped off NBT default,
- *       all three clutches engaged — straight reverse. Triggered by a sudden drop in
- *       forward speed (collision impulse). Heading error is ignored for the retreat
- *       duration; ramship coasts backward, then the normal regimes resume.</li>
- *   <li><b>Aligned</b> ({@code |rawErr| < HEADING_TOLERANCE_DEG}): both outboards at
- *       NBT default, forward clutch on — straight-line rush.</li>
- *   <li><b>Misaligned</b>: counter-rotate. Side to flip is chosen from
- *       {@code effectiveErr = rawErr − K·yawRate} so spinning past target engages the
- *       opposite reverse pattern and brakes the spin. Forward clutch off.</li>
+ *       all three clutches engaged — straight reverse. Heading error is ignored for the
+ *       retreat duration; ramship coasts backward, then normal regimes resume.</li>
+ *   <li><b>ALIGNED</b>: all three at NBT default, all clutches engaged.</li>
+ *   <li><b>TANK_STEER</b>: outboards at NBT default; outside outboard engaged, inside
+ *       outboard disengaged. Forward prop stays on — continuous forward thrust + yaw.</li>
+ *   <li><b>COUNTER_ROTATE</b>: outboards anti-parallel (one flipped REVERSED) for pure
+ *       pivot. Forward clutch off so axial thrust doesn't fight the pivot.</li>
  * </ul>
- *
- * <p>The aligned-vs-misaligned check uses <em>raw</em> error so we don't commit forward
- * thrust on a projection while the hull still points wrong.
  */
 public final class RamControls implements ShipControls {
 
-    /** PD horizon for {@code effectiveErr = rawErr − K·yawRate}. Sized to the ~45°
-     *  coast at steady-state yaw rate (0.64°/tick × 70 ≈ 45°) so the controller starts
-     *  braking before the hull overshoots the aligned window. */
-    public static final double YAW_LOOKAHEAD_TICKS = 70.0;
+    // Steering regime selection (aligned / tank-steer / counter-rotate) lives in the
+    // shared TurnPolicy class — every ship picks the same regime for the same error.
 
-    /** Retreat phase duration. ~6s at 20 TPS — enough to clear the victim hull at
-     *  reverse-cruise (~0.3 b/tick × 120 ≈ 36 blocks) while staying well inside
-     *  {@code DISENGAGE_RANGE} (100 blocks) so the brain doesn't drop PURSUE mid-retreat. */
+    /** Retreat phase duration. ~12s at 20 TPS — long enough for visible separation from
+     *  the victim hull while still inside {@code DISENGAGE_RANGE} (100 blocks). */
     private static final int RETREAT_TICKS = 120;
-    /** Pre-collision forward speed gate. Below this we weren't really charging, so a
-     *  drop doesn't mean we hit anything (e.g. ship just woke up and is accelerating). */
-    private static final double COLLISION_FWD_SPEED_MIN = 0.15;
-    /** Forward-speed delta between consecutive applySteering calls that counts as an
-     *  impact impulse. Sized > the natural decel from drag at the 3-tick decision cadence. */
-    private static final double COLLISION_FWD_DROP_THRESHOLD = 0.20;
-    /** Beyond this gap (e.g. ship spent time in HOVER/LIFTOFF), the previous sample is
-     *  too old to compare against. Bounds against false retreats on long idle→PURSUE. */
-    private static final long STALE_SPEED_GAP_TICKS = 60;
+    /** Per-sample (3-tick) decrease in center-to-center distance that counts as "still
+     *  closing". Below this the ramship is stuck against the contact instead of penetrating.
+     *  0.3 b/3-tick = 0.1 b/tick — well under cruise (0.17) but above physics jitter. */
+    private static final double DIST_DECREASE_MIN = 0.3;
+    /** Consecutive samples of bbox overlap with stalled progress before retreat arms.
+     *  10 × 3-tick = 30 ticks ≈ 1.5s — long enough to confirm sustained contact and
+     *  let a glancing pass clear before firing, while still well under the retreat
+     *  duration so the ramship doesn't get stuck in a grinding stalemate. */
+    private static final int STUCK_SAMPLES_THRESHOLD = 10;
 
     private final BlockPos slLeftClutchLever;
     private final BlockPos slRightClutchLever;
@@ -75,8 +74,8 @@ public final class RamControls implements ShipControls {
     private final boolean nbtReversedF;
 
     private long retreatUntilTick = Long.MIN_VALUE;
-    private long lastApplySteeringTick = Long.MIN_VALUE;
-    private double lastForwardSpeed = Double.NaN;
+    private double lastDistToContact = Double.NaN;
+    private int stuckSamples = 0;
 
     public RamControls(BlockPos slLeftClutchLever,
                        BlockPos slRightClutchLever,
@@ -104,24 +103,7 @@ public final class RamControls implements ShipControls {
         if (subLevel == null) return;
 
         long now = a.parentLevel.getGameTime();
-        double fwdSpeed = forwardSpeed(a);
-
-        // Drop stale sample so long HOVER/LIFTOFF idle doesn't trigger a fake retreat
-        // on the first PURSUE re-entry. The arrival-radius collision case has a much
-        // shorter applySteering gap and stays under this bound.
-        if (now - lastApplySteeringTick > STALE_SPEED_GAP_TICKS) {
-            lastForwardSpeed = Double.NaN;
-        }
-        // Collision = was charging, suddenly isn't. Signed forward speed so a still-retreating
-        // (negative) ship can't re-arm: needs to accelerate forward past the gate again.
-        if (now >= retreatUntilTick
-                && !Double.isNaN(lastForwardSpeed)
-                && lastForwardSpeed > COLLISION_FWD_SPEED_MIN
-                && (lastForwardSpeed - fwdSpeed) > COLLISION_FWD_DROP_THRESHOLD) {
-            retreatUntilTick = now + RETREAT_TICKS;
-        }
-        lastForwardSpeed = fwdSpeed;
-        lastApplySteeringTick = now;
+        sampleAndDetectCollision(a, now);
 
         boolean leftReversed, rightReversed, forwardReversed;
         boolean leftEngaged, rightEngaged, forwardEngaged;
@@ -136,30 +118,42 @@ public final class RamControls implements ShipControls {
             forwardEngaged = true;
         } else {
             double yawRate = ShipTelemetry.angularVelocity(a).y;
-            double absRawErrDeg = Math.abs(Math.toDegrees(headingErrRad));
-            double effectiveErrRad = headingErrRad - YAW_LOOKAHEAD_TICKS * yawRate;
+            TurnPolicy.Decision d = TurnPolicy.decide(headingErrRad, yawRate);
             forwardReversed = nbtReversedF;
-
-            if (absRawErrDeg < AirshipBrain.HEADING_TOLERANCE_DEG) {
-                // Aligned: both outboards at NBT default (push forward), forward clutch on.
-                leftReversed = nbtReversedL;
-                rightReversed = nbtReversedR;
-                leftEngaged = true;
-                rightEngaged = true;
-                forwardEngaged = true;
-            } else {
-                // Counter-rotate: flip one side off NBT default. Yaw convention: positive = CW.
-                // CW needs starboard reversed; CCW needs port reversed.
-                if (effectiveErrRad > 0) {
+            switch (d.regime()) {
+                case ALIGNED -> {
+                    // All three forward at NBT default, all clutches engaged.
                     leftReversed = nbtReversedL;
-                    rightReversed = !nbtReversedR;
-                } else {
-                    leftReversed = !nbtReversedL;
                     rightReversed = nbtReversedR;
+                    leftEngaged = true;
+                    rightEngaged = true;
+                    forwardEngaged = true;
                 }
-                leftEngaged = true;
-                rightEngaged = true;
-                forwardEngaged = false;
+                case TANK_STEER -> {
+                    // Outside outboard pushes forward, inside outboard disengages, forward
+                    // prop stays on. yawDir = +1 (CW): keep LEFT engaged, drop RIGHT.
+                    leftReversed = nbtReversedL;
+                    rightReversed = nbtReversedR;
+                    leftEngaged = d.yawDir() > 0;
+                    rightEngaged = d.yawDir() < 0;
+                    forwardEngaged = true;
+                }
+                case COUNTER_ROTATE -> {
+                    // Outboards anti-parallel for pure pivot; forward prop off so its
+                    // axial thrust doesn't fight the pivot direction.
+                    // yawDir = +1 (CW): LEFT forward, RIGHT reversed.
+                    if (d.yawDir() > 0) {
+                        leftReversed = nbtReversedL;
+                        rightReversed = !nbtReversedR;
+                    } else {
+                        leftReversed = !nbtReversedL;
+                        rightReversed = nbtReversedR;
+                    }
+                    leftEngaged = true;
+                    rightEngaged = true;
+                    forwardEngaged = false;
+                }
+                default -> throw new IllegalStateException("unreachable regime: " + d.regime());
             }
         }
 
@@ -170,6 +164,66 @@ public final class RamControls implements ShipControls {
         Propellers.setReversed(subLevel, slLeftPropeller, leftReversed);
         Propellers.setReversed(subLevel, slRightPropeller, rightReversed);
         Propellers.setReversed(subLevel, slForwardPropeller, forwardReversed);
+    }
+
+    /** Arm retreat when our bbox overlaps another SubLevel AND distance-to-it stops
+     *  meaningfully decreasing — that's the "stuck against the victim" pattern, where
+     *  velocity-drop wouldn't fire because the deceleration is too gradual. Runs from both
+     *  applySteering and release so the arrival-radius window stays sampled. */
+    private void sampleAndDetectCollision(Airship a, long now) {
+        if (a.state != AirshipBrain.State.PURSUE || now < retreatUntilTick) {
+            stuckSamples = 0;
+            lastDistToContact = Double.NaN;
+            return;
+        }
+        SubLevel contact = findOverlappingSubLevel(a);
+        if (contact == null) {
+            stuckSamples = 0;
+            lastDistToContact = Double.NaN;
+            return;
+        }
+        double dist = centerDistance(a.subLevel, contact);
+        if (Double.isNaN(lastDistToContact)
+                || dist < lastDistToContact - DIST_DECREASE_MIN) {
+            // Meaningful closing: we're still penetrating into the contact.
+            lastDistToContact = dist;
+            stuckSamples = 0;
+        } else {
+            // Bbox overlap with stalled progress = grinding against the hull.
+            stuckSamples++;
+            if (stuckSamples >= STUCK_SAMPLES_THRESHOLD) {
+                retreatUntilTick = now + RETREAT_TICKS;
+                com.mcpirates.MCPirates.LOGGER.info(
+                        "ramship {} retreat ARMED at t={}: stuck for {} samples in bbox of {} at dist={}",
+                        a.subLevel.getUniqueId(), now, stuckSamples,
+                        contact.getUniqueId(), String.format("%.2f", dist));
+                stuckSamples = 0;
+                lastDistToContact = Double.NaN;
+            }
+        }
+    }
+
+    /** First other SubLevel whose bbox intersects ours, or null. */
+    private static SubLevel findOverlappingSubLevel(Airship a) {
+        SubLevelContainer container = SubLevelContainer.getContainer(a.parentLevel);
+        if (container == null) return null;
+        BoundingBox3dc myBox = a.subLevel.boundingBox();
+        if (myBox == null) return null;
+        for (SubLevel other : container.getAllSubLevels()) {
+            if (other == a.subLevel || other.isRemoved()) continue;
+            BoundingBox3dc theirBox = other.boundingBox();
+            if (theirBox != null && myBox.intersects(theirBox)) return other;
+        }
+        return null;
+    }
+
+    /** Horizontal center-to-center distance between two SubLevels. */
+    private static double centerDistance(SubLevel x, SubLevel y) {
+        Vector3d xPos = x.logicalPose().position();
+        Vector3d yPos = y.logicalPose().position();
+        double dx = xPos.x - yPos.x;
+        double dz = xPos.z - yPos.z;
+        return Math.sqrt(dx * dx + dz * dz);
     }
 
     /** Signed projection of velocity onto the ship's world-forward axis (blocks/tick).
@@ -188,7 +242,9 @@ public final class RamControls implements ShipControls {
         long now = a.parentLevel.getGameTime();
         String phase = now < retreatUntilTick
                 ? String.format("retreat=%d", retreatUntilTick - now)
-                : String.format("fwdSpeed=%.3f", lastForwardSpeed);
+                : String.format("fwd=%.3f stuck=%d/%d distToContact=%s",
+                        forwardSpeed(a), stuckSamples, STUCK_SAMPLES_THRESHOLD,
+                        Double.isNaN(lastDistToContact) ? "—" : String.format("%.2f", lastDistToContact));
         return String.format(
                 "%s propL=%s propR=%s propF=%s clutchL=%s clutchR=%s clutchF=%s nbtRev=(L=%s,R=%s,F=%s)",
                 phase,
@@ -225,6 +281,30 @@ public final class RamControls implements ShipControls {
     public void release(Airship a) {
         Level subLevel = a.subLevel.getLevel();
         if (subLevel == null) return;
+        long now = a.parentLevel.getGameTime();
+        // Sample inside arrival-radius release too — that's exactly when contact happens
+        // and applySteering isn't being called.
+        if (a.state == AirshipBrain.State.PURSUE) {
+            sampleAndDetectCollision(a, now);
+        }
+        // Honor retreat through arrival-radius release windows — a vanilla release here
+        // would strip the reverse-thrust pattern mid-collision. Any non-PURSUE state means
+        // the chase context is gone, so retreat drops.
+        if (a.state == AirshipBrain.State.PURSUE && now < retreatUntilTick) {
+            ClutchLevers.setPowered(subLevel, slLeftClutchLever, false);
+            ClutchLevers.setPowered(subLevel, slRightClutchLever, false);
+            ClutchLevers.setPowered(subLevel, slForwardClutchLever, false);
+            Propellers.setReversed(subLevel, slLeftPropeller, !nbtReversedL);
+            Propellers.setReversed(subLevel, slRightPropeller, !nbtReversedR);
+            Propellers.setReversed(subLevel, slForwardPropeller, !nbtReversedF);
+            return;
+        }
+        if (retreatUntilTick != Long.MIN_VALUE) {
+            com.mcpirates.MCPirates.LOGGER.info(
+                    "ramship {} retreat DROPPED at t={} (state={})",
+                    a.subLevel.getUniqueId(), now, a.state);
+            retreatUntilTick = Long.MIN_VALUE;
+        }
         ClutchLevers.setPowered(subLevel, slLeftClutchLever, /*powered=disengaged=*/true);
         ClutchLevers.setPowered(subLevel, slRightClutchLever, true);
         ClutchLevers.setPowered(subLevel, slForwardClutchLever, true);

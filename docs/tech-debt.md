@@ -222,3 +222,116 @@ one brain decision and don't need to survive restart either. Net effect:
 (identity, state machine, crew, liftoff progress, balloon capacity), which
 fits a `record AirshipPersistentState` + Mojang `Codec` cleanly if we want
 schema-from-types later.
+
+
+---
+
+## `RamControls` duplicates `TankSteerControls` instead of composing it
+
+**Why it's wrong.** Both controllers now consume `TurnPolicy.decide()` and translate
+its `Regime` to clutch + prop-REVERSED writes. The L/R outboard handling in
+`RamControls` is mechanically identical to `TankSteerControls` — the only
+ramship-unique pieces are (a) the third forward propeller (engaged in ALIGNED +
+TANK_STEER, disengaged in COUNTER_ROTATE, flipped during RETREAT), (b) the
+retreat phase wrapper, and (c) bbox+stuck collision detection. The L/R outboard
+code is copy-paste.
+
+**Where it bites.** Any future change to the regime → hardware mapping
+(adding a fourth regime, changing how TANK_STEER picks sides, etc.) has to be
+edited in two places. Already nearly tripped on it twice — once when adding
+counter-rotate to `TankSteerControls`, once when wiring up `TurnPolicy`.
+
+**Fix shape.** Have `RamControls` *compose* a `TankSteerControls` for the
+outboards. Its `applySteering` either delegates straight through (ALIGNED /
+TANK_STEER / COUNTER_ROTATE during PURSUE), or overrides with the retreat
+pattern when `now < retreatUntilTick`. Forward propeller is handled in a
+parallel ramship-only block. `release()` and `isActive()` similarly delegate
+or supplement. Tradeoff: retreat needs to write outboard REVERSED state
+directly, which means breaking the TankSteer encapsulation a little (either
+expose `slPropsL/slPropsR/nbtReversedL/nbtReversedR` package-private, or pass
+a "force pattern" override into TankSteer). Pick whichever is uglier when we
+do the refactor.
+
+
+---
+
+## Hand-rolled SubLevel velocity tracking in `RamMovement`
+
+**Why it's wrong.** `RamMovement.computeGoal` should be able to ask Sable
+"what's the target SubLevel's current linear velocity?" via
+`Sable.HELPER.getVelocity(level, subLevel, pos, dest)`. That API exists, has
+the right signature, and the `ServerSubLevel` branch reads
+`RigidBodyHandle.getLinearVelocity()` from the physics handle. **It returns
+zero every call** for hot-air-balloon SubLevels, even when the ship is clearly
+moving (positions change tick to tick, our hand-rolled position-delta confirms
+non-zero velocity).
+
+We worked around it by tracking position deltas ourselves: `LAST_TARGET_SAMPLE`
+map in `RamMovement` keyed by ramship SubLevel UUID, stores
+`(targetId, tx, tz, tick)`, computes `vx = (tx - prev.tx) / dt`. This is the
+input the intercept solver actually uses; Sable's reading is kept only in the
+diagnostic log (`Vsable=...`) for comparison — every line shows it stuck at 0.
+
+**Why it bites.** Two parallel velocity sources for SubLevels in our codebase.
+The official one (Sable's API) silently returns wrong data; our fallback works
+but means every consumer that wants target velocity has to re-implement the
+position-delta tracking. Any future kind that needs target velocity will hit
+the same trap and either silently underlead (if it trusts Sable's zero) or
+copy our hand-rolled code (duplication).
+
+**Investigation (open).** Initial "kinematic teleport" hypothesis was *wrong* —
+verified by reading the Sable + Aeronautics sources:
+- `ServerBalloon.applyForces` accumulates force × dt into a `ForceTotal`, then
+  Sable's tick loop calls `handle.applyLinearAndAngularImpulse` → pipeline →
+  `Rapier3D.applyForceAndTorque` → `rb.apply_impulse(...)`. So it goes through
+  Rapier's impulse machinery, not a pose-set bypass.
+- SubLevels are created as *dynamic* (not kinematic) rigid bodies
+  (`RigidBodyBuilder::dynamic()` in `rapier/lib.rs::createSubLevel`).
+- `pipeline.readPose` pulls the post-step pose from Rapier — so positions are
+  genuinely Rapier-integrated, not externally teleported.
+
+If impulses are applied AND integration runs, `linvel()` should reflect the
+integrated velocity. Yet our diagnostic shows `Vsable=(0.000,0.000)` every
+read. **Real `linvel` IS non-zero** in some contexts — the existing
+`mcp__minecraft__airship_brain_state` bridge calls the same
+`RigidBodyHandle.getLinearVelocity()` and returned `[-0.002, -0.074, -0.011]`
+m/s for ships in LIFTOFF, etc. So the API itself works.
+
+**Remaining theories to bisect:**
+1. **Sleep thresholds.** Rapier bodies sleep when normalized linvel stays under
+   `0.15` for some ticks. Sleeping bodies have `linvel = 0`. For steady-state
+   balloons hovering near equilibrium altitude, lift = gravity, *net* impulses
+   per step are tiny — net linvel may stay below threshold despite the body
+   appearing to drift along east via accumulated tiny impulses. Worth logging
+   `rb.is_sleeping()` alongside `linvel` to confirm.
+2. **`pos` argument interpretation.** Sable's `getVelocity` takes a `pos` it
+   transforms via `pose.transformPosition(pos, dest).sub(pose.position())` and
+   names the result `localPos`. The transform direction (local→world vs
+   world→local) is ambiguous from the API alone. We pass `targetShip.logicalPose().position()`
+   which is *world* CoM — if the helper expects *local* coords, our caller is
+   buggy and the math produces near-zero by coincidence.
+3. **Stale-read timing.** Maybe `getLinearVelocity` is called between physics
+   substeps when the integrator hasn't yet committed the impulse to `linvel`.
+   Less likely (would also affect the brain-state bridge) but easy to rule out
+   by timestamping.
+
+**Next concrete step.** Add a one-shot debug command (or a transient log line
+in `RamMovement`) that prints, for the *ramship's own* SubLevel:
+- `is_sleeping()` (needs a new Rapier3D JNI export — currently not exposed)
+- `getLinearVelocity` from `RigidBodyHandle`
+- The position-delta we compute
+Run for ~30 ticks during steady cruise. If `is_sleeping()` is true while
+position deltas are non-zero → theory (1) confirmed; fix is to bump activation
+thresholds in `createSubLevel` or call `wake_up` more aggressively from the
+force application path. If sleeping is false and `linvel` is non-zero — our
+caller is wrong (theory 2). Either way, the workaround can be removed and
+Sable's API used directly.
+
+**Fix shape (after diagnosis):**
+- If theory 1: tune `activation_params` for SubLevel rigid bodies, OR set
+  `wake_up=true` unconditionally in `ForceTotal.applyForces` (instead of only
+  when force changed).
+- If theory 2: pass a *local* (CoM-relative) `pos`, or pass `(0,0,0)` to skip
+  the angular contribution entirely when we just want CoM linvel.
+- Either: drop the `LAST_TARGET_SAMPLE` map + position-delta tracking from
+  `RamMovement`; let `Sable.HELPER.getVelocity` be the single source of truth.

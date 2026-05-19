@@ -2,7 +2,6 @@ package com.mcpirates.airship.ships.ramship;
 
 import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.airship.interfaces.Layout;
-import com.mcpirates.airship.ships.AnchorNbtPositions;
 import com.mcpirates.airship.interfaces.CombatBehavior;
 import com.mcpirates.airship.interfaces.MovementBehavior;
 import com.mcpirates.airship.common.NoCannonCombat;
@@ -20,8 +19,8 @@ import java.util.Optional;
  * clutch lever (see {@code FORWARD_CLUTCH} below).
  *
  * <p>Primary anchor: the left Create analog lever (face=ceiling, facing=NORTH).
- * Absolute coords in {@link AnchorNbtPositions}. Ship-forward is NORTH
- * (props face SOUTH, push NORTH).
+ * Layout data (anchor pos, prop deltas, NBT defaults) in {@link RamshipNbtSpec}.
+ * Ship-forward is NORTH (props face SOUTH, push NORTH).
  *
  * <p>Combat: none — the ramship's payload is its hull, not cannons.
  * Movement: {@link RamMovement} (constant-bearing intercept).
@@ -34,7 +33,8 @@ public final class RamshipKind implements AirshipKind {
 
     private RamshipKind() {}
 
-    @Override public String name() { return "ramship"; }
+    @Override public String name() { return RamshipNbtSpec.INSTANCE.shipId(); }
+    @Override public RamshipNbtSpec nbtSpec() { return RamshipNbtSpec.INSTANCE; }
 
     /** Ramming low-altitude targets requires giving up most of the ground-clearance
      *  safety margin — a 30-block floor (the default) would prevent the ramship from
@@ -47,23 +47,19 @@ public final class RamshipKind implements AirshipKind {
     // throttles (left + right), three vanilla clutch levers (port/starboard/forward), three
     // propellers. RamControls flips FORWARD_PROPELLER's REVERSED during the retreat phase
     // (push backward); the forward clutch always gates its drive.
-    private static final BlockPos ANCHOR_TO_LEVER     = new BlockPos(0, 0, +1);
+    // Anchor / prop / NBT-default data lives in RamshipNbtSpec (source of truth for
+    // nbtcheck JUnit tests). Other deltas (engines, throttles, clutches, glue) are
+    // private impl detail and stay here.
+    private static final BlockPos ANCHOR_TO_LEVER     = arr(RamshipNbtSpec.INSTANCE.anchorToLever());
     private static final List<BlockPos> ENGINES      = List.of(new BlockPos(0, -1, +4));
     private static final List<BlockPos> THROTTLES    = List.of(BlockPos.ZERO, new BlockPos(+2, 0, 0));
     private static final BlockPos LEFT_CLUTCH        = new BlockPos(-1, 0, +9);
     private static final BlockPos RIGHT_CLUTCH       = new BlockPos(+3, 0, +9);
     private static final BlockPos FORWARD_CLUTCH     = new BlockPos(+1, -1, +9);
-    private static final BlockPos LEFT_PROPELLER     = new BlockPos(-1, -1, +10);
-    private static final BlockPos RIGHT_PROPELLER    = new BlockPos(+3, -1, +10);
-    private static final BlockPos FORWARD_PROPELLER  = new BlockPos(+1, -2, +12);
     private static final BlockPos GLUE_MIN           = new BlockPos(-3, -3, -9);
     private static final BlockPos GLUE_MAX           = new BlockPos(+5, +6, +12);
 
-    /** ramship.nbt has a single propeller palette entry: {@code reversed=true} on all
-     *  three. Hardcoded so rehydrate after a PURSUE-time mutation still has the truth. */
-    private static final boolean NBT_REVERSED_L = true;
-    private static final boolean NBT_REVERSED_R = true;
-    private static final boolean NBT_REVERSED_F = true;
+    private static BlockPos arr(int[] a) { return new BlockPos(a[0], a[1], a[2]); }
 
     @Override
     public com.mcpirates.airship.interfaces.ShipControls makeControls(
@@ -72,16 +68,17 @@ public final class RamshipKind implements AirshipKind {
             net.minecraft.core.BlockPos slRightClutchLever,
             net.minecraft.core.BlockPos slPrimaryAnchor,
             net.minecraft.world.level.block.Rotation rotation) {
+        RamshipNbtSpec spec = RamshipNbtSpec.INSTANCE;
         return new RamControls(
                 slLeftClutchLever,
                 slRightClutchLever,
                 slPrimaryAnchor.offset(FORWARD_CLUTCH.rotate(rotation)),
-                slPrimaryAnchor.offset(LEFT_PROPELLER.rotate(rotation)),
-                slPrimaryAnchor.offset(RIGHT_PROPELLER.rotate(rotation)),
-                slPrimaryAnchor.offset(FORWARD_PROPELLER.rotate(rotation)),
-                NBT_REVERSED_L,
-                NBT_REVERSED_R,
-                NBT_REVERSED_F);
+                slPrimaryAnchor.offset(arr(spec.leftPropellersLeverRel()[0]).rotate(rotation)),
+                slPrimaryAnchor.offset(arr(spec.rightPropellersLeverRel()[0]).rotate(rotation)),
+                slPrimaryAnchor.offset(arr(spec.forwardPropellerLeverRel()).rotate(rotation)),
+                spec.nbtReversedL(),
+                spec.nbtReversedR(),
+                spec.nbtReversedF());
     }
 
     @Override
