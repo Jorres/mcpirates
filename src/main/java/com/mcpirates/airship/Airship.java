@@ -64,6 +64,11 @@ public final class Airship {
     /** Cannon → cannoneer UUID; mount fires only while bound cannoneer is alive. */
     public Map<BlockPos, UUID> cannoneerByMount;
 
+    /** Powder charges loaded per cannon shot. Drives muzzle velocity (1.0 b/tick each) and
+     *  the ballistic aim solver. Seeded from {@link AirshipKind#defaultMuzzleChargeCount()};
+     *  persisted so a captured ship keeps its tuned value across reloads. */
+    public int muzzleChargeCount;
+
     public AirshipBrain.State state = AirshipBrain.State.LIFTOFF;
     public long stateEnteredTick;
 
@@ -138,8 +143,16 @@ public final class Airship {
         this.slCannonMounts = slCannonMounts;
         this.anchoredEntities = anchoredEntities;
         this.cannoneerByMount = cannoneerByMount;
+        this.muzzleChargeCount = kind.defaultMuzzleChargeCount();
         Direction fwd = rotation.rotate(MCPShipAnchorBlock.NBT_FACING);
         this.shipLocalForward = new Vector3d(fwd.getStepX(), fwd.getStepY(), fwd.getStepZ());
+    }
+
+    /** Muzzle velocity (blocks/tick). One powder charge ≈ 1.0 b/tick in CBC's propellant
+     *  arithmetic. Consumed by the aim solver and matched by {@link #muzzleChargeCount}
+     *  copies of powder_charge in {@code CannonOps.loadIfNeeded}. */
+    public double muzzleVelocity() {
+        return muzzleChargeCount;
     }
 
     /** Empty {@link #anchoredEntities} reads false — that's the defeat signal. */
@@ -224,6 +237,8 @@ public final class Airship {
             cannoneers.add(entry);
         }
         tag.put("cannoneers", cannoneers);
+
+        tag.putInt("muzzleChargeCount", muzzleChargeCount);
         return tag;
     }
 
@@ -259,6 +274,9 @@ public final class Airship {
         a.stateEnteredTick = tag.getLong("stateEnteredTick");
         if (tag.contains("navDestX")) {
             a.navDestination = new Vector3d(tag.getDouble("navDestX"), 0.0, tag.getDouble("navDestZ"));
+        }
+        if (tag.contains("muzzleChargeCount")) {
+            a.muzzleChargeCount = tag.getInt("muzzleChargeCount");
         }
 
         rebuildActuators(a);

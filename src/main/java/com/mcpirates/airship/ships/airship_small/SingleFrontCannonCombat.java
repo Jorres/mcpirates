@@ -3,6 +3,7 @@ package com.mcpirates.airship.ships.airship_small;
 import com.mcpirates.airship.Airship;
 import com.mcpirates.airship.hardware.CannonOps;
 import com.mcpirates.airship.interfaces.CombatBehavior;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.LivingEntity;
 
 /**
@@ -23,7 +24,7 @@ public final class SingleFrontCannonCombat implements CombatBehavior {
     @Override
     public void aim(Airship ship, LivingEntity target) {
         if (ship.slCannonMounts.isEmpty()) return;
-        net.minecraft.core.BlockPos mount = ship.slCannonMounts.get(0);
+        BlockPos mount = ship.slCannonMounts.get(0);
         // Skip aiming when the gunner is dead — cosmetically the barrel freezes at its
         // last aim, signalling "this cannon is out of action".
         if (!ship.isMountManned(mount)) return;
@@ -33,8 +34,10 @@ public final class SingleFrontCannonCombat implements CombatBehavior {
     @Override
     public boolean fire(Airship ship, LivingEntity target) {
         if (ship.slCannonMounts.isEmpty()) return false;
-        net.minecraft.core.BlockPos mount = ship.slCannonMounts.get(0);
+        BlockPos mount = ship.slCannonMounts.get(0);
         if (!ship.isMountManned(mount)) return false;
+        CannonOps.Aim aim = CannonOps.computeAim(ship, mount, target);
+        if (aim.outOfRange()) return false;
         return CannonOps.fireOnce(ship, mount);
     }
 }

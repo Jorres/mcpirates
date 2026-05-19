@@ -3,7 +3,6 @@ package com.mcpirates.airship.interfaces;
 import com.mcpirates.airship.anchor.MCPShipAnchorBlock;
 import com.mcpirates.airship.common.HotAirBalloonLift;
 import com.mcpirates.airship.common.OrbitMovement;
-import com.mcpirates.airship.common.TankSteerControls;
 import com.mcpirates.pirates.GroundCombatModule;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -29,6 +28,12 @@ import java.util.Optional;
 public interface AirshipKind {
 
     String name();
+
+    /** NBT-frame layout declaration — source of truth for prop/anchor positions and the
+     *  NBT-baked REVERSED defaults. Lives in {@code <Ship>NbtSpec.INSTANCE} inside each
+     *  ship folder. nbtcheck tests iterate {@code AirshipKinds.ALL} and pull each kind's
+     *  spec, so adding a new ship needs no central registry edit beyond AirshipKinds.ALL. */
+    com.mcpirates.airship.ships.ShipNbtSpec nbtSpec();
 
     // ───────────── identification ─────────────
 
@@ -56,16 +61,15 @@ public interface AirshipKind {
 
     // ───────────── actuator factories ─────────────
 
-    /** Build steering controls bound to this assembly's already-resolved hardware positions.
-     *  Default: tank-steer on the two clutch levers. Kinds with extra hardware override
-     *  and use {@code slPrimaryAnchor + rotation} to compute their own deltas. */
-    default ShipControls makeControls(com.mcpirates.airship.Airship airship,
-                                      BlockPos slLeftClutchLever,
-                                      BlockPos slRightClutchLever,
-                                      BlockPos slPrimaryAnchor,
-                                      Rotation rotation) {
-        return new TankSteerControls(slLeftClutchLever, slRightClutchLever);
-    }
+    /** Build steering controls bound to this assembly's resolved hardware positions.
+     *  Kinds construct a {@link TankSteerControls} (or kind-specific subtype) with the
+     *  outboard prop positions + NBT-default REVERSED for each side; positions are
+     *  rotated/offset from {@code slPrimaryAnchor} using the kind's private deltas. */
+    ShipControls makeControls(com.mcpirates.airship.Airship airship,
+                              BlockPos slLeftClutchLever,
+                              BlockPos slRightClutchLever,
+                              BlockPos slPrimaryAnchor,
+                              Rotation rotation);
 
     /** Build lift actuator bound to this assembly's burners + throttle levers.
      *  Default: hot-air balloon lift across every throttle/burner pair. */
@@ -101,4 +105,9 @@ public interface AirshipKind {
      *  {@code maxGroundAhead + this + 2} in non-PURSUE; in PURSUE it lower-bounds the
      *  target-eye + offset. Ramships override low so they can actually connect. */
     default double minAltAboveGround() { return 30.0; }
+
+    /** Powder charges loaded per shot. Sets muzzle velocity at 1.0 blocks/tick per charge.
+     *  Default of 2 = the "+1 over the CBC baseline" boost; per-kind overrides tune
+     *  threat level (ramship leans on its hull, capital ships want range). */
+    default int defaultMuzzleChargeCount() { return 2; }
 }

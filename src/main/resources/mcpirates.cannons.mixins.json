@@ -1,0 +1,11 @@
+{
+  "required": true,
+  "package": "com.mcpirates.cannons.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "mixins": [
+    "AbstractBigCannonProjectileMixin"
+  ],
+  "client": [],
+  "server": []
+}

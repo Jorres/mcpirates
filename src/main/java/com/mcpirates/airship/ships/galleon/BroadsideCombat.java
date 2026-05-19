@@ -92,7 +92,11 @@ public final class BroadsideCombat implements CombatBehavior {
         if (manned.isEmpty()) return false;
         int next = Math.floorMod(ship.combatCursor + 1, manned.size());
         ship.combatCursor = next;
-        boolean fired = CannonOps.fireOnce(ship, manned.get(next));
+        BlockPos firingMount = manned.get(next);
+        // Cursor advances either way so we don't lock onto an unreachable cannon — next
+        // fire tick will try the next slot in the rotation.
+        if (CannonOps.computeAim(ship, firingMount, target).outOfRange()) return false;
+        boolean fired = CannonOps.fireOnce(ship, firingMount);
         if (fired && next == manned.size() - 1) {
             ship.combatNextFireTick = now + SALVO_COOLDOWN_TICKS;
         }

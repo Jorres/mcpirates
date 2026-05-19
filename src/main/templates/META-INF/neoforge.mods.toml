@@ -83,3 +83,8 @@ side = "BOTH"
 # com.mcpirates.gametest.mixin.GameTestServerMixin for the patch + comment.
 [[mixins]]
 config = "mcpirates.mixins.json"
+
+# Mixin: CBC big-cannon block-impact policy — PENETRATE → STOP so a single shot breaks at
+# most one block. See com.mcpirates.cannons.mixin.AbstractBigCannonProjectileMixin.
+[[mixins]]
+config = "mcpirates.cannons.mixins.json"

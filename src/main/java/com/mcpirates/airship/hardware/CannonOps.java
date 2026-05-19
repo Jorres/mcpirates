@@ -2,6 +2,7 @@ package com.mcpirates.airship.hardware;
 
 import com.mcpirates.MCPirates;
 import com.mcpirates.airship.Airship;
+import com.mcpirates.airship.physics.Ballistics;
 import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
 import com.simibubi.create.foundation.blockEntity.behaviour.BehaviourType;
 import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
@@ -9,6 +10,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -46,33 +48,43 @@ public final class CannonOps {
 
     /** Yaw/pitch in DEGREES, ship-local frame. {@code yaw} follows the same
      *  {@code atan2(-x, z)} convention as the original aimCannon helper: NORTH = 180°,
-     *  SOUTH = 0°, EAST = -90°, WEST = +90°. */
-    public record Aim(float yaw, float pitch) {}
+     *  SOUTH = 0°, EAST = -90°, WEST = +90°. {@code outOfRange} flags shots the ballistic
+     *  solver couldn't reach — the angle is still a usable "best-effort" (45° world pitch
+     *  toward target) so barrels track visually; callers suppress fire. */
+    public record Aim(float yaw, float pitch, boolean outOfRange) {}
 
-    /** Compute the (yaw, pitch) a cannon at {@code slMountPos} needs to track
-     *  {@code target}, in ship-local degrees. Pure math, no side effects — kinds that
-     *  need to clamp/filter the aim (e.g. broadsides limited to ±N° from rest) call this,
-     *  mutate, then call {@link #applyAim}. */
+    /** Compute the (yaw, pitch) a cannon at {@code slMountPos} needs to land a solid shot
+     *  on {@code target}, in ship-local degrees. World-frame ballistic solve (gravity is
+     *  world-down) → rotated into ship-local because the mount BE re-applies the SubLevel
+     *  pose at render time. Pure math, no side effects. */
     public static Aim computeAim(Airship ship, BlockPos slMountPos, LivingEntity target) {
-        Vec3 cannonWorldV = ship.subLevel.logicalPose().transformPosition(
+        Vec3 muzzle = ship.subLevel.logicalPose().transformPosition(
                 new Vec3(slMountPos.getX() + 0.5,
                         slMountPos.getY() + 0.5,
                         slMountPos.getZ() + 0.5));
+        double dx = target.getX()    - muzzle.x;
+        double dy = target.getEyeY() - muzzle.y;
+        double dz = target.getZ()    - muzzle.z;
+        double horiz = Math.sqrt(dx * dx + dz * dz);
+
+        double v0 = ship.muzzleVelocity();
+        double worldPitch = Ballistics.solvePitch(horiz, dy, v0);
+        boolean outOfRange = Double.isNaN(worldPitch);
+        if (outOfRange) worldPitch = Math.PI / 4;
+
+        double worldYaw = Math.atan2(-dx, dz);
         Vector3d worldDir = new Vector3d(
-                target.getX() - cannonWorldV.x,
-                target.getEyeY() - cannonWorldV.y,
-                target.getZ() - cannonWorldV.z);
-        // Rotate the world-direction vector INTO the ship's local frame (use inverse of
-        // pose orientation). The cannon-mount BE then re-applies the ship pose at render
-        // time — feeding world-frame yaw/pitch would double-count it.
+                -Math.sin(worldYaw) * Math.cos(worldPitch),
+                 Math.sin(worldPitch),
+                 Math.cos(worldYaw) * Math.cos(worldPitch));
+
+        // Mount BE re-applies ship pose at render time, so we hand it a SubLevel-local dir.
         Vector3d localDir = ship.subLevel.logicalPose().orientation()
                 .transformInverse(worldDir, new Vector3d());
-
-        double horiz = Math.sqrt(localDir.x * localDir.x + localDir.z * localDir.z);
-        float yaw = (float) Math.toDegrees(Math.atan2(-localDir.x, localDir.z));
-        // CBC treats positive pitch as "barrel up" (opposite of vanilla), so no negate.
-        float pitch = (float) Math.toDegrees(Math.atan2(localDir.y, horiz));
-        return new Aim(yaw, pitch);
+        double localHoriz = Math.sqrt(localDir.x * localDir.x + localDir.z * localDir.z);
+        float yaw   = (float) Math.toDegrees(Math.atan2(-localDir.x, localDir.z));
+        float pitch = (float) Math.toDegrees(Math.atan2(localDir.y, localHoriz));
+        return new Aim(yaw, pitch, outOfRange);
     }
 
     /** Write yaw/pitch onto the cannon mount BE. Idempotent at the BE level (CBC won't
@@ -89,17 +101,19 @@ public final class CannonOps {
     }
 
     /** Convenience: aim-and-apply, no clamping. Free-tracking cannons (airship_small) use
-     *  this directly. */
-    public static void aimAt(Airship ship, BlockPos slMountPos, LivingEntity target) {
+     *  this directly. Returns the computed Aim so callers can read {@code outOfRange}
+     *  without re-solving. Returns null if the mount BE isn't loaded. */
+    public static Aim aimAt(Airship ship, BlockPos slMountPos, LivingEntity target) {
         Level subLevelLevel = ship.subLevel.getLevel();
-        if (subLevelLevel == null) return;
+        if (subLevelLevel == null) return null;
         if (!(subLevelLevel.getBlockEntity(slMountPos) instanceof CannonMountBlockEntity mount)) {
-            return;
+            return null;
         }
         Aim a = computeAim(ship, slMountPos, target);
         mount.setYaw(a.yaw());
         mount.setPitch(a.pitch());
         logAim(ship, slMountPos, mount, a.yaw(), a.pitch());
+        return a;
     }
 
     private static void logAim(Airship ship, BlockPos slMountPos,
@@ -128,8 +142,22 @@ public final class CannonOps {
      *  was actually issued. */
     public static boolean fireOnce(Airship ship, BlockPos slMountPos) {
         Level subLevelLevel = ship.subLevel.getLevel();
-        if (subLevelLevel == null) return false;
-        if (!(subLevelLevel.getBlockEntity(slMountPos) instanceof CannonMountBlockEntity mount)) {
+        if (!(subLevelLevel instanceof ServerLevel ssub)) return false;
+        boolean fired = fireRawAt(ssub, ship.parentLevel, slMountPos, ship.muzzleChargeCount);
+        if (fired && !ship.hasFiredOnce) {
+            ship.hasFiredOnce = true;
+            MCPirates.LOGGER.info("ship {} ({}) first fire at mount {}",
+                    ship.subLevel.getUniqueId(), ship.kind.name(), slMountPos);
+        }
+        return fired;
+    }
+
+    /** Level-only entry: find cannon mount at {@code mountPos} in {@code mountLevel}, load
+     *  with {@code powderCount} powder + 1 shot, fire into {@code projectileLevel} (the
+     *  world the projectile flies in — equal to mountLevel for non-SubLevel cannons). */
+    public static boolean fireRawAt(ServerLevel mountLevel, ServerLevel projectileLevel,
+                                     BlockPos mountPos, int powderCount) {
+        if (!(mountLevel.getBlockEntity(mountPos) instanceof CannonMountBlockEntity mount)) {
             return false;
         }
         PitchOrientedContraptionEntity entity = getMountedContraption(mount);
@@ -137,30 +165,28 @@ public final class CannonOps {
                 || !(entity.getContraption() instanceof AbstractMountedCannonContraption cannon)) {
             return false;
         }
-        loadIfNeeded(cannon);
+        loadIfNeeded(cannon, powderCount);
         try {
-            cannon.fireShot(ship.parentLevel, entity);
-            if (!ship.hasFiredOnce) {
-                ship.hasFiredOnce = true;
-                MCPirates.LOGGER.info("ship {} ({}) first fire at mount {}",
-                        ship.subLevel.getUniqueId(), ship.kind.name(), slMountPos);
-            }
+            cannon.fireShot(projectileLevel, entity);
             return true;
         } catch (Throwable th) {
-            MCPirates.LOGGER.error("fireShot threw at {}: {}", slMountPos, th.toString());
+            MCPirates.LOGGER.error("fireShot threw at {}: {}", mountPos, th.toString());
             return false;
         }
     }
 
-    /** Stuff one powder charge and one solid shot into the first two empty cannon
-     *  blocks of {@code cannon}. CBC barrels stay loaded between shots; this only fires
-     *  on the first activation per cannon, after which the barrel holds the loaded state. */
-    private static void loadIfNeeded(AbstractMountedCannonContraption cannon) {
+    /** Stuff {@code powderCount} powder charges then one solid shot into the first empty
+     *  cannon blocks of {@code cannon}. CBC barrels stay loaded between shots; this only
+     *  fires on the first activation per cannon, after which the barrel holds the loaded
+     *  state. If the cannon doesn't have {@code powderCount + 1} free slots the shot won't
+     *  fit — fireShot then becomes a recoil-only blank, which is fine as a soft cap. */
+    private static void loadIfNeeded(AbstractMountedCannonContraption cannon, int powderCount) {
         BlockState powder = blockState(POWDER_CHARGE_ID);
         BlockState shot = blockState(SOLID_SHOT_ID);
         if (powder == null || shot == null) return;
 
         int loaded = 0;
+        int total = powderCount + 1;
         for (BlockEntity be : cannon.presentBlockEntities.values()) {
             if (!(be instanceof SmartBlockEntity sbe)) continue;
             BigCannonBehavior beh = bigCannonBehavior(sbe);
@@ -168,9 +194,9 @@ public final class CannonOps {
             StructureBlockInfo current = beh.block();
             if (current != null && !current.state().isAir()) continue;
 
-            BlockState toLoad = (loaded == 0) ? powder : shot;
+            BlockState toLoad = (loaded < powderCount) ? powder : shot;
             beh.loadBlock(new StructureBlockInfo(BlockPos.ZERO, toLoad, null));
-            if (++loaded >= 2) return;
+            if (++loaded >= total) return;
         }
     }
 
