@@ -51,11 +51,14 @@ public final class RamshipTests {
     /** South offset for the post-collision perpendicular leg. 80 keeps us within the
      *  setup-time force-load region while pulling the victim well off its old line. */
     private static final int VICTIM_PERPENDICULAR_OFFSET = 80;
-    /** Collision detector: previous-tick forward speed gate. Below this the ramship
-     *  wasn't really charging, so a drop doesn't mean it hit anything. */
-    private static final double CHARGING_MIN_FWD_SPEED = 0.15;
-    /** Per-tick drop in forward speed that counts as an impact impulse. */
-    private static final double COLLISION_DROP_THRESHOLD = 0.15;
+    /** Collision detector arms only after we see this much forward speed — confirms the
+     *  ramship is actually charging the victim, not coasting from an earlier state. */
+    private static final double CHARGING_MIN_FWD_SPEED = 0.10;
+    /** Threshold for "ramship is now in its retreat phase" — RamControls drives all three
+     *  propellers in reverse for 120 ticks after detecting impact, so cruise-reverse forward
+     *  speed projects to roughly -0.3 b/tick. -0.05 is comfortably negative without false
+     *  positives from physics jitter or yaw transitions. */
+    private static final double RETREAT_FWD_SPEED = -0.05;
     private static final int TIMEOUT_TICKS = 4500;
 
     private RamshipTests() {}
@@ -65,12 +68,17 @@ public final class RamshipTests {
     public static void ramshipInterceptsMovingTarget(GameTestHelper helper) {
         AtomicReference<Airship> ramshipRef = new AtomicReference<>();
         AtomicReference<Airship> victimRef = new AtomicReference<>();
-        // Rising-edge collision counter shared across both wait phases. lastFwdSpeed
-        // tracks the previous tick's signed forward speed; when it was > CHARGING_MIN
-        // and dropped by > THRESHOLD in one tick, that's an impact. The same gate
-        // (last > CHARGING_MIN) re-arms naturally once the ship recovers to charging.
+        // Collision cycle state machine, shared across both wait phases:
+        //   AWAIT  → ramship.fwd > CHARGING_MIN          → CHARGE
+        //   CHARGE → bbox(ramship) intersects bbox(victim) → flag contact
+        //   CHARGE → ramship.fwd < RETREAT_FWD_SPEED      → if contacted: count++ → AWAIT
+        // A collision is the full triple — charged, made contact, then ended up retreating.
+        // Mirrors what RamControls actually does internally (bbox-overlap detection arms the
+        // retreat phase) so the test moves in lock-step with the production code's invariants.
         int[] collisionCount = {0};
-        double[] lastFwdSpeed = {Double.NaN};
+        boolean[] armed = {false};         // ramship has built up charge speed
+        boolean[] bboxContact = {false};   // SubLevel bbox overlap observed this cycle
+        double[] lastFwdSpeed = {Double.NaN};  // kept for diagnostic logging only
         long[] firstImpactTick = {-1};
         ServerLevel level = helper.getLevel();
 
@@ -215,9 +223,13 @@ public final class RamshipTests {
                 // First collision: ramship forward speed drops sharply (collision impulse).
                 .thenWaitUntil(() ->
                         pollCollision(helper, level, ramshipRef, victimRef,
-                                lastFwdSpeed, collisionCount, 1))
+                                armed, bboxContact, lastFwdSpeed, collisionCount, 1))
                 .thenExecute(() -> {
                     firstImpactTick[0] = level.getGameTime();
+                    // The state machine is in AWAIT after a successful collision-count;
+                    // explicitly reset to be defensive about any partial state.
+                    armed[0] = false;
+                    bboxContact[0] = false;
                     Airship victim = victimRef.get();
                     Vector3d vPos = victim.subLevel.logicalPose().position();
                     double newDestX = vPos.x;
@@ -243,7 +255,7 @@ public final class RamshipTests {
                 // Second collision after retreat + re-engage along the perpendicular leg.
                 .thenWaitUntil(() ->
                         pollCollision(helper, level, ramshipRef, victimRef,
-                                lastFwdSpeed, collisionCount, 2))
+                                armed, bboxContact, lastFwdSpeed, collisionCount, 2))
                 .thenExecute(() -> MCPirates.LOGGER.info(
                         "[ramship-test] SECOND IMPACT at t={} (gap since first={} ticks)",
                         level.getGameTime(), level.getGameTime() - firstImpactTick[0]))
@@ -251,12 +263,19 @@ public final class RamshipTests {
                 .thenSucceed();
     }
 
-    /** Sample ramship forward speed; rising-edge count when it drops past the threshold.
-     *  Fails the wait until {@code targetCount} collisions have been seen. Shared by both
-     *  wait phases — phase 1 waits for count≥1, phase 2 for count≥2. */
+    /** Sample the ramship's cycle and increment the collision count on each completed
+     *  CHARGE → CONTACT → RETREAT triple. Fails the wait until {@code targetCount}
+     *  collisions have been seen. Shared by both wait phases — phase 1 waits for count≥1,
+     *  phase 2 for count≥2.
+     *
+     *  <p>The detection mirrors {@link com.mcpirates.airship.ships.ramship.RamControls}'s
+     *  internal logic: real bbox overlap with the victim SubLevel proves contact, then the
+     *  retreat phase (signed forward speed driven negative by RamControls' all-reverse
+     *  propellers) confirms the controller actually fired its retreat response. */
     private static void pollCollision(GameTestHelper helper, ServerLevel level,
                                       AtomicReference<Airship> ramshipRef,
                                       AtomicReference<Airship> victimRef,
+                                      boolean[] armed, boolean[] bboxContact,
                                       double[] lastFwdSpeed, int[] collisionCount,
                                       int targetCount) {
         Airship ramship = ramshipRef.get();
@@ -265,16 +284,29 @@ public final class RamshipTests {
                 "ship references lost mid-pursuit");
 
         double fwd = forwardSpeed(ramship);
-        if (!Double.isNaN(lastFwdSpeed[0])
-                && lastFwdSpeed[0] > CHARGING_MIN_FWD_SPEED
-                && (lastFwdSpeed[0] - fwd) > COLLISION_DROP_THRESHOLD) {
-            collisionCount[0]++;
-            MCPirates.LOGGER.info(
-                    "[ramship-test] collision #{} at t={}: fwdSpeed {} → {} (drop={})",
-                    collisionCount[0], level.getGameTime(),
-                    String.format("%.3f", lastFwdSpeed[0]),
-                    String.format("%.3f", fwd),
-                    String.format("%.3f", lastFwdSpeed[0] - fwd));
+        boolean overlap = boxesOverlap(ramship, victim);
+
+        if (!armed[0]) {
+            if (fwd > CHARGING_MIN_FWD_SPEED) armed[0] = true;
+        } else {
+            if (overlap) bboxContact[0] = true;
+            if (fwd < RETREAT_FWD_SPEED) {
+                if (bboxContact[0]) {
+                    collisionCount[0]++;
+                    MCPirates.LOGGER.info(
+                            "[ramship-test] collision #{} at t={}: retreat after contact, fwd={}",
+                            collisionCount[0], level.getGameTime(),
+                            String.format("%.3f", fwd));
+                } else {
+                    // Reversed without making contact — e.g. brain disengaged, ship bled
+                    // speed in a turn. Reset and re-arm on the next charge.
+                    MCPirates.LOGGER.info(
+                            "[ramship-test] t={}: retreat without prior contact — disarm",
+                            level.getGameTime());
+                }
+                armed[0] = false;
+                bboxContact[0] = false;
+            }
         }
         lastFwdSpeed[0] = fwd;
 
@@ -284,13 +316,24 @@ public final class RamshipTests {
             Vector3d vPos = victim.subLevel.logicalPose().position();
             String rCtrl = ramship.controls == null ? "—" : ramship.controls.diagnostics(ramship);
             MCPirates.LOGGER.info(String.format(
-                    "[ramship-test] t=%d state=%s ramship c=(%.1f,%.1f,%.1f) victim c=(%.1f,%.1f,%.1f) fwd=%.3f collisions=%d | %s",
+                    "[ramship-test] t=%d state=%s ramship c=(%.1f,%.1f,%.1f) victim c=(%.1f,%.1f,%.1f) fwd=%.3f armed=%s overlap=%s contact=%s collisions=%d | %s",
                     gt, ramship.state.name(),
                     rPos.x, rPos.y, rPos.z, vPos.x, vPos.y, vPos.z,
-                    fwd, collisionCount[0], rCtrl));
+                    fwd, armed[0], overlap, bboxContact[0], collisionCount[0], rCtrl));
         }
         helper.assertTrue(collisionCount[0] >= targetCount,
-                "waiting for collision #" + targetCount + "; have " + collisionCount[0]);
+                "waiting for collision #" + targetCount + "; have " + collisionCount[0]
+                        + " (armed=" + armed[0] + " contact=" + bboxContact[0] + ")");
+    }
+
+    /** True iff the ramship's SubLevel bounding box currently intersects the victim's.
+     *  This is the exact same predicate RamControls uses internally to arm retreat — when
+     *  it goes true, RamControls is sampling for stalled progress; when followed by a
+     *  retreat phase here, that's the production code's full response to a real collision. */
+    private static boolean boxesOverlap(Airship ramship, Airship victim) {
+        BoundingBox3dc r = ramship.subLevel.boundingBox();
+        BoundingBox3dc v = victim.subLevel.boundingBox();
+        return r != null && v != null && r.intersects(v);
     }
 
     /** Signed velocity projection onto the ship's world-forward axis (blocks/tick).
