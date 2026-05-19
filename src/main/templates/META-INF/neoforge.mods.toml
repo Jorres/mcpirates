@@ -75,16 +75,12 @@ versionRange = "[${patchouli_mod_version},)"
 ordering = "AFTER"
 side = "BOTH"
 
-# Mixin: pin gametest arena positions at world origin. Without this the vanilla
-# MC GameTestServer randomises test positions across a 30-million-block range,
-# and rapier (Sable's f32-precision physics engine) can't integrate sub-block
-# velocity changes at those world coordinates — so airships placed in tests
-# never visibly rise even with totalLift > mass*gravity. See
-# com.mcpirates.gametest.mixin.GameTestServerMixin for the patch + comment.
-[[mixins]]
-config = "mcpirates.mixins.json"
-
 # Mixin: CBC big-cannon block-impact policy — PENETRATE → STOP so a single shot breaks at
 # most one block. See com.mcpirates.cannons.mixin.AbstractBigCannonProjectileMixin.
 [[mixins]]
 config = "mcpirates.cannons.mixins.json"
+
+# The gametest-only mixin config (mcpirates.mixins.json) is declared by a separate mod id
+# (mcpirates_gametest) whose own neoforge.mods.toml lives in src/gameTest/resources/META-INF/.
+# That second mod only exists on the classpath in dev runs; the production jar excludes it
+# entirely. See build.gradle's `neoForge.mods` block.

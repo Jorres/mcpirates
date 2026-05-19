@@ -49,6 +49,24 @@ configurations {
     }
 }
 
+// Gametest code (@GameTest holders + the gametest-only mixins) lives in src/gameTest/
+// so the published jar carries zero test infrastructure. Dev runs that need /test run —
+// runServer and runGameTestServer — see this source set on their classpath because the
+// mod block below registers it as a second sourceSet on this mod.
+sourceSets {
+    gameTest {
+        java.srcDirs = ['src/gameTest/java']
+        resources.srcDirs = ['src/gameTest/resources']
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+        runtimeClasspath += sourceSets.main.runtimeClasspath + sourceSets.main.output
+    }
+}
+
+configurations {
+    gameTestImplementation.extendsFrom implementation
+    gameTestRuntimeOnly.extendsFrom runtimeOnly
+}
+
 def aeronauticsArtifact = "maven.modrinth:create-aeronautics:YhZLrAFC"
 def extractedAeronauticsJarJarDir = layout.buildDirectory.dir("extracted/aeronautics-jarjar")
 
@@ -75,9 +93,12 @@ neoForge {
         mappingsVersion = parchment_version
     }
 
+    // Without this, moddev only wires Minecraft/NeoForge deps into sourceSets.main.
+    // The gametest source set's @GameTest classes need to compile against Minecraft.
+    addModdingDependenciesTo sourceSets.gameTest
+
     runs {
         configureEach {
-            systemProperty 'neoforge.enabledGameTestNamespaces', mod_id
             ideName = "MCPirates ${it.name.capitalize()}"
         }
 
@@ -96,10 +117,14 @@ neoForge {
             programArguments.addAll '--quickPlayMultiplayer', 'localhost:25565'
         }
 
+        // Headless dedicated server. Enables gametest namespace registration so /test run
+        // works in-game (visual-debugging workflow: runServer + runClient + /test run).
+        // Client runs deliberately don't need this — the client never executes test code.
         server {
             server()
             gameDirectory = project.file('runs/server')
             programArgument '--nogui'
+            systemProperty 'neoforge.enabledGameTestNamespaces', mod_id
         }
 
         // `./gradlew runGameTestServer` — boots a headless dedicated server, executes
@@ -115,6 +140,7 @@ neoForge {
         gameTestServer {
             type = 'gameTestServer'
             gameDirectory = project.file('runs/gametest')
+            systemProperty 'neoforge.enabledGameTestNamespaces', mod_id
             if (project.hasProperty('only')) {
                 jvmArgument "-Dmcpirates.gametest.only=${project.property('only')}"
             }
@@ -124,6 +150,13 @@ neoForge {
     mods {
         "${mod_id}" {
             sourceSet sourceSets.main
+        }
+        // Gametest infrastructure ships as a SEPARATE mod id whose neoforge.mods.toml
+        // lives only in src/gameTest/resources/META-INF/. The production jar (built from
+        // sourceSets.main) never sees this mod or its [[mixins]] entry — no dangling
+        // config reference, no startup warning. Lives at dev time only.
+        "${mod_id}_gametest" {
+            sourceSet sourceSets.gameTest
         }
     }
 }

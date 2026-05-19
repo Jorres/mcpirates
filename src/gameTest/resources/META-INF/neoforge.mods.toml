@@ -1,0 +1,31 @@
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "All Rights Reserved"
+
+# Gametest-only companion mod. Exists at dev time (runServer, runGameTestServer) because
+# the gameTest source set's resources land on the classpath; the production jar is built
+# from sourceSets.main only and therefore never carries this file. Declaring the gametest
+# mixin config here keeps the main jar's mods.toml clean — no dangling [[mixins]]
+# reference, no startup warning.
+
+[[mods]]
+modId = "mcpirates_gametest"
+version = "0.1.0"
+displayName = "MC Pirates Gametest"
+description = '''Dev-only gametest infrastructure for MC Pirates. Not shipped to users.'''
+
+[[dependencies.mcpirates_gametest]]
+modId = "mcpirates"
+type = "required"
+versionRange = "[0,)"
+ordering = "AFTER"
+side = "BOTH"
+
+# Mixin: pin gametest arena positions at world origin. Without this the vanilla
+# MC GameTestServer randomises test positions across a 30-million-block range,
+# and rapier (Sable's f32-precision physics engine) can't integrate sub-block
+# velocity changes at those world coordinates — so airships placed in tests
+# never visibly rise even with totalLift > mass*gravity. See
+# com.mcpirates.gametest.mixin.GameTestServerMixin for the patch + comment.
+[[mixins]]
+config = "mcpirates.mixins.json"
