@@ -48,17 +48,16 @@ public final class Airship {
     public final BlockPos airpadAnchor;
     public final AirshipKind kind;
     /** Worldgen rotation chosen at placement; defines how NBT-frame deltas map. Read by
-     *  MOORED→LIFTOFF promotion to spawn deferred crew with the right glue bbox. */
+     *  rehydration's actuator rebuild to translate NBT deltas into world positions. */
     public final Rotation rotation;
-    /** SL-local position of the primary anchor lever. Phase-C deferred: lives here today
-     *  so the MOORED→LIFTOFF crew-spawn can compute its glue-bbox seat scan. */
+    /** SL-local position of the primary anchor lever. Used by {@link #rebuildActuators}
+     *  on rehydration to re-resolve clutch / throttle / cannon positions in SL frame. */
     public final BlockPos slPrimaryAnchor;
 
     public final List<BlockPos> slCannonMounts;
     /** Derived from {@code rotation.rotate(MCPShipAnchorBlock.NBT_FACING)}. */
     public final Vector3d shipLocalForward;
-    /** Crew the brain re-anchors after chunk reload. Replaced by {@link #installCrew} on
-     *  MOORED→LIFTOFF promotion. */
+    /** Crew the brain re-anchors after chunk reload. */
     public List<AnchoredEntity> anchoredEntities;
 
     /** Cannon → cannoneer UUID; mount fires only while bound cannoneer is alive. */
@@ -164,13 +163,6 @@ public final class Airship {
         return e != null && !e.isRemoved() && e.isAlive();
     }
 
-    /** Replace deck-crew refs after a deferred spawn (MOORED→LIFTOFF promotion). */
-    public void installCrew(List<AnchoredEntity> anchors, Map<BlockPos, UUID> cannoneerByMount) {
-        this.anchoredEntities = anchors;
-        this.cannoneerByMount = cannoneerByMount;
-        persist();
-    }
-
     /** Yaw in {@code [-π, π)}: zero = +Z, positive = CW from above. Opposite of Sable's
      *  right-hand-rule angular velocity; {@link ShipTelemetry#angularVelocity} negates .y to match. */
     public double yawRadians() {
@@ -180,7 +172,7 @@ public final class Airship {
     }
 
     /** Flush full state to {@code userDataTag.mcpirates}. Called on register, every state
-     *  transition, {@link #installCrew}, and ServerStopping. */
+     *  transition, and ServerStopping. */
     public void persist() {
         if (!(subLevel instanceof ServerSubLevel ssl)) return;
         CompoundTag userTag = ssl.getUserDataTag();

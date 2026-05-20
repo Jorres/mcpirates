@@ -5,12 +5,10 @@ import com.mcpirates.airship.interfaces.Layout;
 import com.mcpirates.airship.interfaces.CombatBehavior;
 import com.mcpirates.airship.interfaces.MovementBehavior;
 import com.mcpirates.airship.common.NoCannonCombat;
-import com.mcpirates.pirates.GroundCombatModule;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Rotation;
 
 import java.util.List;
-import java.util.Optional;
 
 /**
  * Ramming attacker (NBT {@code ramship}, hull 9×10×22). Two outboard propellers driven
@@ -100,9 +98,4 @@ public final class RamshipKind implements AirshipKind {
 
     @Override public CombatBehavior combat() { return combat; }
     @Override public MovementBehavior movement() { return RamMovement.INSTANCE; }
-
-    @Override
-    public Optional<GroundCombatModule> groundCombat() {
-        return Optional.of(GroundCombatModule.SHARED);
-    }
 }

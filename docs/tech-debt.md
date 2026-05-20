@@ -22,12 +22,9 @@ the "anchor" we keep keying on is a coordinate that no longer holds the lever
 
 - `MCPDataKeys.CAPTAIN_ANCHOR_NBT_KEY` — the NBT key on every spawned pirate.
   Stamped by `CaptainSpawner.spawnAnchoredPillager` (captain + cannoneers +
-  crossbowmen) and `GroundCombatModule.makeVindicator` (ground captain).
+  crossbowmen).
 - `CaptainDeath.onLivingDeath` reads the stamp to call
   `DefeatedAirships.markDefeated`.
-- `AirshipLiftoffTrigger.maybeSpawnGroundCombat` reads the stamp (as
-  `leverPosLong`) to adopt pre-existing captains after a restart instead of
-  spawning duplicates.
 - `AirshipRehydrator.tryRehydrate` re-reads the lever pos (as `airpad` in the
   SubLevel `userDataTag`) and uses it BOTH for ship identity AND to pull crew
   pillagers back into the brain by matching their `CAPTAIN_ANCHOR_NBT_KEY`
@@ -154,38 +151,8 @@ positions internally — possibly via a plot scan ([related debt entry
 above](#block-position-deltas-resolved-via-assemblyresultoffset-instead-of-plot-scans))
 or via `userDataTag` stamps as the ramship already does. After that,
 `AirshipKind` is left with role + behaviour (`combat()`, `movement()`,
-`orbitRadius()`, `cruiseRise()`, `groundCombat()`) — the small,
-brain-shaped surface it was meant to be.
-
----
-
-## Ground-combat gametests bypass `processNearbyAnchors`' real entry point
-
-**Why it's wrong.** `groundCombatSpawnsForOnFootPlayer` and
-`groundCombatRetreatsToDormantThenAirArrivalLifts` both call
-`AirshipLiftoffTrigger.processNearbyAnchors` directly with a hand-supplied
-`playerOnAirship` flag and player-derived (x, z). The flag was added solely
-so the test could route without constructing a player; the production
-caller is `checkAroundPlayer`, which derives the flag from
-`Sable.HELPER.getContaining(player)` against a real `ServerPlayer`. By
-calling one layer deeper, the tests skip:
-
-- the on-airship/on-foot decision being driven by Sable's actual
-  containment lookup;
-- iteration over `level.players()` (zero-player worlds slip through
-  silently in tests but never in prod);
-- whatever future side-effects `checkAroundPlayer` accumulates.
-
-Net result: the boolean parameter exists only to satisfy these two tests,
-and the most interesting production code path is unverified.
-
-**Shape of a fix.** Spawn a mock `ServerPlayer` via
-`GameTestHelper.makeMockServerPlayerInLevel` (now used in
-`RamshipTests.ramshipInterceptsMovingTarget`), position it on or off a
-SubLevel as the test variant demands, and let the per-tick
-`checkAroundPlayer` path fire naturally. Drop `playerOnAirship` from the
-public signature of `processNearbyAnchors`; collapse the two-arg overload
-back into the original single-arg internal helper.
+`orbitRadius()`, `cruiseRise()`) — the small, brain-shaped surface it
+was meant to be.
 
 ---
 

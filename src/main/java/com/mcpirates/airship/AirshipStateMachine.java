@@ -87,8 +87,7 @@ public final class AirshipStateMachine {
                 if (targetPos != null && !targetTooFar) yield State.PURSUE;
                 yield State.HOVER;
             }
-            // MOORED + NAVIGATE are externally driven; the auto machine never exits them.
-            case MOORED -> State.MOORED;
+            // NAVIGATE is externally driven; the auto machine never exits it.
             case NAVIGATE -> State.NAVIGATE;
         };
     }

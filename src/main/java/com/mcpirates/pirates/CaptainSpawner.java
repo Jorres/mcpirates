@@ -67,13 +67,7 @@ public final class CaptainSpawner {
     }
 
     public record CrewSpawnResult(List<AnchoredEntity> anchors,
-                                  Map<BlockPos, UUID> cannoneerByMount) {
-
-        /** Used for MOORED registrations that defer deck-crew spawn. */
-        public static CrewSpawnResult empty() {
-            return new CrewSpawnResult(List.of(), Map.of());
-        }
-    }
+                                  Map<BlockPos, UUID> cannoneerByMount) {}
 
     /** 7 ticks → 4-crew volley spreads ~1s. */
     private static final int CREW_FIRE_STAGGER_TICKS = 7;
@@ -211,8 +205,7 @@ public final class CaptainSpawner {
         pillager.setCustomNameVisible(true);
         // Aggressive→CROSSBOW_HOLD pose with arms raised. Skip for unarmed cannoneers.
         pillager.setAggressive(!mainHand.isEmpty());
-        // Anchor stamp is harmless on non-captain crew; keeps promote-to-captain path open
-        // and lets ground-combat adopt orphan captains on restart.
+        // Anchor stamp is harmless on non-captain crew; keeps promote-to-captain path open.
         pillager.getPersistentData().putLong(MCPDataKeys.CAPTAIN_ANCHOR_NBT_KEY, airshipAnchorWorldPos.asLong());
 
         boolean added = inner.addFreshEntity(pillager);

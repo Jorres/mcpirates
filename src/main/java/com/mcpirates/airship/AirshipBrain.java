@@ -96,10 +96,8 @@ public final class AirshipBrain {
 
     private AirshipBrain() {}
 
-    /** {@code MOORED}: assembled but parked, ground-combat-only; promoted to LIFTOFF on
-     *  air arrival ({@link AirshipLiftoffTrigger#promoteMooredShipsForAirArrival}).<br>
-     *  {@code NAVIGATE}: externally-driven XZ target; auto state machine never enters it. */
-    public enum State { LIFTOFF, PURSUE, RETURN, HOVER, MOORED, NAVIGATE }
+    /** {@code NAVIGATE}: externally-driven XZ target; auto state machine never enters it. */
+    public enum State { LIFTOFF, PURSUE, RETURN, HOVER, NAVIGATE }
 
     /** Register a fresh ship: stamps initial state + flushes NBT. Used by the liftoff trigger. */
     public static void register(Airship a, State initialState) {
@@ -155,7 +153,6 @@ public final class AirshipBrain {
     @SubscribeEvent
     public static void onServerStopping(ServerStoppingEvent event) {
         for (Airship a : SHIPS) {
-            if (a.state == State.MOORED) continue;  // dormant — nothing transient worth saving
             a.persist();
         }
         SHIPS.clear();
@@ -269,15 +266,12 @@ public final class AirshipBrain {
         if (subLevelLevel == null) {
             return true;
         }
-        // Crew-defeat: shut down and deregister. MOORED is exempt — its crew spawns later.
-        if (a.state != State.MOORED && !a.isAnyCrewAlive()) {
+        // Crew-defeat: shut down and deregister.
+        if (!a.isAnyCrewAlive()) {
             shutdownDerelict(a, subLevelLevel);
             MCPirates.LOGGER.info("ship {} ({}): crew defeated, brain deregistering",
                     a.subLevel.getUniqueId(), a.kind.name());
             return false;
-        }
-        if (a.state == State.MOORED) {
-            return true;
         }
         // Sable's @Unique plotPosition isn't persisted; reapply on chunk-reload edges.
         reanchorEntities(a);
@@ -407,7 +401,7 @@ public final class AirshipBrain {
                     a.airpadAnchor.getX() + 0.5, cruiseY, a.airpadAnchor.getZ() + 0.5);
             case NAVIGATE -> a.navDestination == null ? null
                     : new MovementBehavior.Goal(a.navDestination.x, cruiseY, a.navDestination.z);
-            case LIFTOFF, HOVER, MOORED -> null;
+            case LIFTOFF, HOVER -> null;
         };
     }
 
@@ -520,7 +514,6 @@ public final class AirshipBrain {
             case PURSUE -> Double.isNaN(a.lastGoalY)
                     ? Math.max(cruiseY, floor)
                     : Math.max(a.lastGoalY, floor);
-            case MOORED -> throw new IllegalStateException("chooseLiftSetting unreachable for MOORED");
         };
         // Conditional velocity damping: only apply when extrapolated v.y overshoots target.
         // Unconditional would choke LIFTOFF (large +v.y, far below target, no overshoot risk).
@@ -605,7 +598,6 @@ public final class AirshipBrain {
             case PURSUE   -> ChatFormatting.RED;
             case RETURN   -> ChatFormatting.AQUA;
             case HOVER    -> ChatFormatting.GREEN;
-            case MOORED   -> ChatFormatting.GRAY;
             case NAVIGATE -> ChatFormatting.GOLD;
         };
 
@@ -648,12 +640,35 @@ public final class AirshipBrain {
         return best;
     }
 
-    /** SubLevel the target is riding (any Sable ship), or null if on foot / on self. */
+    /** SubLevel the target is riding (any Sable ship), or null if on foot / on self.
+     *  Sable's plot-chunk lookup misses riders of moving contraptions, so we fall back
+     *  to a world-bbox check — necessary for the ramship to actually find its victim. */
     private static SubLevel findEnemyShip(Airship self, LivingEntity targetPlayer) {
         if (targetPlayer == null) return null;
         SubLevel containing = dev.ryanhcode.sable.Sable.HELPER.getContaining(targetPlayer);
+        if (containing == null) {
+            containing = findSubLevelByWorldBounds(self.parentLevel,
+                    targetPlayer.getX(), targetPlayer.getY(), targetPlayer.getZ());
+        }
         if (containing == null || containing == self.subLevel) return null;
         return containing;
+    }
+
+    /** SubLevel whose world-frame bbox contains (x, y, z), or null. Point-test against
+     *  every SubLevel's bbox so we catch riders of a moving contraption (Sable's
+     *  plot-chunk-based {@code getContaining} keys off the static plot pos). O(N). */
+    private static SubLevel findSubLevelByWorldBounds(ServerLevel level, double x, double y, double z) {
+        SubLevelContainer container = SubLevelContainer.getContainer(level);
+        if (container == null) return null;
+        for (SubLevel sl : container.getAllSubLevels()) {
+            var b = sl.boundingBox();
+            if (x >= b.minX() && x < b.maxX()
+                    && y >= b.minY() && y < b.maxY()
+                    && z >= b.minZ() && z < b.maxZ()) {
+                return sl;
+            }
+        }
+        return null;
     }
 
     // ───────────────────────────── Math + utility ─────────────────────────────

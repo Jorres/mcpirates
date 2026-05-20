@@ -2,7 +2,6 @@ package com.mcpirates.gametest;
 
 import com.mcpirates.MCPirates;
 import com.mcpirates.airship.AirshipBrain;
-import com.mcpirates.airship.AirshipLiftoffTrigger;
 import com.mcpirates.airship.anchor.MCPShipAnchorBlockEntity;
 import com.mcpirates.airship.ships.AirshipKinds;
 import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
@@ -50,7 +49,6 @@ public final class TestSetup {
         ServerLevel level = helper.getLevel();
         logArena(helper);
         AirshipBrain.unregisterAll(level);
-        AirshipLiftoffTrigger.clearGroundEngagements(level);
         AirshipBrain.targetOverride = null;
         MinecraftServer server = level.getServer();
         if (server != null) {

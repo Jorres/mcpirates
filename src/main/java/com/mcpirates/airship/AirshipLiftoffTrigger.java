@@ -1,6 +1,5 @@
 package com.mcpirates.airship;
 
-import com.mcpirates.MCPDataKeys;
 import com.mcpirates.MCPirates;
 import com.mcpirates.airship.anchor.MCPShipAnchorBlockEntity;
 import com.mcpirates.airship.interfaces.AirshipKind;
@@ -9,10 +8,6 @@ import com.mcpirates.airship.ships.AirshipKinds;
 import com.mcpirates.airship.hardware.ThrottleLevers;
 import com.mcpirates.pirates.CaptainSpawner;
 import com.mcpirates.pirates.DefeatedAirships;
-import com.mcpirates.pirates.GroundCombatModule;
-import dev.ryanhcode.sable.Sable;
-import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
-import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.simulated_team.simulated.content.blocks.portable_engine.PortableEngineBlockEntity;
 import dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueEntity;
@@ -25,7 +20,6 @@ import net.minecraft.server.level.FullChunkStatus;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.Mob;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ChunkPos;
@@ -37,22 +31,18 @@ import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.AABB;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import rbasamoyai.createbigcannons.cannon_control.cannon_mount.CannonMountBlockEntity;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Proximity-driven lift-off + ground-combat dispatch for dormant pirate ships. See
- *  {@code docs/design.md} for the pipeline and {@code docs/decisions.md} for rationale. */
+/** Proximity-driven lift-off for parked pirate ships. See {@code docs/design.md} for
+ *  the pipeline and {@code docs/decisions.md} for rationale. */
 @EventBusSubscriber(modid = MCPirates.MOD_ID)
 public final class AirshipLiftoffTrigger {
 
@@ -79,39 +69,13 @@ public final class AirshipLiftoffTrigger {
     private static Method cachedGetSectionMethod;
     private static Method cachedSectionGetStatusMethod;
 
-    /** Concurrent: server tick races /mcpirates lift off. Cleared on air takeover or
-     *  captain KILLED/DISCARDED. */
-    private static final Map<BlockPos, GroundCombatModule.GroundEngagement> GROUND_ENGAGEMENTS =
-            new ConcurrentHashMap<>();
-
     /** Re-entrancy guard so the proximity scanner can't fire a second assembly mid-yank. */
     private static final Set<BlockPos> ACTIVATING = ConcurrentHashMap.newKeySet();
-
-    public static boolean hasGroundEngagement(BlockPos anchorPos) {
-        return GROUND_ENGAGEMENTS.containsKey(anchorPos);
-    }
-
-    /** GameTest setup — map is JVM-static, leaks across tests. */
-    public static int clearGroundEngagements(ServerLevel level) {
-        int removed = 0;
-        for (GroundCombatModule.GroundEngagement e : GROUND_ENGAGEMENTS.values()) {
-            removed += GroundCombatModule.SHARED.despawn(level, e);
-        }
-        GROUND_ENGAGEMENTS.clear();
-        return removed;
-    }
 
     private AirshipLiftoffTrigger() {}
 
     /** Idempotent. Transient miss → false (no log); config error → WARN. */
     public static boolean activateAnchor(ServerLevel level, BlockPos anchorPos) {
-        return activateAnchor(level, anchorPos, /*dormant=*/false);
-    }
-
-    /** {@code dormant=true}: assembles + fuels engines + stamps userDataTag but skips deck
-     *  crew and registers as MOORED. {@link #promoteMooredShipsForAirArrival} later flips
-     *  it to LIFTOFF as a pure state change. */
-    public static boolean activateAnchor(ServerLevel level, BlockPos anchorPos, boolean dormant) {
         if (!ACTIVATING.add(anchorPos)) return false;   // already mid-assembly
         try {
             BlockEntity be = level.getBlockEntity(anchorPos);
@@ -142,17 +106,7 @@ public final class AirshipLiftoffTrigger {
                 return false;
             }
             if (!spawnHoneyGlue(level, leverPos, rotation, kind)) return false;
-            // Air takeover drops surviving ground defenders; dormant path keeps them.
-            if (!dormant) {
-                GroundCombatModule.GroundEngagement engagement = GROUND_ENGAGEMENTS.remove(anchorPos);
-                if (engagement != null) {
-                    int removed = GroundCombatModule.SHARED.despawn(level, engagement);
-                    MCPirates.LOGGER.info(
-                            "ground combat: liftoff at anchor {} cleared {} surviving defender(s)",
-                            anchorPos, removed);
-                }
-            }
-            activateShip(level, leverPos, kind, rotation, dormant);
+            activateShip(level, leverPos, kind, rotation);
             return true;
         } finally {
             ACTIVATING.remove(anchorPos);
@@ -167,48 +121,13 @@ public final class AirshipLiftoffTrigger {
         if (!AUTO_LIFTOFF_ENABLED) return;
         for (ServerLevel level : event.getServer().getAllLevels()) {
             for (ServerPlayer player : level.players()) {
-                checkAroundPlayer(level, player);
+                processNearbyAnchors(level, player.getX(), player.getZ());
             }
         }
     }
 
-    /** Clear on KILLED/DISCARDED only — UNLOADED_TO_CHUNK returns the captain later. */
-    @SubscribeEvent
-    public static void onEngagementMobLeave(EntityLeaveLevelEvent event) {
-        Entity entity = event.getEntity();
-        if (!entity.getTags().contains(MCPDataKeys.CAPTAIN_TAG)) return;
-        Entity.RemovalReason reason = entity.getRemovalReason();
-        if (reason != Entity.RemovalReason.KILLED && reason != Entity.RemovalReason.DISCARDED) {
-            return;
-        }
-        UUID captainUuid = entity.getUUID();
-        for (Map.Entry<BlockPos, GroundCombatModule.GroundEngagement> entry : GROUND_ENGAGEMENTS.entrySet()) {
-            if (!entry.getValue().attackerUuids().contains(captainUuid)) continue;
-            BlockPos anchorPos = entry.getKey();
-            GROUND_ENGAGEMENTS.remove(anchorPos);
-            MCPirates.LOGGER.info("ground combat: captain {} ({}) — engagement at {} cleared",
-                    captainUuid, reason, anchorPos);
-            return;
-        }
-    }
-
-    private static void checkAroundPlayer(ServerLevel level, ServerPlayer player) {
-        // On-SubLevel = air, on-foot = ground. Sable.HELPER.getContaining keys off the
-        // SubLevel's static plot pos, not its flying world pos, so we point-test the
-        // player's world coords against each SubLevel's world-frame bounding box.
-        SubLevel containing = findSubLevelByWorldBounds(level, player.getX(), player.getY(), player.getZ());
-        boolean playerOnAirship = containing != null;
-        processNearbyAnchors(level, player.getX(), player.getZ(), playerOnAirship);
-    }
-
     /** Public for GameTest entry. */
-    public static void processNearbyAnchors(ServerLevel level, double x, double z,
-                                            boolean playerOnAirship) {
-        // Promote MOORED ships first — their anchor BEs have moved into SubLevels and
-        // wouldn't be found by the chunk scan; order also prevents double-activation.
-        if (playerOnAirship) {
-            promoteMooredShipsForAirArrival(level, x, z);
-        }
+    public static void processNearbyAnchors(ServerLevel level, double x, double z) {
         ChunkPos centre = new ChunkPos(((int) Math.floor(x)) >> 4, ((int) Math.floor(z)) >> 4);
         for (int dx = -PLAYER_CHUNK_RADIUS; dx <= PLAYER_CHUNK_RADIUS; dx++) {
             for (int dz = -PLAYER_CHUNK_RADIUS; dz <= PLAYER_CHUNK_RADIUS; dz++) {
@@ -223,101 +142,14 @@ public final class AirshipLiftoffTrigger {
                     double pdx = anchorPos.getX() + 0.5 - x;
                     double pdz = anchorPos.getZ() + 0.5 - z;
                     if (pdx * pdx + pdz * pdz > TRIGGER_DISTANCE_SQ) continue;
-                    if (playerOnAirship) {
-                        activateAnchor(level, anchorPos);
-                    } else {
-                        maybeSpawnGroundCombat(level, anchorPos);
-                    }
+                    activateAnchor(level, anchorPos);
                 }
             }
         }
     }
 
-    /** MOORED→LIFTOFF: late crew spawn + drop ground defenders. */
-    private static void promoteMooredShipsForAirArrival(ServerLevel level, double x, double z) {
-        for (Airship a : AirshipBrain.ships()) {
-            if (a.parentLevel != level) continue;
-            if (a.state != AirshipBrain.State.MOORED) continue;
-            BlockPos airpad = a.airpadAnchor;
-            double pdx = airpad.getX() + 0.5 - x;
-            double pdz = airpad.getZ() + 0.5 - z;
-            if (pdx * pdx + pdz * pdz > TRIGGER_DISTANCE_SQ) continue;
-            // Defeated ship is the player's prize — leave MOORED.
-            if (DefeatedAirships.get(level).containsExact(a.airpadAnchor)) continue;
-            promoteMooredToLiftoff(level, a);
-        }
-    }
-
-    private static void promoteMooredToLiftoff(ServerLevel level, Airship a) {
-        AirshipKind kind = a.kind;
-        GroundCombatModule.GroundEngagement engagement = GROUND_ENGAGEMENTS.remove(a.airpadAnchor);
-        if (engagement != null) {
-            int removed = GroundCombatModule.SHARED.despawn(level, engagement);
-            MCPirates.LOGGER.info(
-                    "ground combat: MOORED→LIFTOFF promotion at anchor {} cleared {} surviving defender(s)",
-                    a.airpadAnchor, removed);
-        }
-        BlockPos offset = a.slPrimaryAnchor.subtract(a.airpadAnchor);
-        CaptainSpawner.CrewSpawnResult crew = CaptainSpawner.spawn(
-                a.subLevel, a.airpadAnchor, offset, a.rotation, kind, a.slCannonMounts);
-        a.installCrew(crew.anchors(), crew.cannoneerByMount());
-        AirshipBrain.transitionState(a, AirshipBrain.State.LIFTOFF, level.getGameTime());
-        MCPirates.LOGGER.info(
-                "ship {} ({}): MOORED → LIFTOFF after air arrival, deck crew={} cannoneers={}",
-                a.subLevel.getUniqueId(), kind.name(),
-                crew.anchors().size(), crew.cannoneerByMount().size());
-    }
-
-    /** Idempotent. Spawns defenders if the kind opts in and the ship is unbeaten. */
-    private static void maybeSpawnGroundCombat(ServerLevel level, BlockPos anchorPos) {
-        if (GROUND_ENGAGEMENTS.containsKey(anchorPos)) return;
-        BlockEntity be = level.getBlockEntity(anchorPos);
-        if (!(be instanceof MCPShipAnchorBlockEntity anchorBe)) return;
-        AirshipKind kind = AirshipKinds.byName(anchorBe.getKindName());
-        if (kind == null) return;
-        if (kind.groundCombat().isEmpty()) return;
-        Rotation rotation = kind.detectRotation(level, anchorPos).orElse(null);
-        if (rotation == null) return;
-        BlockPos leverPos = kind.leverFromAnchor(rotation, anchorPos);
-        // GROUND_ENGAGEMENTS is in-memory; DefeatedAirships persists across restarts.
-        if (DefeatedAirships.get(level).containsExact(leverPos)) return;
-
-        // Adopt captain that survived a restart while we lost the in-memory engagement.
-        long leverPosLong = leverPos.asLong();
-        AABB scan = new AABB(leverPos).inflate(GroundCombatModule.LEASH_RADIUS + 16);
-        List<UUID> existing = new ArrayList<>();
-        for (Mob mob : level.getEntitiesOfClass(Mob.class, scan, m ->
-                m.getTags().contains(MCPDataKeys.CAPTAIN_TAG)
-                        && m.getPersistentData().getLong(MCPDataKeys.CAPTAIN_ANCHOR_NBT_KEY)
-                                == leverPosLong)) {
-            existing.add(mob.getUUID());
-        }
-        if (!existing.isEmpty()) {
-            GROUND_ENGAGEMENTS.put(anchorPos,
-                    new GroundCombatModule.GroundEngagement(Collections.unmodifiableList(existing)));
-            MCPirates.LOGGER.info(
-                    "ground combat: adopted {} existing captain(s) at anchor {}",
-                    existing.size(), anchorPos);
-            return;
-        }
-
-        // Assemble dormant first so defenders surround a real Sable contraption. Bail
-        // on assembly failure — otherwise we'd leave crew around a non-liftable hull.
-        if (!activateAnchor(level, anchorPos, /*dormant=*/true)) {
-            MCPirates.LOGGER.info(
-                    "ground combat: dormant assembly deferred at anchor {} — retry next pass",
-                    anchorPos);
-            return;
-        }
-
-        GroundCombatModule module = kind.groundCombat().get();
-        GroundCombatModule.GroundEngagement engagement = module.spawn(level, leverPos, rotation, kind);
-        GROUND_ENGAGEMENTS.put(anchorPos, engagement);
-    }
-
-    /** Full assembly; {@code dormant=true} skips deck-crew spawn (registers as MOORED). */
     private static void activateShip(ServerLevel level, BlockPos pos, AirshipKind kind,
-                                     Rotation rotation, boolean dormant) {
+                                     Rotation rotation) {
         BlockState anchorState = level.getBlockState(pos);
         Direction connected = ThrottleLevers.leverConnectedDirection(anchorState);
 
@@ -358,9 +190,8 @@ public final class AirshipLiftoffTrigger {
                     kind.name(), slCannonMounts.size(), slLayout.cannonMounts().size());
         }
 
-        CaptainSpawner.CrewSpawnResult crew = dormant
-                ? CaptainSpawner.CrewSpawnResult.empty()
-                : CaptainSpawner.spawn(subLevel, pos, offset, rotation, kind, slCannonMounts);
+        CaptainSpawner.CrewSpawnResult crew =
+                CaptainSpawner.spawn(subLevel, pos, offset, rotation, kind, slCannonMounts);
 
         Airship airship = new Airship(level, subLevel, pos, kind, rotation,
                 slPrimaryAnchorPos, slCannonMounts,
@@ -369,8 +200,7 @@ public final class AirshipLiftoffTrigger {
 
         // Rehydrator's SubLevelObserver saw this allocate too; tryRehydrate skips
         // because the UUID is already registered.
-        AirshipBrain.register(airship,
-                dormant ? AirshipBrain.State.MOORED : AirshipBrain.State.LIFTOFF);
+        AirshipBrain.register(airship, AirshipBrain.State.LIFTOFF);
     }
 
     /** False if the section is HIDDEN (addFreshEntity skips startTracking → spatial
@@ -441,23 +271,6 @@ public final class AirshipLiftoffTrigger {
         } catch (ReflectiveOperationException e) {
             return "(reflect-failed: " + e.getClass().getSimpleName() + ")";
         }
-    }
-
-    /** SubLevel whose world-frame bbox contains (x, y, z), or null.
-     *  Unlike {@code Sable.HELPER.getContaining} this works for riders of a moving
-     *  contraption (HELPER keys off the static plot chunk). O(N) — fine for our N. */
-    private static SubLevel findSubLevelByWorldBounds(ServerLevel level, double x, double y, double z) {
-        SubLevelContainer container = SubLevelContainer.getContainer(level);
-        if (container == null) return null;
-        for (SubLevel sl : container.getAllSubLevels()) {
-            var b = sl.boundingBox();
-            if (x >= b.minX() && x < b.maxX()
-                    && y >= b.minY() && y < b.maxY()
-                    && z >= b.minZ() && z < b.maxZ()) {
-                return sl;
-            }
-        }
-        return null;
     }
 
     private static void insertCoalIntoEngine(ServerLevel level, BlockPos enginePos) {

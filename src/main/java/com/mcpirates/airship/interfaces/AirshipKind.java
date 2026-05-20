@@ -3,7 +3,6 @@ package com.mcpirates.airship.interfaces;
 import com.mcpirates.airship.anchor.MCPShipAnchorBlock;
 import com.mcpirates.airship.common.HotAirBalloonLift;
 import com.mcpirates.airship.common.OrbitMovement;
-import com.mcpirates.pirates.GroundCombatModule;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
@@ -88,10 +87,6 @@ public interface AirshipKind {
 
     /** Stand-off distance during PURSUE. */
     default double orbitRadius() { return 25.0; }
-
-    /** Ground defenders that spawn when an on-foot player approaches a dormant ship.
-     *  Default empty — the ship is invincible from the ground. */
-    default Optional<GroundCombatModule> groundCombat() { return Optional.empty(); }
 
     /** Rise above spawn altitude required to exit LIFTOFF. High-lift kinds override up. */
     default double liftoffMinRise() {

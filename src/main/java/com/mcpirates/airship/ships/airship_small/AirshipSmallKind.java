@@ -6,12 +6,10 @@ import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.airship.interfaces.Layout;
 import com.mcpirates.airship.interfaces.ShipControls;
 import com.mcpirates.airship.interfaces.CombatBehavior;
-import com.mcpirates.pirates.GroundCombatModule;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Rotation;
 
 import java.util.List;
-import java.util.Optional;
 
 /**
  * Original pirate ship (NBT {@code airship_small}): one envelope, one cannon at the bow,
@@ -92,9 +90,4 @@ public final class AirshipSmallKind implements AirshipKind {
     }
 
     @Override public CombatBehavior combat() { return combat; }
-
-    @Override
-    public Optional<GroundCombatModule> groundCombat() {
-        return Optional.of(GroundCombatModule.SHARED);
-    }
 }

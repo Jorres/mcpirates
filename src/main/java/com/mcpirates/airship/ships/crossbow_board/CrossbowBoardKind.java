@@ -7,12 +7,10 @@ import com.mcpirates.airship.interfaces.Layout;
 import com.mcpirates.airship.interfaces.ShipControls;
 import com.mcpirates.airship.interfaces.CombatBehavior;
 import com.mcpirates.airship.common.NoCannonCombat;
-import com.mcpirates.pirates.GroundCombatModule;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Rotation;
 
 import java.util.List;
-import java.util.Optional;
 
 /**
  * Light recon ship (NBT {@code crossbow_board}, size 6×8×16). Symmetric twin-burner
@@ -94,9 +92,4 @@ public final class CrossbowBoardKind implements AirshipKind {
      *  ship well inside firing range without flying *into* the target. Brain reads this
      *  for the orbit goal during PURSUE. */
     @Override public double orbitRadius() { return 30.0; }
-
-    @Override
-    public Optional<GroundCombatModule> groundCombat() {
-        return Optional.of(GroundCombatModule.SHARED);
-    }
 }

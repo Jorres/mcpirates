@@ -90,8 +90,8 @@ user to start it.
 
 For changes that touch any of:
 
-- `airship/` — assembly, liftoff trigger, brain, kind dispatch, ground combat
-- `pirates/` — defender spawning, captain death, ground combat module
+- `airship/` — assembly, liftoff trigger, brain, kind dispatch
+- `pirates/` — crew spawning, captain death
 - `PlateauTable`, `HotAirBurners`, `ThrottleLevers`, `ClutchLevers`
 - The mixin layer (`mixin/`)
 
@@ -106,8 +106,6 @@ Cold ~50s, warm ~30s. Runs 12 tests:
 - **Buoyancy** — `airshipSmallRisesUnderBuoyancy`, `airshipSmallStabilizesAtFixedTargetHeight`
 - **Assembly + actuation** across kinds and rotations — `assemblesAndActuatesOnPursue`,
   `assemblesAndActuatesRotated90`, `assemblesCrossbowBoardKindAndActuates`
-- **Ground combat** — `groundCombatSpawnsForOnFootPlayer`,
-  `groundCombatRetreatsToDormantThenAirArrivalLifts`
 - **Rehydrate / defeat** — `rehydrateAtAirpadPicksHover`,
   `rehydrateAwayFromAirpadPicksReturn`, `crewDefeatShutdownDisengagesAndDeregisters`,
   `rehydrateSkipsDefeatedShip`, `multiShipRehydrate`

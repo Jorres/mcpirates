@@ -1,5 +1,5 @@
 /**
- * Airship runtime: discovers dormant ships at outposts, lifts them into a Sable
+ * Airship runtime: discovers parked ships at outposts, lifts them into a Sable
  * SubLevel via {@link com.mcpirates.airship.AirshipAssembler}, then ticks the
  * state machine + movement controller in {@link com.mcpirates.airship.AirshipBrain}.
  *

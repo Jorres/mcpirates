@@ -357,11 +357,12 @@ public final class RamshipTests {
     }
 
     /**
-     * Ramship intercepts a moving synthetic target through the real player-on-airship
+     * Ramship intercepts a moving synthetic target through the real player-near-anchor
      * pipeline: a brainless airship_small assembled via {@link TestSetup#placeAndAssembleAsPassiveTarget},
-     * mock player riding it, SubLevel teleported each tick to drift east. The trigger's
-     * {@code findSubLevelByWorldBounds} must detect the player-on-SubLevel for the ramship
-     * to ever leave MOORED.
+     * mock player riding it, SubLevel teleported each tick to drift east. The mock player
+     * is what trips the proximity scanner to assemble + lift the ramship, and once airborne
+     * the ramship targets the player and (because they're riding a SubLevel) rams the
+     * SubLevel itself.
      */
     @GameTest(template = "ramship", timeoutTicks = 3000, setupTicks = 5,
               batch = "ramship_intercepts_moving_synthetic_target", skyAccess = true)

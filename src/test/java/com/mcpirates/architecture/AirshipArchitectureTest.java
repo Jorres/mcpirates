@@ -64,9 +64,10 @@ public class AirshipArchitectureTest {
                                   // CombatBehavior.fire() doesn't re-solve the ballistic each
                                   // tick. Same Phase-C target as cannoneerByMount: moves into
                                   // CombatBehavior alongside slCannonMounts.
-            "slPrimaryAnchor"     // BlockPos — kept so MOORED→LIFTOFF promotion's CaptainSpawner
-                                  // can resolve the SL-frame seat-scan bbox. Phase C: move into
-                                  // an AssemblyMetadata wrapper carried by the SubLevel.
+            "slPrimaryAnchor"     // BlockPos — kept so rehydration's actuator rebuild can
+                                  // re-resolve SL-frame hardware positions from NBT deltas.
+                                  // Phase C: move into an AssemblyMetadata wrapper carried by
+                                  // the SubLevel.
     );
 
     private static JavaClasses CLASSES;
@@ -103,7 +104,7 @@ public class AirshipArchitectureTest {
      * updating {@link #EXPECTED_AIRSHIP_KIND_METHODS} alongside, which forces the
      * conversation.
      */
-    private static final int EXPECTED_AIRSHIP_KIND_METHODS = 14;
+    private static final int EXPECTED_AIRSHIP_KIND_METHODS = 13;
 
     @Test
     void airshipKindInterfaceMethodCount() {

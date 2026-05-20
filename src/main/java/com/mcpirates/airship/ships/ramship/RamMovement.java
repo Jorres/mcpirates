@@ -1,10 +1,10 @@
 package com.mcpirates.airship.ships.ramship;
 
 import com.mcpirates.airship.Airship;
+import com.mcpirates.airship.common.OrbitMovement;
 import com.mcpirates.airship.interfaces.MovementBehavior;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
 
 /**
@@ -13,8 +13,9 @@ import org.joml.Vector3d;
  * future intercept exists (target moving away faster than {@link #RAMSHIP_SPEED_ESTIMATE},
  * stationary, or solution wildly outside a reasonable horizon).
  *
- * <p>Targets the ship first ({@code targetShip}), falls back to the player target —
- * lets the ramship engage a moving SubLevel directly when one is present.
+ * <p>Requires a {@code targetShip} — ramming an on-foot player at ground level looks silly
+ * and can strand the hull. With no target SubLevel the strategy delegates to
+ * {@link OrbitMovement} so the ramship just circles the player.
  *
  * <p>Pure positioner. All hardware actuation (forward clutch, counter-rotation,
  * propeller reversal) lives in {@link RamControls}, which the brain calls each
@@ -66,30 +67,24 @@ public final class RamMovement implements MovementBehavior {
     @Override
     public Goal computeGoal(Airship ship, Vector3d shipPos,
                             LivingEntity targetPlayer, SubLevel targetShip, long now) {
+        // On-foot target: circle, don't ram. See class javadoc.
+        if (targetShip == null) {
+            return OrbitMovement.INSTANCE.computeGoal(ship, shipPos, targetPlayer, targetShip, now);
+        }
         // All velocities consumed below MUST be in blocks/tick, the same unit
-        // RAMSHIP_SPEED_ESTIMATE is in. Vanilla {@code Entity.getDeltaMovement}
-        // already is. Sable's {@code SubLevelHelper.getVelocity} returns m/s
-        // — divide by SERVER_TPS=20 to bring it into the same frame, otherwise
-        // the intercept math compares a per-second target velocity to a
+        // RAMSHIP_SPEED_ESTIMATE is in. Sable's {@code SubLevelHelper.getVelocity}
+        // returns m/s — divide by SERVER_TPS=20 to bring it into the same frame,
+        // otherwise the intercept math compares a per-second target velocity to a
         // per-tick estimate and silently returns garbage.
         double tx, ty, tz, vx, vz, sableVx, sableVz;
         java.util.UUID targetId;
-        if (targetShip != null) {
-            Vector3d tPos = targetShip.logicalPose().position();
-            tx = tPos.x; ty = tPos.y; tz = tPos.z;
-            targetId = targetShip.getUniqueId();
-            // Keep Sable's reading for diagnostics — it's expected to be 0 for kinematic SubLevels.
-            Vector3d tVel = dev.ryanhcode.sable.Sable.HELPER.getVelocity(
-                    ship.parentLevel, targetShip, tPos, new Vector3d());
-            sableVx = tVel.x / 20.0; sableVz = tVel.z / 20.0;
-        } else if (targetPlayer != null) {
-            tx = targetPlayer.getX(); ty = targetPlayer.getY(); tz = targetPlayer.getZ();
-            targetId = targetPlayer.getUUID();
-            Vec3 dm = targetPlayer.getDeltaMovement();
-            sableVx = dm.x; sableVz = dm.z;
-        } else {
-            return null;
-        }
+        Vector3d tPos = targetShip.logicalPose().position();
+        tx = tPos.x; ty = tPos.y; tz = tPos.z;
+        targetId = targetShip.getUniqueId();
+        // Keep Sable's reading for diagnostics — it's expected to be 0 for kinematic SubLevels.
+        Vector3d tVel = dev.ryanhcode.sable.Sable.HELPER.getVelocity(
+                ship.parentLevel, targetShip, tPos, new Vector3d());
+        sableVx = tVel.x / 20.0; sableVz = tVel.z / 20.0;
 
         // Position-delta velocity (per-ramship sample state). On first sample, gap >stale,
         // or target identity changed, fall back to 0 — solver will then aim direct.
@@ -162,6 +157,22 @@ public final class RamMovement implements MovementBehavior {
         double t2 = (-b + sqrt) / (2 * a);
         if (t1 > 0 && t2 > 0) return Math.min(t1, t2);
         return Math.max(t1, t2);
+    }
+
+    @Override
+    public void onEnterPursue(Airship ship, Vector3d shipPos,
+                              LivingEntity targetPlayer, SubLevel targetShip) {
+        // Mirror computeGoal's on-foot fallback so the orbit direction is seeded.
+        if (targetShip == null) {
+            OrbitMovement.INSTANCE.onEnterPursue(ship, shipPos, targetPlayer, targetShip);
+        }
+    }
+
+    /** Forwarded unconditionally — OrbitMovement's stuck-flip is the only consumer and
+     *  is a no-op when heading errors are small (i.e. during ramming charge). */
+    @Override
+    public void onPursueDecision(Airship ship, double headingErrDeg) {
+        OrbitMovement.INSTANCE.onPursueDecision(ship, headingErrDeg);
     }
 
     @Override public String debugOverlay(Airship ship) { return " ram"; }
