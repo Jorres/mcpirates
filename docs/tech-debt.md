@@ -5,6 +5,10 @@ wrong, why it bites, and the rough shape of a fix. Append as we find more.
 
 ---
 
+## fireOnce
+
+we dont really need this I guess, it was for logging purposes very early on
+
 ## Ships are identified by the world position of their primary lever
 
 **Why it's wrong.** The world lever position is an *incidental* property of a

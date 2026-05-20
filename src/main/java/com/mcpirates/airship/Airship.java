@@ -128,6 +128,18 @@ public final class Airship {
     /** Consecutive bad-heading decisions; threshold triggers an orbit flip. */
     public int orbitStuckDecisions = 0;
 
+    /** Crash detector disarmed until the ship has been at least CRASH_ARM_AGL above
+     *  terrain at some point. Prevents misfire during the LIFTOFF rise and immediately
+     *  after, when the ship has cleared the state but is still climbing to cruise alt. */
+    public boolean crashArmed = false;
+    /** Consecutive ground-contact samples used by the crash detector. Not persisted —
+     *  re-stabilizes from 0 after restart within ~0.5s, which is fine. */
+    public int groundContactTicks = 0;
+    /** Consecutive stability samples while CRASHING; threshold transitions to CRASHED. */
+    public int crashStableTicks = 0;
+    /** Last sampled pose position; used by the CRASHING stability check. Nullable. */
+    public Vector3d crashLastPos;
+
     public Airship(ServerLevel parentLevel, SubLevel subLevel, BlockPos airpadAnchor,
                    AirshipKind kind, Rotation rotation, BlockPos slPrimaryAnchor,
                    List<BlockPos> slCannonMounts,

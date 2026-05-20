@@ -12,10 +12,10 @@ import dev.ryanhcode.sable.api.physics.mass.MassData;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
 import com.mcpirates.pirates.PirateBrain;
-import dev.ryanhcode.sable.mixinterface.entity.entities_stick_sublevels.EntityStickExtension;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.api.sublevel.SubLevelObserver;
+import dev.ryanhcode.sable.companion.math.BoundingBox3dc;
 import dev.ryanhcode.sable.sublevel.storage.SubLevelRemovalReason;
 import net.minecraft.ChatFormatting;
 import net.minecraft.nbt.CompoundTag;
@@ -23,8 +23,16 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.monster.Vindicator;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.levelgen.Heightmap;
 import org.joml.Quaterniond;
 import org.joml.Vector3d;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -34,6 +42,7 @@ import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -96,8 +105,11 @@ public final class AirshipBrain {
 
     private AirshipBrain() {}
 
-    /** {@code NAVIGATE}: externally-driven XZ target; auto state machine never enters it. */
-    public enum State { LIFTOFF, PURSUE, RETURN, HOVER, NAVIGATE }
+    /** {@code NAVIGATE}: externally-driven XZ target; auto state machine never enters it.
+     *  <p>{@code CRASHING}: ground-contact persisted; brain has released controls and
+     *  forced the burner off, waiting for the wreck to settle.
+     *  {@code CRASHED}: terminal — dismount fired, brain deregisters on the same tick. */
+    public enum State { LIFTOFF, PURSUE, RETURN, HOVER, NAVIGATE, CRASHING, CRASHED }
 
     /** Register a fresh ship: stamps initial state + flushes NBT. Used by the liftoff trigger. */
     public static void register(Airship a, State initialState) {
@@ -235,6 +247,13 @@ public final class AirshipBrain {
             MCPirates.LOGGER.warn("rehydrate: failed to deserialize SubLevel {}", ssl.getUniqueId());
             return false;
         }
+        // Wrecks are terminal — the dismount already ran on the tick we entered CRASHED.
+        // The persisted SubLevel survives as decoration but the brain has no more work to do.
+        if (airship.state == State.CRASHED) {
+            MCPirates.LOGGER.info("rehydrate: SubLevel {} is a CRASHED wreck, brain skips re-registration",
+                    ssl.getUniqueId());
+            return false;
+        }
         registerRehydrated(airship);
         return true;
     }
@@ -273,9 +292,13 @@ public final class AirshipBrain {
                     a.subLevel.getUniqueId(), a.kind.name());
             return false;
         }
-        // Sable's @Unique plotPosition isn't persisted; reapply on chunk-reload edges.
-        reanchorEntities(a);
         Vector3d shipPos = a.subLevel.logicalPose().position();
+
+        // Crash pipeline: ground-contact → CRASHING (controls off, burner cools) →
+        // stability → CRASHED + dismount. Short-circuits the rest of the tick.
+        if (handleCrashTick(a, shipPos, now)) {
+            return a.state != State.CRASHED;
+        }
 
         LivingEntity targetPlayer = findEnemyPlayerOnAirship(a, shipPos);
         SubLevel targetShip = findEnemyShip(a, targetPlayer);
@@ -371,21 +394,6 @@ public final class AirshipBrain {
         return true;
     }
 
-    private static void reanchorEntities(Airship a) {
-        if (a.anchoredEntities.isEmpty()) return;
-        for (AnchoredEntity ae : a.anchoredEntities) {
-            net.minecraft.world.entity.Entity entity = a.parentLevel.getEntity(ae.uuid());
-            if (entity == null || entity.isRemoved()) continue;
-            EntityStickExtension stuck = (EntityStickExtension) entity;
-            if (stuck.sable$getPlotPosition() == null) {
-                stuck.sable$setPlotPosition(ae.plotPos());
-                MCPirates.LOGGER.info(
-                        "re-anchored {} ({}) to plotPos={} after reload",
-                        ae.role().name(), ae.uuid(), ae.plotPos());
-            }
-        }
-    }
-
     // ───────────────────────────── Movement ─────────────────────────────
 
     /** Per-state 3D goal; null = stationary. */
@@ -401,7 +409,7 @@ public final class AirshipBrain {
                     a.airpadAnchor.getX() + 0.5, cruiseY, a.airpadAnchor.getZ() + 0.5);
             case NAVIGATE -> a.navDestination == null ? null
                     : new MovementBehavior.Goal(a.navDestination.x, cruiseY, a.navDestination.z);
-            case LIFTOFF, HOVER -> null;
+            case LIFTOFF, HOVER, CRASHING, CRASHED -> null;
         };
     }
 
@@ -514,6 +522,10 @@ public final class AirshipBrain {
             case PURSUE -> Double.isNaN(a.lastGoalY)
                     ? Math.max(cruiseY, floor)
                     : Math.max(a.lastGoalY, floor);
+            // tickShip short-circuits before applyLift in CRASHING/CRASHED — these arms
+            // exist only to make the switch exhaustive.
+            case CRASHING, CRASHED -> throw new IllegalStateException(
+                    "chooseLiftSetting unreachable for state " + state);
         };
         // Conditional velocity damping: only apply when extrapolated v.y overshoots target.
         // Unconditional would choke LIFTOFF (large +v.y, far below target, no overshoot risk).
@@ -563,6 +575,181 @@ public final class AirshipBrain {
         }
     }
 
+    // ───────────────────────────── Crash pipeline ─────────────────────────────
+
+    /** Grace period: ground-contact must persist this many ticks before transitioning
+     *  to CRASHING. Avoids false-positives from grazing a treetop or hill in PURSUE. */
+    private static final int GROUND_CONTACT_TICKS_TO_CRASH = 10;
+    /** Vertical clearance below the wreck's bbox-minY to count as "touching the ground".
+     *  Larger than 1 because Sable's bbox doesn't tightly hug irregular hull bottoms. */
+    private static final double GROUND_PROXIMITY_THRESHOLD = 2.0;
+    /** Crash detector stays disarmed until the ship rises this far above terrain at the
+     *  ship's XZ. Disarmed during LIFTOFF and the immediate post-LIFTOFF climb where the
+     *  ship is technically out of LIFTOFF state but still hasn't reached cruise altitude. */
+    private static final double CRASH_ARM_AGL = 15.0;
+    /** All-axis position-delta threshold (blocks per tick) for "stable enough to dismount". */
+    private static final double CRASH_STABILITY_EPS = 0.01;
+    /** Stability must hold this many consecutive ticks before dismount fires. */
+    private static final int STABILIZED_TICKS_TO_DISMOUNT = 40;
+    /** Dismount ring radius around the wreck XZ center. */
+    private static final double DISMOUNT_RING_RADIUS = 6.0;
+
+    /** Returns true if the crash pipeline owns this tick (skip active behaviour).
+     *  Caller should check {@code a.state == State.CRASHED} after — that's the
+     *  deregister signal. */
+    private static boolean handleCrashTick(Airship a, Vector3d shipPos, long now) {
+        switch (a.state) {
+            case CRASHED -> {
+                return true;   // unreachable in practice; we deregister on entry
+            }
+            case CRASHING -> {
+                return tickCrashing(a, shipPos, now);
+            }
+            case LIFTOFF -> {
+                // Ship is on the ground by definition while in LIFTOFF.
+                a.groundContactTicks = 0;
+                return false;
+            }
+            default -> {
+                // Arm the detector once the ship has reached cruise altitude AGL at least
+                // once. Until armed, the post-LIFTOFF climb doesn't get misread as a crash.
+                if (!a.crashArmed) {
+                    int hx = (int) Math.floor(shipPos.x);
+                    int hz = (int) Math.floor(shipPos.z);
+                    int terrainTop = a.parentLevel.getHeight(Heightmap.Types.MOTION_BLOCKING, hx, hz);
+                    if (shipPos.y - terrainTop >= CRASH_ARM_AGL) {
+                        a.crashArmed = true;
+                        MCPirates.LOGGER.info("ship {} ({}): crash detector armed (AGL={})",
+                                a.subLevel.getUniqueId(), a.kind.name(),
+                                String.format("%.1f", shipPos.y - terrainTop));
+                    } else {
+                        a.groundContactTicks = 0;
+                        return false;
+                    }
+                }
+                if (isInGroundContact(a, shipPos)) {
+                    a.groundContactTicks++;
+                } else {
+                    a.groundContactTicks = 0;
+                }
+                if (a.groundContactTicks >= GROUND_CONTACT_TICKS_TO_CRASH) {
+                    MCPirates.LOGGER.info(
+                            "ship {} ({}): ground contact for {} ticks → CRASHING",
+                            a.subLevel.getUniqueId(), a.kind.name(), a.groundContactTicks);
+                    transitionState(a, State.CRASHING, now);
+                    a.controls.release(a);
+                    a.lift.shutOff(a);
+                    a.crashLastPos = null;
+                    a.crashStableTicks = 0;
+                    return true;
+                }
+                return false;
+            }
+        }
+    }
+
+    /** Per-tick CRASHING behaviour: re-assert shutdown, sample stability, transition to
+     *  CRASHED + dismount when stable. Always returns true (crash pipeline owns the tick). */
+    private static boolean tickCrashing(Airship a, Vector3d shipPos, long now) {
+        a.controls.release(a);
+        a.lift.shutOff(a);
+        if (isStable(a, shipPos)) {
+            a.crashStableTicks++;
+        } else {
+            a.crashStableTicks = 0;
+        }
+        if (a.crashStableTicks >= STABILIZED_TICKS_TO_DISMOUNT) {
+            MCPirates.LOGGER.info(
+                    "ship {} ({}): wreck stabilized → CRASHED, dismounting crew",
+                    a.subLevel.getUniqueId(), a.kind.name());
+            transitionState(a, State.CRASHED, now);
+            crashDismount(a);
+        }
+        return true;
+    }
+
+    /** Ground = first MOTION_BLOCKING surface at the ship's XZ center. MOTION_BLOCKING
+     *  includes water + leaves so wreck-on-water and wreck-in-tree both register. */
+    private static boolean isInGroundContact(Airship a, Vector3d shipPos) {
+        BoundingBox3dc bb = a.subLevel.boundingBox();
+        if (bb == null) return false;
+        int hx = (int) Math.floor(shipPos.x);
+        int hz = (int) Math.floor(shipPos.z);
+        int terrainTop = a.parentLevel.getHeight(Heightmap.Types.MOTION_BLOCKING, hx, hz);
+        return bb.minY() - terrainTop <= GROUND_PROXIMITY_THRESHOLD;
+    }
+
+    /** Stability via per-tick position delta. Updates {@code a.crashLastPos} every call.
+     *  First sample returns false (no baseline). */
+    private static boolean isStable(Airship a, Vector3d shipPos) {
+        Vector3d prev = a.crashLastPos;
+        a.crashLastPos = new Vector3d(shipPos);
+        if (prev == null) return false;
+        return Math.abs(shipPos.x - prev.x) < CRASH_STABILITY_EPS
+                && Math.abs(shipPos.y - prev.y) < CRASH_STABILITY_EPS
+                && Math.abs(shipPos.z - prev.z) < CRASH_STABILITY_EPS;
+    }
+
+    /** Place crew on a 6-block ring around the wreck XZ-center. Captain → Vindicator;
+     *  cannoneers/crossbowmen flip a coin (deterministic via uuid hash) between
+     *  Pillager-as-is and Vindicator-swap. Tags + CAPTAIN_ANCHOR_NBT_KEY are copied
+     *  so the existing CaptainDeath bounty path still fires on the ground-captain. */
+    private static void crashDismount(Airship a) {
+        BoundingBox3dc bb = a.subLevel.boundingBox();
+        if (bb == null) return;
+        double cx = (bb.minX() + bb.maxX()) / 2.0;
+        double cz = (bb.minZ() + bb.maxZ()) / 2.0;
+        ServerLevel level = a.parentLevel;
+        int n = Math.max(1, a.anchoredEntities.size());
+        int i = 0;
+        for (AnchoredEntity ae : a.anchoredEntities) {
+            Entity ent = level.getEntity(ae.uuid());
+            if (!(ent instanceof Mob old) || !old.isAlive()) { i++; continue; }
+            BlockPos groundPos = pickRingPos(level, cx, cz, n, i++);
+            boolean isCaptain = old.getTags().contains(MCPDataKeys.CAPTAIN_TAG);
+            boolean keepAsPillager = !isCaptain && (old.getUUID().hashCode() & 1) == 0;
+            if (keepAsPillager) {
+                dismountInPlace(old, groundPos);
+            } else {
+                swapToVindicator(level, old, groundPos);
+            }
+        }
+        a.anchoredEntities = List.of();
+        a.cannoneerByMount = Map.of();
+    }
+
+    private static void dismountInPlace(Mob old, BlockPos groundPos) {
+        // Dismount from the Create SeatEntity (drops the rider binding) and teleport to ground.
+        old.stopRiding();
+        old.moveTo(groundPos.getX() + 0.5, groundPos.getY(), groundPos.getZ() + 0.5,
+                  old.getYRot(), 0);
+    }
+
+    private static void swapToVindicator(ServerLevel level, Mob old, BlockPos groundPos) {
+        Vindicator v = EntityType.VINDICATOR.create(level);
+        if (v == null) return;
+        v.moveTo(groundPos.getX() + 0.5, groundPos.getY(), groundPos.getZ() + 0.5,
+                 old.getYRot(), 0);
+        v.setHealth(Math.min(old.getHealth(), v.getMaxHealth()));
+        v.setItemSlot(EquipmentSlot.MAINHAND, new ItemStack(Items.IRON_AXE));
+        for (String tag : old.getTags()) v.addTag(tag);
+        CompoundTag from = old.getPersistentData();
+        if (from.contains(MCPDataKeys.CAPTAIN_ANCHOR_NBT_KEY)) {
+            v.getPersistentData().putLong(MCPDataKeys.CAPTAIN_ANCHOR_NBT_KEY,
+                    from.getLong(MCPDataKeys.CAPTAIN_ANCHOR_NBT_KEY));
+        }
+        level.addFreshEntity(v);
+        old.discard();
+    }
+
+    private static BlockPos pickRingPos(ServerLevel level, double cx, double cz, int n, int i) {
+        double angle = 2 * Math.PI * i / n;
+        int x = (int) Math.floor(cx + DISMOUNT_RING_RADIUS * Math.cos(angle));
+        int z = (int) Math.floor(cz + DISMOUNT_RING_RADIUS * Math.sin(angle));
+        int top = level.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z);
+        return new BlockPos(x, top, z);
+    }
+
     // ───────────────────────────── Debug overlay ─────────────────────────────
 
     private static void writeDebugActionbar(Airship a, LivingEntity target, Vector3d shipPos) {
@@ -599,6 +786,8 @@ public final class AirshipBrain {
             case RETURN   -> ChatFormatting.AQUA;
             case HOVER    -> ChatFormatting.GREEN;
             case NAVIGATE -> ChatFormatting.GOLD;
+            case CRASHING -> ChatFormatting.DARK_RED;
+            case CRASHED  -> ChatFormatting.DARK_GRAY;
         };
 
         Component msg = Component.empty()

@@ -301,6 +301,272 @@ public final class AirshipGameTests {
                 .thenSucceed();
     }
 
+    /** Envelope destruction → ship sinks → CRASHING → CRASHED → crew dismounts as
+     *  ground mobs. Touches the realistic crash pipeline end-to-end (no state forcing). */
+    @GameTest(template = "airship_small", timeoutTicks = 2400, setupTicks = 5,
+              batch = "envelope_destruction_crashes_ship", skyAccess = true)
+    public static void envelopeDestructionCrashesShipAndDismountsCrew(GameTestHelper helper) {
+        TestSetup.reset(helper);
+
+        final java.util.concurrent.atomic.AtomicReference<Airship> shipRef =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        final org.joml.Vector3d[] wreckCenter = new org.joml.Vector3d[1];
+        final int[] envelopeBlocksStripped = new int[1];
+
+        helper.startSequence()
+                .thenExecuteAfter(2, () -> {
+                    BlockPos anchorWorld = TestSetup.findAnchor(helper);
+                    if (anchorWorld == null) {
+                        helper.fail("no MCPShipAnchorBlockEntity in arena");
+                        return;
+                    }
+                    if (!AirshipLiftoffTrigger.activateAnchor(helper.getLevel(), anchorWorld)) {
+                        helper.fail("activateAnchor returned false at " + anchorWorld);
+                    }
+                })
+                .thenWaitUntil(() -> helper.assertTrue(
+                        !AirshipBrain.ships().isEmpty(),
+                        "waiting for ship to register"))
+                .thenExecute(() -> shipRef.set(AirshipBrain.ships().get(0)))
+                // Crash detector arms once the ship has been AGL ≥ 15 — required gate before
+                // ground-contact tracking begins. Without this wait, stripping the envelope
+                // mid-LIFTOFF would land the wreck before the detector is armed.
+                .thenWaitUntil(() -> {
+                    Airship a = shipRef.get();
+                    helper.assertTrue(a != null && a.crashArmed,
+                            "waiting for crashArmed; state="
+                                    + (a == null ? "—" : a.state.name()));
+                })
+                // Punch a few random holes in the envelope — mimics what a couple of cannon
+                // hits would do in actual combat. Balloon becomes invalid (open shape) →
+                // lift drops → ship descends. Deterministic seed so the test isn't flaky.
+                .thenExecute(() -> {
+                    Airship a = shipRef.get();
+                    net.minecraft.world.level.Level slLevel = a.subLevel.getLevel();
+                    if (slLevel == null) {
+                        helper.fail("SubLevel level is null");
+                        return;
+                    }
+                    net.minecraft.tags.TagKey<net.minecraft.world.level.block.Block> envelopeTag =
+                            net.minecraft.tags.TagKey.create(
+                                    net.minecraft.core.registries.Registries.BLOCK,
+                                    net.minecraft.resources.ResourceLocation.fromNamespaceAndPath(
+                                            "aeronautics", "envelope"));
+                    var pb = a.subLevel.getPlot().getBoundingBox();
+                    java.util.List<BlockPos> envelopeBlocks = new java.util.ArrayList<>();
+                    for (BlockPos p : BlockPos.betweenClosed(
+                            pb.minX(), pb.minY(), pb.minZ(),
+                            pb.maxX(), pb.maxY(), pb.maxZ())) {
+                        if (slLevel.getBlockState(p).is(envelopeTag)) {
+                            envelopeBlocks.add(p.immutable());
+                        }
+                    }
+                    if (envelopeBlocks.isEmpty()) {
+                        helper.fail("no envelope blocks found in SubLevel plot — crash trigger absent");
+                        return;
+                    }
+                    java.util.Collections.shuffle(envelopeBlocks, new java.util.Random(42));
+                    int toRemove = Math.min(3, envelopeBlocks.size());
+                    for (int i = 0; i < toRemove; i++) {
+                        slLevel.setBlock(envelopeBlocks.get(i),
+                                net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(),
+                                3);
+                    }
+                    envelopeBlocksStripped[0] = toRemove;
+                    MCPirates.LOGGER.info(
+                            "[crash-test] punched {} hole(s) in envelope (of {} total blocks) at {}",
+                            toRemove, envelopeBlocks.size(),
+                            envelopeBlocks.subList(0, toRemove));
+                })
+                // Capture wreck XZ center once the detector picks up the descent. We grab the
+                // bbox NOW (not later) because tickShip deregisters on CRASHED, after which the
+                // Airship handle keeps working but log-frame bounds may drift if we wait.
+                .thenWaitUntil(() -> {
+                    Airship a = shipRef.get();
+                    helper.assertTrue(a != null
+                                    && (a.state == State.CRASHING || a.state == State.CRASHED),
+                            "waiting for CRASHING/CRASHED after envelope strip; state="
+                                    + (a == null ? "—" : a.state.name()));
+                })
+                .thenExecute(() -> {
+                    Airship a = shipRef.get();
+                    var bb = a.subLevel.boundingBox();
+                    wreckCenter[0] = new org.joml.Vector3d(
+                            (bb.minX() + bb.maxX()) / 2.0,
+                            (bb.minY() + bb.maxY()) / 2.0,
+                            (bb.minZ() + bb.maxZ()) / 2.0);
+                    MCPirates.LOGGER.info("[crash-test] wreck center captured at ({}, {}, {})",
+                            String.format("%.1f", wreckCenter[0].x),
+                            String.format("%.1f", wreckCenter[0].y),
+                            String.format("%.1f", wreckCenter[0].z));
+                })
+                // CRASHED entry runs dismount + returns false from tickShip → brain deregisters.
+                .thenWaitUntil(() -> helper.assertTrue(
+                        AirshipBrain.ships().isEmpty(),
+                        "waiting for brain deregister after CRASHED"))
+                // Dismount ring radius = 6; widen search to 24 to catch any pillager that landed
+                // outside the strict ring (terrain pick fallback, etc.).
+                .thenExecute(() -> {
+                    var wc = wreckCenter[0];
+                    net.minecraft.world.phys.AABB searchBox = new net.minecraft.world.phys.AABB(
+                            wc.x - 24, wc.y - 24, wc.z - 24,
+                            wc.x + 24, wc.y + 24, wc.z + 24);
+                    int vindicators = helper.getLevel().getEntitiesOfClass(
+                            net.minecraft.world.entity.monster.Vindicator.class, searchBox).size();
+                    int pillagers = helper.getLevel().getEntitiesOfClass(
+                            net.minecraft.world.entity.monster.Pillager.class, searchBox).size();
+                    MCPirates.LOGGER.info(
+                            "[crash-test] post-dismount mobs near wreck: vindicators={} pillagers={} (envelope-blocks-stripped={})",
+                            vindicators, pillagers, envelopeBlocksStripped[0]);
+                    if (vindicators + pillagers == 0) {
+                        helper.fail("no ground mobs found near wreck after CRASHED — dismount didn't fire?");
+                    }
+                    if (vindicators == 0) {
+                        helper.fail("captain should always swap to Vindicator; got 0 vindicators");
+                    }
+                })
+                .thenExecute(() -> TestSetup.reset(helper))
+                .thenSucceed();
+    }
+
+    /** Verifies the natural-rider migration: pillagers were dropped from the plot-pin model
+     *  and now ride the SubLevel via Sable's automatic trackingSubLevel collision tracking.
+     *  Assertions: ship navigates ≥20 blocks horizontally; every spawned crew UUID is still
+     *  alive and inside an inflated SubLevel bbox after the move (i.e. didn't fall off). */
+    @GameTest(template = "airship_small", timeoutTicks = 1500, setupTicks = 5,
+              batch = "crew_rides_along_during_flight")
+    public static void crewRidesAlongDuringFlight(GameTestHelper helper) {
+        TestSetup.reset(helper);
+
+        final java.util.concurrent.atomic.AtomicReference<Airship> shipRef =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        final Set<UUID> initialCrewUuids = new HashSet<>();
+        final Vector3d initialShipPos = new Vector3d();
+
+        helper.startSequence()
+                .thenExecuteAfter(2, () -> {
+                    BlockPos anchorWorld = TestSetup.findAnchor(helper);
+                    if (anchorWorld == null) {
+                        helper.fail("no MCPShipAnchorBlockEntity in arena");
+                        return;
+                    }
+                    if (!AirshipLiftoffTrigger.activateAnchor(helper.getLevel(), anchorWorld)) {
+                        helper.fail("activateAnchor returned false");
+                    }
+                })
+                .thenWaitUntil(() -> helper.assertTrue(
+                        !AirshipBrain.ships().isEmpty(),
+                        "waiting for AirshipBrain.register"))
+                .thenExecute(() -> {
+                    Airship ship = AirshipBrain.ships().get(0);
+                    shipRef.set(ship);
+                    if (ship.anchoredEntities.isEmpty()) {
+                        helper.fail("expected non-empty crew right after assembly");
+                        return;
+                    }
+                    for (var ae : ship.anchoredEntities) {
+                        initialCrewUuids.add(ae.uuid());
+                    }
+                    initialShipPos.set(ship.subLevel.logicalPose().position());
+                    MCPirates.LOGGER.info(
+                            "[crew-rides-test] {} pillager(s) spawned; ship at ({},{},{})",
+                            initialCrewUuids.size(),
+                            initialShipPos.x, initialShipPos.y, initialShipPos.z);
+                })
+                // Clear LIFTOFF before issuing NAVIGATE — the auto state machine ignores
+                // navDestination while LIFTOFF is still in progress.
+                .thenWaitUntil(() -> {
+                    Airship ship = shipRef.get();
+                    helper.assertTrue(
+                            ship.state != State.LIFTOFF,
+                            "waiting for LIFTOFF to clear (state=" + ship.state + ")");
+                })
+                .thenExecute(() -> {
+                    Airship ship = shipRef.get();
+                    Vector3d pos = ship.subLevel.logicalPose().position();
+                    // Drive far enough that any pillager left behind would drift outside the
+                    // inflated bbox check below. 40 blocks of horizontal travel is well over
+                    // the +5 inflation slack.
+                    AirshipBrain.navigateTo(ship, pos.x + 40.0, pos.z);
+                    MCPirates.LOGGER.info(
+                            "[crew-rides-test] NAVIGATE to ({}, {}); current ship pos ({},{},{})",
+                            pos.x + 40.0, pos.z, pos.x, pos.y, pos.z);
+                })
+                // Wait until the ship has actually travelled ≥20 horizontal blocks.
+                .thenWaitUntil(() -> {
+                    Airship ship = shipRef.get();
+                    Vector3d pos = ship.subLevel.logicalPose().position();
+                    double dx = pos.x - initialShipPos.x;
+                    double dz = pos.z - initialShipPos.z;
+                    double distSq = dx * dx + dz * dz;
+                    helper.assertTrue(
+                            distSq >= 20 * 20,
+                            "waiting for ship to travel ≥20 blocks (now "
+                                    + String.format("%.1f", Math.sqrt(distSq)) + ")");
+                })
+                // The actual assertion: every pillager UUID we recorded at spawn is still
+                // alive AND its world position sits inside an inflated SubLevel bbox. Sable's
+                // rideTick TAIL injection kicks seated entities to world coords each tick,
+                // so e.getX/Y/Z is world-frame.
+                .thenExecute(() -> {
+                    Airship ship = shipRef.get();
+                    var bb = ship.subLevel.boundingBox();
+                    double minX = bb.minX() - 5, minY = bb.minY() - 5, minZ = bb.minZ() - 5;
+                    double maxX = bb.maxX() + 5, maxY = bb.maxY() + 5, maxZ = bb.maxZ() + 5;
+                    Vector3d shipPosNow = ship.subLevel.logicalPose().position();
+                    MCPirates.LOGGER.info(
+                            "[crew-rides-test] post-NAVIGATE ship at ({},{},{}); bbox=({},{},{})..({},{},{})",
+                            shipPosNow.x, shipPosNow.y, shipPosNow.z,
+                            bb.minX(), bb.minY(), bb.minZ(), bb.maxX(), bb.maxY(), bb.maxZ());
+
+                    int alive = 0, onShip = 0, missing = 0, deadOrRemoved = 0, fellOff = 0;
+                    java.util.List<String> failures = new java.util.ArrayList<>();
+                    for (UUID uuid : initialCrewUuids) {
+                        net.minecraft.world.entity.Entity e = helper.getLevel().getEntity(uuid);
+                        if (e == null) {
+                            missing++;
+                            failures.add("crew " + uuid + " entity missing from level");
+                            continue;
+                        }
+                        if (e.isRemoved() || !e.isAlive()) {
+                            deadOrRemoved++;
+                            failures.add("crew " + uuid + " dead/removed at ("
+                                    + e.getX() + "," + e.getY() + "," + e.getZ() + ")");
+                            continue;
+                        }
+                        alive++;
+                        double x = e.getX(), y = e.getY(), z = e.getZ();
+                        boolean inside = x >= minX && x <= maxX
+                                && y >= minY && y <= maxY
+                                && z >= minZ && z <= maxZ;
+                        if (inside) {
+                            onShip++;
+                            MCPirates.LOGGER.info(
+                                    "[crew-rides-test] ✓ crew {} at ({},{},{}) inside bbox (riding={})",
+                                    uuid, String.format("%.2f", x),
+                                    String.format("%.2f", y), String.format("%.2f", z),
+                                    e.getVehicle() != null);
+                        } else {
+                            fellOff++;
+                            failures.add("crew " + uuid + " outside bbox at ("
+                                    + String.format("%.2f", x) + ","
+                                    + String.format("%.2f", y) + ","
+                                    + String.format("%.2f", z) + ") riding="
+                                    + (e.getVehicle() != null));
+                        }
+                    }
+                    MCPirates.LOGGER.info(
+                            "[crew-rides-test] summary: {} initial → alive={} onShip={} missing={} deadOrRemoved={} fellOff={}",
+                            initialCrewUuids.size(), alive, onShip, missing, deadOrRemoved, fellOff);
+                    if (!failures.isEmpty()) {
+                        helper.fail(failures.size() + " crew failed ride-along check: "
+                                + String.join("; ", failures));
+                    }
+                })
+                .thenExecute(() -> TestSetup.reset(helper))
+                .thenSucceed();
+    }
+
     private static void runAssemblyAndPursueTest(GameTestHelper helper,
                                                  String expectedKindName,
                                                  boolean expectCannonMounts) {

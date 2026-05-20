@@ -17,7 +17,8 @@ import net.minecraft.world.item.Items;
 public interface PirateRole {
 
     /** {@code parentLevel}: world that holds the pillager (projectiles spawn here).
-     *  {@code self.plotPos()} → world via {@code ship.subLevel.logicalPose()}. */
+     *  Roles read the pillager's live {@code position()} — they ride Create SeatEntities,
+     *  so world pos is authoritative without any plot-pos translation. */
     void tick(ServerLevel parentLevel, Airship ship, AnchoredEntity self, Pillager pillager,
               LivingEntity target, long now);
 

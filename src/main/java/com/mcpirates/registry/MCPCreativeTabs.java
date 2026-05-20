@@ -3,6 +3,7 @@ package com.mcpirates.registry;
 import com.mcpirates.MCPirates;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.util.Unit;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -20,6 +21,9 @@ public final class MCPCreativeTabs {
                     .icon(() -> new ItemStack(Items.CROSSBOW))
                     .displayItems((params, output) -> {
                         MCPItems.ITEMS.getEntries().forEach(item -> output.accept(item.get()));
+                        ItemStack galleonScroll = new ItemStack(MCPItems.FURLED_BOUNTY.get());
+                        galleonScroll.set(MCPDataComponents.IS_GALLEON_BOUNTY.get(), Unit.INSTANCE);
+                        output.accept(galleonScroll);
                     })
                     .build());
 

@@ -8,9 +8,9 @@ import com.mcpirates.pirates.roles.CannoneerRole;
 import com.mcpirates.pirates.roles.CrossbowmanRole;
 import com.mcpirates.pirates.roles.PirateRole;
 import com.mcpirates.pirates.roles.PirateRoleCodec;
+import com.simibubi.create.content.contraptions.actors.seat.SeatBlock;
 import net.minecraft.nbt.CompoundTag;
 import com.mcpirates.util.FunnyNames;
-import dev.ryanhcode.sable.mixinterface.entity.entities_stick_sublevels.EntityStickExtension;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -20,7 +20,6 @@ import net.minecraft.world.entity.monster.Pillager;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Rotation;
-import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -40,28 +39,25 @@ import java.util.UUID;
  *   <li><b>Gray/light-gray elsewhere</b> → crossbowman, staggered volleys.</li>
  * </ul>
  *
- * <p>Pillagers are {@code NoAi=true}/{@code NoGravity=true} and anchored via Sable's
- * {@code sable$setPlotPosition}; plot-pos isn't persisted, so the brain re-applies it
- * after chunk reload.
+ * <p>Each pillager is mounted onto its Create seat via {@link SeatBlock#sitDown}; the
+ * resulting passenger-of-SeatEntity binding makes them ride the SubLevel naturally with
+ * no need for plot-pinning, NoAi, or NoGravity. Vanilla AI runs unchanged — the seat is
+ * what holds them in place.
  */
 public final class CaptainSpawner {
 
-    /** Stable handle for a Sable-anchored pillager. {@code role} may be shared
-     *  (stateless) or unique (carries per-pirate state). */
-    public record AnchoredEntity(UUID uuid, Vec3 plotPos, PirateRole role) {
+    /** Stable handle for a seated pillager. {@code role} may be shared (stateless) or
+     *  unique (carries per-pirate state). */
+    public record AnchoredEntity(UUID uuid, PirateRole role) {
         public CompoundTag writeNbt() {
             CompoundTag tag = new CompoundTag();
             tag.putUUID("uuid", uuid);
-            tag.putDouble("px", plotPos.x);
-            tag.putDouble("py", plotPos.y);
-            tag.putDouble("pz", plotPos.z);
             tag.put("role", PirateRoleCodec.write(role));
             return tag;
         }
         public static AnchoredEntity readNbt(CompoundTag tag) {
             return new AnchoredEntity(
                     tag.getUUID("uuid"),
-                    new Vec3(tag.getDouble("px"), tag.getDouble("py"), tag.getDouble("pz")),
                     PirateRoleCodec.read(tag.getCompound("role")));
         }
     }
@@ -132,8 +128,8 @@ public final class CaptainSpawner {
         for (Map.Entry<BlockPos, BlockPos> e : cannonToSeat.entrySet()) {
             BlockPos mount = e.getKey();
             BlockPos seat = e.getValue();
-            AnchoredEntity ae = spawnAnchoredPillager(
-                    inner, subLevel, seatToFeetPlot(seat), leverWorldPos,
+            AnchoredEntity ae = spawnSeatedPillager(
+                    inner, subLevel, seat, leverWorldPos,
                     /*tag=*/ null,
                     /*name=*/ Component.literal("Pirate Gunner"),
                     CannoneerRole.INSTANCE);
@@ -144,8 +140,8 @@ public final class CaptainSpawner {
         }
 
         // Captain on the (single) black seat.
-        AnchoredEntity captain = spawnAnchoredPillager(
-                inner, subLevel, seatToFeetPlot(captainSeat), leverWorldPos,
+        AnchoredEntity captain = spawnSeatedPillager(
+                inner, subLevel, captainSeat, leverWorldPos,
                 MCPDataKeys.CAPTAIN_TAG,
                 Component.literal(FunnyNames.nextPirateCaptainName(inner.getRandom())),
                 new CrossbowmanRole(now));
@@ -157,8 +153,8 @@ public final class CaptainSpawner {
             if (reserved.contains(seat)) continue;
             PirateRole role = new CrossbowmanRole(now + (long) volleyStaggerIndex * CREW_FIRE_STAGGER_TICKS);
             volleyStaggerIndex++;
-            AnchoredEntity ae = spawnAnchoredPillager(
-                    inner, subLevel, seatToFeetPlot(seat), leverWorldPos,
+            AnchoredEntity ae = spawnSeatedPillager(
+                    inner, subLevel, seat, leverWorldPos,
                     /*tag=*/ null,
                     Component.literal("Pirate Crewmate"),
                     role);
@@ -172,29 +168,23 @@ public final class CaptainSpawner {
         return new CrewSpawnResult(anchors, cannoneerByMount);
     }
 
-    /** Feet at (x+0.5, y+1, z+0.5) — same convention vanilla uses for seat-mounted mobs. */
-    private static Vec3 seatToFeetPlot(BlockPos seat) {
-        return new Vec3(seat.getX() + 0.5, seat.getY() + 1.0, seat.getZ() + 0.5);
-    }
-
-    private static AnchoredEntity spawnAnchoredPillager(
+    private static AnchoredEntity spawnSeatedPillager(
             Level inner, SubLevel subLevel,
-            Vec3 plotPos,
+            BlockPos seatPlotPos,
             BlockPos airshipAnchorWorldPos,
             String tag,
             Component customName,
             PirateRole role) {
-        Vec3 initialWorldPos = subLevel.logicalPose().transformPosition(plotPos);
-
         Pillager pillager = EntityType.PILLAGER.create(inner);
         if (pillager == null) {
             MCPirates.LOGGER.warn("CaptainSpawner: EntityType.PILLAGER.create returned null for role={}",
                     role.name());
             return null;
         }
-        pillager.moveTo(initialWorldPos.x, initialWorldPos.y, initialWorldPos.z, /*yaw=*/0.0f, /*pitch=*/0.0f);
-        pillager.setNoAi(true);
-        pillager.setNoGravity(true);
+        // Spawn at seat block top; SeatBlock.sitDown immediately overrides position via
+        // startRiding. Vanilla AI runs unchanged — the seat is what holds the pillager.
+        pillager.moveTo(seatPlotPos.getX() + 0.5, seatPlotPos.getY() + 1.0, seatPlotPos.getZ() + 0.5,
+                /*yaw=*/0.0f, /*pitch=*/0.0f);
         pillager.setPersistenceRequired();
         if (tag != null) pillager.addTag(tag);
         ItemStack mainHand = role.mainHandItem();
@@ -205,18 +195,37 @@ public final class CaptainSpawner {
         pillager.setCustomNameVisible(true);
         // Aggressive→CROSSBOW_HOLD pose with arms raised. Skip for unarmed cannoneers.
         pillager.setAggressive(!mainHand.isEmpty());
-        // Anchor stamp is harmless on non-captain crew; keeps promote-to-captain path open.
+        // Anchor stamp powers the bounty path on captain death.
         pillager.getPersistentData().putLong(MCPDataKeys.CAPTAIN_ANCHOR_NBT_KEY, airshipAnchorWorldPos.asLong());
 
         boolean added = inner.addFreshEntity(pillager);
-        // Bind AFTER addFreshEntity so Sable's @Unique mixin field is initialised.
-        ((EntityStickExtension) pillager).sable$setPlotPosition(plotPos);
+        if (!added) {
+            MCPirates.LOGGER.warn("{} spawn rejected by level (subLevel={})",
+                    role.name(), subLevel.getUniqueId());
+            return null;
+        }
+
+        // Suppress vanilla AI now that addFreshEntity has run registerGoals(). We keep
+        // NoAi=false so aiStep continues to fire (Sable's rideTick kick depends on it),
+        // but with both selectors emptied no goals run — vanilla won't pick its own
+        // target, drive LookControl, or fire crossbow on its schedule. Our PirateBrain →
+        // CrossbowmanRole.tick is the sole combat driver.
+        pillager.goalSelector.removeAllGoals(g -> true);
+        pillager.targetSelector.removeAllGoals(g -> true);
+
+        SeatBlock.sitDown(inner, seatPlotPos, pillager);
+        if (pillager.getVehicle() == null) {
+            MCPirates.LOGGER.warn(
+                    "{} failed to mount seat at {} (subLevel={}) — entity not riding after sitDown",
+                    role.name(), seatPlotPos, subLevel.getUniqueId());
+        }
 
         MCPirates.LOGGER.info(
-                "{} spawned: subLevel={} plotPos={} initialWorldPos={} added={}",
-                role.name(), subLevel.getUniqueId(), plotPos, initialWorldPos, added);
+                "{} spawned + seated at plot {} (subLevel={}, riding={})",
+                role.name(), seatPlotPos, subLevel.getUniqueId(),
+                pillager.getVehicle() != null);
 
-        return added ? new AnchoredEntity(pillager.getUUID(), plotPos, role) : null;
+        return new AnchoredEntity(pillager.getUUID(), role);
     }
 
     /** Resolve glue corners in SubLevel space, sort, scan for colour-partitioned seats. */

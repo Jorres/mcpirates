@@ -89,6 +89,9 @@ public final class AirshipStateMachine {
             }
             // NAVIGATE is externally driven; the auto machine never exits it.
             case NAVIGATE -> State.NAVIGATE;
+            // CRASHING + CRASHED are owned by the crash detector — auto machine ignores them.
+            case CRASHING -> State.CRASHING;
+            case CRASHED -> State.CRASHED;
         };
     }
 

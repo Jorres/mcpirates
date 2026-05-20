@@ -67,11 +67,13 @@ public final class CrossbowmanRole implements PirateRole {
             return;
         }
 
-        Vec3 worldPos = ship.subLevel.logicalPose().transformPosition(self.plotPos());
+        // Sable's rideTick injection kicks seated pillagers to world coords each tick;
+        // entity.position() is already world-frame.
+        Vec3 worldPos = pillager.position();
         Vec3 muzzlePos = new Vec3(worldPos.x, worldPos.y + MUZZLE_Y_OFFSET, worldPos.z);
         Vec3 targetPos = new Vec3(target.getX(), target.getEyeY() - 0.15, target.getZ());
 
-        aimAt(pillager, muzzlePos, targetPos);
+        aimAt(pillager, muzzlePos, targetPos, ship);
 
         double dx = targetPos.x - muzzlePos.x;
         double dz = targetPos.z - muzzlePos.z;
@@ -90,11 +92,17 @@ public final class CrossbowmanRole implements PirateRole {
         nextFireTick = now + RELOAD_TICKS;
     }
 
-    /** Sets current + prior-tick rotation fields so the client doesn't lerp from stale. */
-    private static void aimAt(Pillager pillager, Vec3 muzzlePos, Vec3 targetPos) {
-        double dx = targetPos.x - muzzlePos.x;
-        double dy = targetPos.y - muzzlePos.y;
-        double dz = targetPos.z - muzzlePos.z;
+    /** Sets current + prior-tick rotation fields so the client doesn't lerp from stale.
+     *  Sable's renderer rotates kickable entities by the SubLevel's render pose at draw
+     *  time, so we compute the direction in plot frame — the visual result is "world-frame
+     *  aim at target" after the renderer applies the ship's orientation. */
+    private static void aimAt(Pillager pillager, Vec3 muzzlePos, Vec3 targetPos, Airship ship) {
+        Vec3 worldDir = targetPos.subtract(muzzlePos);
+        org.joml.Vector3d plotDir = ship.subLevel.logicalPose().transformNormalInverse(
+                new org.joml.Vector3d(worldDir.x, worldDir.y, worldDir.z));
+        double dx = plotDir.x;
+        double dy = plotDir.y;
+        double dz = plotDir.z;
         double horiz = Math.sqrt(dx * dx + dz * dz);
         float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
         float pitch = (float) -Math.toDegrees(Math.atan2(dy, horiz));
@@ -119,7 +127,8 @@ public final class CrossbowmanRole implements PirateRole {
             if (other == self || other.uuid().equals(self.uuid())) continue;
             Entity oe = parentLevel.getEntity(other.uuid());
             if (oe == null || oe.isRemoved() || !oe.isAlive()) continue;
-            Vec3 otherWorldPos = ship.subLevel.logicalPose().transformPosition(other.plotPos());
+            // Live world pos — Sable kicks seated entities to world coords each tick.
+            Vec3 otherWorldPos = oe.position();
             // Pillagers are taller than feet-pos suggests; sample at muzzle height too.
             Vec3 otherMuzzle = new Vec3(otherWorldPos.x, otherWorldPos.y + MUZZLE_Y_OFFSET, otherWorldPos.z);
             Vec3 rel = otherMuzzle.subtract(shooterPos);

@@ -17,6 +17,13 @@ public interface ShipLift {
     /** Drive the lift hardware to produce {@code setting}'s requested state. */
     void apply(Airship a, LiftSetting setting);
 
+    /** Force the lift hardware OFF (closed valves, no heating). Used when the brain
+     *  abandons altitude control — CRASHING — so any residual balloon air cools
+     *  naturally and the wreck stops trying to lift. Default = apply({@code 0, 0}). */
+    default void shutOff(Airship a) {
+        apply(a, new LiftSetting(0, 0));
+    }
+
     /** Current balloon capacity in m³, or {@code -1} until a balloon attaches.
      *  Used by the brain to decide whether the plateau table can be rebuilt. */
     int queryBalloonCapacity(Airship a);

@@ -30,7 +30,9 @@ import net.minecraft.world.level.saveddata.SavedData;
  */
 public final class GalleonUnlockState extends SavedData {
 
-    public static final String SAVE_NAME = MCPirates.MOD_ID + ":galleon_unlock";
+    // Underscore, not colon: SavedData names become file paths on disk and Windows
+    // rejects colons. Matches the pattern used by DefeatedAirships.SAVE_NAME.
+    public static final String SAVE_NAME = MCPirates.MOD_ID + "_galleon_unlock";
 
     /** Thread-safe mirror read by worldgen workers. Updated whenever the SavedData unlocks
      *  AND when SavedData is first loaded at server start (via {@link #hydrateGlobal}). */

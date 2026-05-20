@@ -178,6 +178,13 @@ public final class AirshipLiftoffTrigger {
         BlockPos offset = result.offset();
         BlockPos slPrimaryAnchorPos = pos.offset(offset);
 
+        // Sim's assembler clears the world block at each contraption position but leaves
+        // some BlockEntities orphaned in the chunk NBT (notably create:analog_lever).
+        // On reload, vanilla `BlockEntity.validateBlockState` throws because block=AIR but
+        // BE=analog_lever. Sweep every position from the world-frame layout and force-
+        // remove any BE the assembler missed.
+        scrubLeftoverBEs(level, kind.name(), pos, worldLayout);
+
         // Post-assembly: re-resolve cannon mounts in SL frame and trigger CBC assembly.
         Layout slLayout = kind.layoutAt(rotation, slPrimaryAnchorPos);
         List<BlockPos> slCannonMounts = new ArrayList<>(slLayout.cannonMounts().size());
@@ -201,6 +208,33 @@ public final class AirshipLiftoffTrigger {
         // Rehydrator's SubLevelObserver saw this allocate too; tryRehydrate skips
         // because the UUID is already registered.
         AirshipBrain.register(airship, AirshipBrain.State.LIFTOFF);
+    }
+
+    /** Remove orphaned BlockEntities at world positions that should have been moved into
+     *  the SubLevel by Sim's assembler. The block at each pos is already AIR; the BE
+     *  entry in the chunk NBT is the leak. */
+    private static void scrubLeftoverBEs(ServerLevel level, String kindName,
+                                         BlockPos leverPos, Layout worldLayout) {
+        List<BlockPos> sweep = new ArrayList<>();
+        sweep.add(leverPos);
+        sweep.addAll(worldLayout.throttleLevers());
+        sweep.add(worldLayout.leftClutch());
+        sweep.add(worldLayout.rightClutch());
+        sweep.addAll(worldLayout.engines());
+        sweep.addAll(worldLayout.cannonMounts());
+        int removed = 0;
+        for (BlockPos p : sweep) {
+            if (p == null) continue;
+            if (level.getBlockState(p).isAir() && level.getBlockEntity(p) != null) {
+                level.removeBlockEntity(p);
+                removed++;
+            }
+        }
+        if (removed > 0) {
+            MCPirates.LOGGER.info(
+                    "({}) scrubbed {} orphaned BE(s) left in world post-assembly",
+                    kindName, removed);
+        }
     }
 
     /** False if the section is HIDDEN (addFreshEntity skips startTracking → spatial
