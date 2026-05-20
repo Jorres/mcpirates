@@ -302,3 +302,44 @@ Sable's API used directly.
   the angular contribution entirely when we just want CoM linvel.
 - Either: drop the `LAST_TARGET_SAMPLE` map + position-delta tracking from
   `RamMovement`; let `Sable.HELPER.getVelocity` be the single source of truth.
+
+---
+
+## `Sable.HELPER.getContaining` misses riders of moving contraptions
+
+**Why it's wrong.** `Sable.HELPER.getContaining(entity)` is the canonical
+"which SubLevel is this entity riding?" lookup, and the docstring on the
+removed `AirshipLiftoffTrigger.findSubLevelByWorldBounds` flagged it: the
+helper keys off the SubLevel's *static plot chunk*, not its world-rendered
+pose. Once a SubLevel translates away from its plot (i.e. the moment a ship
+lifts off), `getContaining` returns `null` for every entity actually riding
+it. The "right" answer is right there in the SubLevel's world-frame bbox; the
+API just doesn't look at it.
+
+**Where it bites us today.**
+
+- `AirshipBrain.findEnemyShip` now falls back to a private
+  `findSubLevelByWorldBounds` (point-test against every SubLevel's
+  `boundingBox()`) when `getContaining` returns null. Without that fallback the
+  ramship couldn't identify its victim once airborne, and `RamMovement`
+  silently dropped into the on-foot orbit branch — caught by the
+  `ramshipInterceptsMovingTarget` gametest at commit time.
+- Anything else that needs "is target X riding ship Y" has to either replicate
+  the bbox scan or accept false negatives on moving SubLevels. The signal is
+  load-bearing for combat dispatch (orbit vs. ram), so the false-negative case
+  is silently-wrong, not loudly-broken.
+
+**Shape of a fix.** Two paths:
+
+1. Upstream the bbox-aware lookup into Sable's `SubLevelHelper` — either as a
+   second method (`getContainingByWorldPos`) or by making `getContaining`
+   itself bbox-aware (the plot-chunk fast path is only correct for stationary
+   SubLevels, which is the degenerate case). Then drop our private helper.
+2. Pull the bbox helper out of `AirshipBrain` into a shared
+   `com.mcpirates.airship.util.SubLevelLookup` so other call sites (if any
+   appear) reuse it instead of re-rolling. Lower-effort but leaves Sable's
+   API misleading for any future caller who reads the obvious-looking
+   `getContaining` and assumes it works.
+
+(1) is the right answer; (2) is the holding pattern until we have appetite
+to send a PR.
