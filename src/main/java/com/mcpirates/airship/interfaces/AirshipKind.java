@@ -5,6 +5,7 @@ import com.mcpirates.airship.common.HotAirBalloonLift;
 import com.mcpirates.airship.common.OrbitMovement;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
@@ -76,6 +77,15 @@ public interface AirshipKind {
                               List<BlockPos> slBurnerPositions) {
         return new HotAirBalloonLift(slThrottleLevers, slBurnerPositions);
     }
+
+    // ───────────── pre-assembly hook ─────────────
+
+    /** Runs in {@link com.mcpirates.airship.AirshipLiftoffTrigger#activateAnchor} after the
+     *  rotation + primary lever have been resolved, and before the default honey-glue AABB
+     *  is dropped + the Sable BFS runs. Default: no-op. Override to spawn additional
+     *  per-ship glue entities, scribble markers, or otherwise mutate the world before
+     *  assembly reads it. */
+    default void preassemble(ServerLevel level, BlockPos leverWorld, Rotation rotation) {}
 
     // ───────────── combat & movement ─────────────
 

@@ -4,6 +4,7 @@ import com.mcpirates.MCPirates;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.anchor.MCPShipAnchorBlockEntity;
 import com.mcpirates.airship.ships.AirshipKinds;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.sublevel.SubLevel;
@@ -11,15 +12,20 @@ import dev.ryanhcode.sable.sublevel.storage.SubLevelRemovalReason;
 import dev.simulated_team.simulated.content.entities.honey_glue.HoneyGlueEntity;
 import dev.simulated_team.simulated.util.SimAssemblyHelper;
 import dev.simulated_team.simulated.util.SimAssemblyHelper.AssemblyResult;
+import net.minecraft.commands.arguments.blocks.BlockStateParser;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.gametest.framework.GameTestInfo;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.JigsawBlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import net.minecraft.world.phys.AABB;
@@ -56,6 +62,9 @@ public final class TestSetup {
             server.getPlayerList().setViewDistance(0);
         }
         purgeSubLevels(level);
+        // Always render jigsaws in the freshly-placed arena — see replaceJigsaws docs.
+        // Idempotent: end-of-test reset over an emptied arena is a no-op walk.
+        replaceJigsaws(helper);
     }
 
     /** Print the world coordinates of the arena bbox so test logs can correlate
@@ -157,6 +166,44 @@ public final class TestSetup {
             helper.fail("SimAssemblyHelper.assembleFromSingleBlock threw " + e);
             return null;
         }
+    }
+
+    /**
+     * Walk the test arena's bbox and rewrite every {@code minecraft:jigsaw} block to its
+     * {@code final_state} (falling back to air when the field is empty or unparseable).
+     *
+     * <p>Real ships will be placed with rendered jigsaws in the world (worldgen drives
+     * the assembler via {@code /place jigsaw} or pool expansion), and tests trip over
+     * jigsaws that don't become part of the contraption — so by doing that we simulate
+     * the real world. Call this before {@code AirshipLiftoffTrigger.activateAnchor} in
+     * any test whose arena NBT was authored with raw jigsaw blocks (keel marker,
+     * pad-top marker, etc.).
+     */
+    public static void replaceJigsaws(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        AABB bb = helper.getBounds();
+        var lookup = BuiltInRegistries.BLOCK.asLookup();
+        int replaced = 0, skipped = 0;
+        for (BlockPos pos : BlockPos.betweenClosed(
+                (int) Math.floor(bb.minX), (int) Math.floor(bb.minY), (int) Math.floor(bb.minZ),
+                (int) Math.ceil(bb.maxX) - 1, (int) Math.ceil(bb.maxY) - 1, (int) Math.ceil(bb.maxZ) - 1)) {
+            BlockEntity be = level.getBlockEntity(pos);
+            if (!(be instanceof JigsawBlockEntity jbe)) continue;
+            String finalStateStr = jbe.getFinalState();
+            BlockState target = Blocks.AIR.defaultBlockState();
+            if (finalStateStr != null && !finalStateStr.isEmpty()) {
+                try {
+                    target = BlockStateParser.parseForBlock(lookup, finalStateStr, false).blockState();
+                } catch (CommandSyntaxException e) {
+                    skipped++;
+                    continue;
+                }
+            }
+            level.setBlock(pos, target, Block.UPDATE_ALL);
+            replaced++;
+        }
+        MCPirates.LOGGER.info("[replaceJigsaws] arena={} replaced={} skipped={}",
+                bb, replaced, skipped);
     }
 
     public static BlockPos findAnchor(GameTestHelper helper) {

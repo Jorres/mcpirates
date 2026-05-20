@@ -6,6 +6,7 @@ import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipBrain.State;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.world.phys.AABB;
@@ -44,6 +45,12 @@ public final class AirshipGameTests {
               batch = "assembles_crossbow_board")
     public static void assemblesCrossbowBoardKindAndActuates(GameTestHelper helper) {
         runAssemblyAndPursueTest(helper, "crossbow_board", false);
+    }
+
+    @GameTest(template = "firecracker", timeoutTicks = 400, setupTicks = 5,
+              batch = "assembles_firecracker")
+    public static void assemblesFirecrackerKindAndActuates(GameTestHelper helper) {
+        runAssemblyAndPursueTest(helper, "firecracker", false);
     }
 
     @GameTest(template = "airship_small", timeoutTicks = 400, setupTicks = 5,
@@ -484,13 +491,27 @@ public final class AirshipGameTests {
                 .thenExecute(() -> {
                     Airship ship = shipRef.get();
                     Vector3d pos = ship.subLevel.logicalPose().position();
-                    // Drive far enough that any pillager left behind would drift outside the
-                    // inflated bbox check below. 40 blocks of horizontal travel is well over
-                    // the +5 inflation slack.
-                    AirshipBrain.navigateTo(ship, pos.x + 40.0, pos.z);
+                    double destX = pos.x + 40.0;
+                    double destZ = pos.z;
+                    // Force-load the chunks along the navigate path. Without this the
+                    // ship's SubLevel deactivates when it crosses the test arena's chunk
+                    // boundary and stops ticking — passes in isolation (arena at origin)
+                    // but fails in the full suite (arena offset thousands of blocks).
+                    // See ramshipInterceptsMovingTarget for the same pattern.
+                    ServerLevel level = helper.getLevel();
+                    ChunkPos startChunk = new ChunkPos(new BlockPos((int) pos.x, 0, (int) pos.z));
+                    ChunkPos destChunk = new ChunkPos(new BlockPos((int) destX, 0, (int) destZ));
+                    for (ChunkPos centre : new ChunkPos[]{startChunk, destChunk}) {
+                        for (int dx = -4; dx <= 4; dx++) {
+                            for (int dz = -4; dz <= 4; dz++) {
+                                level.setChunkForced(centre.x + dx, centre.z + dz, true);
+                            }
+                        }
+                    }
+                    AirshipBrain.navigateTo(ship, destX, destZ);
                     MCPirates.LOGGER.info(
                             "[crew-rides-test] NAVIGATE to ({}, {}); current ship pos ({},{},{})",
-                            pos.x + 40.0, pos.z, pos.x, pos.y, pos.z);
+                            destX, destZ, pos.x, pos.y, pos.z);
                 })
                 // Wait until the ship has actually travelled ≥20 horizontal blocks.
                 .thenWaitUntil(() -> {

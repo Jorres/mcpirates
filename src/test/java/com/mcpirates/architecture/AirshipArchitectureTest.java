@@ -104,7 +104,7 @@ public class AirshipArchitectureTest {
      * updating {@link #EXPECTED_AIRSHIP_KIND_METHODS} alongside, which forces the
      * conversation.
      */
-    private static final int EXPECTED_AIRSHIP_KIND_METHODS = 13;
+    private static final int EXPECTED_AIRSHIP_KIND_METHODS = 14;
 
     @Test
     void airshipKindInterfaceMethodCount() {

@@ -105,6 +105,7 @@ public final class AirshipLiftoffTrigger {
             if (DefeatedAirships.get(level).containsExact(leverPos)) {
                 return false;
             }
+            kind.preassemble(level, leverPos, rotation);
             if (!spawnHoneyGlue(level, leverPos, rotation, kind)) return false;
             activateShip(level, leverPos, kind, rotation);
             return true;

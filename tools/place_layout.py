@@ -122,20 +122,30 @@ def load_all():
     return structures, pools
 
 # ---------- Classification ----------
+PAD_JIGSAW_NAME = f"{NS}:landing_pad_top"
+
 def classify(structures, pools):
-    """Return (pads, ships, sheriff_root). pads/ships are lists of struct ids."""
+    """Return (pads, ships, sheriff_root, ship_pool_ids).
+    Ships are any pool elements reachable from a landing_pad_top jigsaw — agnostic
+    to the pool's name, so pools renamed off the legacy `airships_*` prefix
+    (e.g. `width_9_landing_pad`) still resolve correctly."""
     pads = sorted([sid for sid in structures if sid.endswith("_pad")])
-    # Ships = elements of any airships_* pool
+    ship_pool_ids = set()
     ships = set()
-    for pid, elts in pools.items():
-        if pid.startswith(f"{NS}:airships"):
-            for e in elts:
-                ships.add(e)
-    ships = sorted(ships & set(structures))
+    for pad in pads:
+        s = structures[pad]
+        for j in s.jigsaws:
+            if j.get("name") != PAD_JIGSAW_NAME: continue
+            pool = j.get("pool")
+            if not pool or pool not in pools: continue
+            ship_pool_ids.add(pool)
+            for e in pools[pool]:
+                if e in structures: ships.add(e)
+    ships = sorted(ships)
     sheriff_root = f"{NS}:village/common/sheriff_station"
     if sheriff_root not in structures:
         sheriff_root = None
-    return pads, ships, sheriff_root
+    return pads, ships, sheriff_root, ship_pool_ids
 
 # ---------- Mating-jigsaw alignment ----------
 FACE_UNIT = {
@@ -156,10 +166,11 @@ def find_jig_by_name(s, name):
     return None
 
 # ---------- Appendage graph walk ----------
-def walk_appendages(parent_id, structures, pools, exclude_pool_prefixes=()):
+def walk_appendages(parent_id, structures, pools, exclude_pool_ids=()):
     """Return list of (child_id, parent_id, parent_jigsaw, child_jigsaw) tuples,
     each entry naming one piece to place via mating-jigsaw alignment.
-    Skips pools whose id starts with any prefix in exclude_pool_prefixes."""
+    Skips pools whose id is in exclude_pool_ids (set or iterable of pool ids)."""
+    exclude = set(exclude_pool_ids)
     out = []
     seen = set()
     def rec(pid):
@@ -170,7 +181,7 @@ def walk_appendages(parent_id, structures, pools, exclude_pool_prefixes=()):
         for j in s.jigsaws:
             pool = j.get("pool")
             if not pool or pool == "minecraft:empty": continue
-            if any(pool.startswith(pref) for pref in exclude_pool_prefixes): continue
+            if pool in exclude: continue
             elements = pools.get(pool, [])
             for child_id in elements:
                 child = structures.get(child_id)
@@ -276,17 +287,17 @@ def main():
     args = parser.parse_args()
 
     structures, pools = load_all()
-    pads, ships, sheriff_root = classify(structures, pools)
+    pads, ships, sheriff_root, ship_pool_ids = classify(structures, pools)
     commands = []
     commands.append("# === pre-layout: forceload ===")
     commands.append("forceload add -16 -16 128 192")
     z_cursor = 0
 
     if not args.ships_only:
-        # Row 1: pads + non-ship appendages (exclude airships_* pools)
+        # Row 1: pads + non-ship appendages (exclude any pool reachable from landing_pad_top)
         row1_groups = []
         for pad in pads:
-            edges = walk_appendages(pad, structures, pools, exclude_pool_prefixes=(f"{NS}:airships",))
+            edges = walk_appendages(pad, structures, pools, exclude_pool_ids=ship_pool_ids)
             row1_groups.append((pad, pad, edges))
         commands.append(f"# === ROW 1: pads + appendages, z={z_cursor} ===")
         depth1 = build_row(commands, "row1-pad+appendages", row1_groups, z_cursor, structures)
@@ -300,10 +311,28 @@ def main():
     z_cursor += depth_ships + ROW_GUTTER
 
     if not args.ships_only:
+        # One row-3 slot per (pad, ship) — sharing a pad pool would otherwise stack
+        # multiple ships at the same mating coords and overwrite each other.
         row3_groups = []
         for pad in pads:
-            edges = walk_appendages(pad, structures, pools)
-            row3_groups.append((pad + " (assembled)", pad, edges))
+            non_ship_edges = walk_appendages(pad, structures, pools, exclude_pool_ids=ship_pool_ids)
+            pad_ships = []
+            s = structures[pad]
+            for j in s.jigsaws:
+                if j.get("name") != PAD_JIGSAW_NAME: continue
+                pool = j.get("pool")
+                if pool in ship_pool_ids:
+                    for ship_id in pools.get(pool, []):
+                        if ship_id in structures and (pad, j, ship_id) not in pad_ships:
+                            pad_ships.append((pad, j, ship_id))
+            if not pad_ships:
+                continue
+            for _, pad_jig, ship_id in pad_ships:
+                ship_jig = find_jig_by_name(structures[ship_id], pad_jig.get("target"))
+                if ship_jig is None: continue
+                edges = list(non_ship_edges)
+                edges.append((ship_id, pad, pad_jig, ship_jig))
+                row3_groups.append((f"{pad} + {ship_id}", pad, edges))
         commands.append(f"# === ROW 3: full assemblies, z={z_cursor} ===")
         depth3 = build_row(commands, "row3-assembled", row3_groups, z_cursor, structures)
         z_cursor += depth3 + ROW_GUTTER

@@ -125,6 +125,18 @@ public final class OrbitMovementTests {
         runOrbitTest(helper, -1);
     }
 
+    @GameTest(template = "firecracker", timeoutTicks = 5500, setupTicks = 5,
+              batch = "orbit_firecracker_ccw", skyAccess = true)
+    public static void firecrackerOrbitsCcw(GameTestHelper helper) {
+        runOrbitTest(helper, +1);
+    }
+
+    @GameTest(template = "firecracker", timeoutTicks = 5500, setupTicks = 5,
+              batch = "orbit_firecracker_cw", rotationSteps = 2, skyAccess = true)
+    public static void firecrackerOrbitsCw(GameTestHelper helper) {
+        runOrbitTest(helper, -1);
+    }
+
     private static void runOrbitTest(GameTestHelper helper, int expectedOrbitDir) {
         ServerLevel level = helper.getLevel();
         AtomicReference<Airship> shipRef = new AtomicReference<>();

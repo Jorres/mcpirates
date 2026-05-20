@@ -1,5 +1,5 @@
 {
-  "name": "mcpirates:airships_ram_only",
+  "name": "mcpirates:width_9_landing_pad",
   "fallback": "minecraft:empty",
   "elements": [
     {
@@ -7,6 +7,15 @@
       "element": {
         "element_type": "minecraft:single_pool_element",
         "location": "mcpirates:ramship",
+        "processors": { "processors": [] },
+        "projection": "rigid"
+      }
+    },
+    {
+      "weight": 1,
+      "element": {
+        "element_type": "minecraft:single_pool_element",
+        "location": "mcpirates:firecracker",
         "processors": { "processors": [] },
         "projection": "rigid"
       }

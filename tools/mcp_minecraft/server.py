@@ -37,7 +37,28 @@ _bridge = BridgeClient(_HOST, int(os.environ.get("MC_BRIDGE_PORT", "25580")))
 mcp = FastMCP("mcpirates")
 
 
+def _effective_cmd(command: str) -> str:
+    """Strip leading slash and any `execute ... run ` prefixes (possibly nested)
+    to return the actual command being executed."""
+    s = command.strip().lstrip("/")
+    while True:
+        low = s.lower()
+        if not low.startswith("execute "):
+            return s
+        idx = low.find(" run ")
+        if idx == -1:
+            return s
+        s = s[idx + len(" run "):].lstrip()
+
+
 def _run(command: str) -> str:
+    eff = _effective_cmd(command)
+    head = eff.split(" ", 1)[0].lower() if eff else ""
+    if head == "fill":
+        return (
+            "[refused: /fill is forbidden through the MCP — it is destructive "
+            "and easy to misuse as a query. Use read_block / setblock instead.]"
+        )
     try:
         return _rcon.cmd(command)
     except (OSError, RconError) as e:
@@ -180,14 +201,6 @@ def gamemode(mode: str = "creative", target: str = "@s") -> str:
 def setblock(x: int, y: int, z: int, block: str, mode: str = "replace") -> str:
     """`/setblock X Y Z BLOCK [MODE]`. BLOCK accepts blockstates and NBT."""
     return _run(f"setblock {x} {y} {z} {block} {mode}")
-
-
-@mcp.tool()
-def fill(
-    x1: int, y1: int, z1: int, x2: int, y2: int, z2: int, block: str, mode: str = "replace"
-) -> str:
-    """`/fill` between two corners."""
-    return _run(f"fill {x1} {y1} {z1} {x2} {y2} {z2} {block} {mode}")
 
 
 @mcp.tool()

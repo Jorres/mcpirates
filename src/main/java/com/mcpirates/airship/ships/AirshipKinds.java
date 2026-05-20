@@ -3,6 +3,7 @@ package com.mcpirates.airship.ships;
 import com.mcpirates.airship.interfaces.AirshipKind;
 import com.mcpirates.airship.ships.airship_small.AirshipSmallKind;
 import com.mcpirates.airship.ships.crossbow_board.CrossbowBoardKind;
+import com.mcpirates.airship.ships.firecracker.FirecrackerKind;
 import com.mcpirates.airship.ships.galleon.GalleonKind;
 import com.mcpirates.airship.ships.ramship.RamshipKind;
 
@@ -23,6 +24,7 @@ public final class AirshipKinds {
     public static final List<AirshipKind> ALL = List.of(
             AirshipSmallKind.INSTANCE,
             CrossbowBoardKind.INSTANCE,
+            FirecrackerKind.INSTANCE,
             GalleonKind.INSTANCE,
             RamshipKind.INSTANCE
     );
