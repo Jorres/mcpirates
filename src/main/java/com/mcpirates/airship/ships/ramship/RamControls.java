@@ -1,5 +1,6 @@
 package com.mcpirates.airship.ships.ramship;
 
+import com.mcpirates.MCPirates;
 import com.mcpirates.airship.Airship;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.ShipTelemetry;
@@ -193,7 +194,7 @@ public final class RamControls implements ShipControls {
             stuckSamples++;
             if (stuckSamples >= STUCK_SAMPLES_THRESHOLD) {
                 retreatUntilTick = now + RETREAT_TICKS;
-                com.mcpirates.MCPirates.LOGGER.info(
+                MCPirates.LOGGER.info(
                         "ramship {} retreat ARMED at t={}: stuck for {} samples in bbox of {} at dist={}",
                         a.subLevel.getUniqueId(), now, stuckSamples,
                         contact.getUniqueId(), String.format("%.2f", dist));
@@ -300,7 +301,7 @@ public final class RamControls implements ShipControls {
             return;
         }
         if (retreatUntilTick != Long.MIN_VALUE) {
-            com.mcpirates.MCPirates.LOGGER.info(
+            MCPirates.LOGGER.info(
                     "ramship {} retreat DROPPED at t={} (state={})",
                     a.subLevel.getUniqueId(), now, a.state);
             retreatUntilTick = Long.MIN_VALUE;

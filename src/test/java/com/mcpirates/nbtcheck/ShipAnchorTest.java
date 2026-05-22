@@ -63,14 +63,28 @@ class ShipAnchorTest {
         assertTrue(anchorPaletteIdx >= 0,
                 shipId + " palette has no '" + ANCHOR_BLOCK + "' — ship NBT must bake the anchor in directly");
 
-        // Anchor palette entry must carry no Properties: the block then loads via its default
-        // state (FACING=NORTH), and structure-template placement rotates the FACING into the
-        // correct world-frame value. If someone re-saves an NBT in-game and bakes a non-NORTH
-        // facing into the palette, AirshipKind.detectRotation will misread the rotation.
+        // Anchor palette entry must load at the default state (FACING=NORTH): either no
+        // Properties at all, or Properties that pin facing=north (in-game SAVE bakes the
+        // default state into the palette explicitly — that's fine). Anything else means
+        // someone rotated the anchor before saving, and AirshipKind.detectRotation will
+        // misread the rotation post-placement. See MCPShipAnchorBlock.NBT_FACING.
         Object props = s.palette.get(anchorPaletteIdx).get("Properties");
-        assertNull(props,
-                shipId + " ship_anchor palette entry has unexpected Properties: " + props
-                        + " — strip them so the block uses its default state. See MCPShipAnchorBlock.NBT_FACING.");
+        if (props != null) {
+            assertTrue(props instanceof java.util.Map,
+                    shipId + " ship_anchor Properties is not a Map: " + props);
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> propsMap = (java.util.Map<String, Object>) props;
+            // Strict allowlist: every key must be one we expect to see baked at default.
+            // Only `facing=north` is permitted; anything else (or any other key) fails.
+            for (var e : propsMap.entrySet()) {
+                assertEquals("facing", e.getKey(),
+                        shipId + " ship_anchor palette has unexpected property '" + e.getKey()
+                                + "'=" + e.getValue() + " — strip non-default properties.");
+                assertEquals("north", e.getValue(),
+                        shipId + " ship_anchor palette has facing=" + e.getValue()
+                                + ", expected north (default). AirshipKind.detectRotation will misread.");
+            }
+        }
 
         List<BlockRef> hits = new ArrayList<>();
         for (BlockRef b : s.blocks) {

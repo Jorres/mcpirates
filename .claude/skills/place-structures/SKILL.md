@@ -30,6 +30,7 @@ Via RCON:
 - `give Dev minecraft:structure_block 8`
 - `item replace entity Dev armor.head with create:goggles 1` — equips Create's Engineer's Goggles (the Create item the user calls "architect goggles") directly to the head slot so Dev is wearing them on load, not holding them. If Create renames the item, search `item.create.*goggles` in sources.
 - `gamerule doDaylightCycle false` and `time set day` — pin the world to noon so the bbox overlays read cleanly and structures aren't reviewed in the dark.
+- `mcpirates lift off` — **REQUIRED** before placement. Auto-liftoff is ON by default; without this toggle, every ship template placed by `/place template` gets assembled into a SubLevel the same tick and its world blocks are stripped, leaving pads visible but ships looking empty.
 
 ## 3. Discover structures
 

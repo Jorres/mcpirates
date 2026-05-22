@@ -13,3 +13,5 @@ We do not respect backwards compatibility. We are developing the mod and have NO
 Remember you have ./docs folder and consult it when needed.
 
 ALWAYS work in master. Never use workspaces even though it is hinted by Claude harness.
+
+Never use fully-qualified class names inline (e.g. `com.mcpirates.MCPirates.LOGGER`, `org.slf4j.event.Level.DEBUG`). Add a proper top-of-file import; for name collisions, use a static import.

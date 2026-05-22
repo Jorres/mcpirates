@@ -48,6 +48,9 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import static org.slf4j.event.Level.DEBUG;
+import static org.slf4j.event.Level.INFO;
+
 /** Per-tick flight controller. State machine (LIFTOFF → PURSUE → RETURN → HOVER) +
  *  tank-steer via clutches + altitude via {@link PlateauTable}.
  *
@@ -457,19 +460,15 @@ public final class AirshipBrain {
         if (lift != null) {
             a.lift.apply(a, lift);
         }
-        long bucket = System.currentTimeMillis() / 2000;
-        if (bucket != a.lastThrottleLogBucket) {
-            a.lastThrottleLogBucket = bucket;
-            // Mirror chooseLiftSetting's targetY formula so the log shows what was actually
-            // committed (pre velocity-bias). Pursue Y comes from the movement strategy's
-            // goal; other states use cruise altitude.
-            double cruiseY = a.airpadAnchor.getY() + a.kind.cruiseRise();
-            double floor = maxGroundAhead + a.kind.minAltAboveGround() + 2.0;
-            double targetY = (a.state == State.PURSUE && !Double.isNaN(a.lastGoalY))
-                    ? Math.max(a.lastGoalY, floor)
-                    : Math.max(cruiseY, floor);
-            ShipTelemetry.snapshot(a, "throttle", lift, targetY);
-        }
+        // Mirror chooseLiftSetting's targetY formula so the log shows what was actually
+        // committed (pre velocity-bias). Pursue Y comes from the movement strategy's
+        // goal; other states use cruise altitude.
+        double cruiseY = a.airpadAnchor.getY() + a.kind.cruiseRise();
+        double floor = maxGroundAhead + a.kind.minAltAboveGround() + 2.0;
+        double targetY = (a.state == State.PURSUE && !Double.isNaN(a.lastGoalY))
+                ? Math.max(a.lastGoalY, floor)
+                : Math.max(cruiseY, floor);
+        ShipTelemetry.snapshotWithLift(a, "throttle", lift, targetY, DEBUG);
     }
 
 
@@ -558,7 +557,7 @@ public final class AirshipBrain {
         a.plateauTable = PlateauTable.build(
                 a.parentLevel, mass, liftStrength, nBurners, vMaxPerBurner, shipPos.x, shipPos.z);
         a.plateauTableCapacity = cap;
-        ShipTelemetry.snapshot(a, "plateau-built");
+        ShipTelemetry.snapshot(a, "plateau-built", INFO);
         return a.plateauTable;
     }
 

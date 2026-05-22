@@ -103,7 +103,7 @@ public final class BridgeServer {
                 out.flush();
             }
         } catch (IOException e) {
-            MCPirates.LOGGER.debug("bridge client disconnected: {}", e.toString());
+            MCPirates.LOGGER.info("bridge client disconnected: {}", e.toString());
         }
     }
 

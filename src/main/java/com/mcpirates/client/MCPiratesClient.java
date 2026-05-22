@@ -20,7 +20,6 @@ public final class MCPiratesClient {
 
     @SubscribeEvent
     public static void onClientSetup(FMLClientSetupEvent event) {
-        MCPirates.LOGGER.info("[{}] client setup", MCPirates.MOD_ID);
         // ItemProperties is not thread-safe; defer to the client thread.
         event.enqueueWork(() -> ItemProperties.register(
                 MCPItems.FURLED_BOUNTY.get(),

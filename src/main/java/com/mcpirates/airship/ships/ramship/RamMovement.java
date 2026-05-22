@@ -1,5 +1,6 @@
 package com.mcpirates.airship.ships.ramship;
 
+import com.mcpirates.MCPirates;
 import com.mcpirates.airship.Airship;
 import com.mcpirates.airship.common.OrbitMovement;
 import com.mcpirates.airship.interfaces.MovementBehavior;
@@ -76,15 +77,11 @@ public final class RamMovement implements MovementBehavior {
         // returns m/s — divide by SERVER_TPS=20 to bring it into the same frame,
         // otherwise the intercept math compares a per-second target velocity to a
         // per-tick estimate and silently returns garbage.
-        double tx, ty, tz, vx, vz, sableVx, sableVz;
+        double tx, ty, tz, vx, vz;
         java.util.UUID targetId;
         Vector3d tPos = targetShip.logicalPose().position();
         tx = tPos.x; ty = tPos.y; tz = tPos.z;
         targetId = targetShip.getUniqueId();
-        // Keep Sable's reading for diagnostics — it's expected to be 0 for kinematic SubLevels.
-        Vector3d tVel = dev.ryanhcode.sable.Sable.HELPER.getVelocity(
-                ship.parentLevel, targetShip, tPos, new Vector3d());
-        sableVx = tVel.x / 20.0; sableVz = tVel.z / 20.0;
 
         // Position-delta velocity (per-ramship sample state). On first sample, gap >stale,
         // or target identity changed, fall back to 0 — solver will then aim direct.
@@ -110,19 +107,19 @@ public final class RamMovement implements MovementBehavior {
         double leadX = leadValid ? tx + vx * tInt : tx;
         double leadZ = leadValid ? tz + vz * tInt : tz;
 
-        if (lastDiagTick == Long.MIN_VALUE || now - lastDiagTick >= DIAG_LOG_INTERVAL_TICKS) {
+        if (MCPirates.LOGGER.isDebugEnabled()
+                && (lastDiagTick == Long.MIN_VALUE || now - lastDiagTick >= DIAG_LOG_INTERVAL_TICKS)) {
             lastDiagTick = now;
             String tStr = Double.isNaN(tInt) ? "NaN"
                     : tInt > MAX_INTERCEPT_TICKS ? String.format("capped(%.0f>%.0f)", tInt, MAX_INTERCEPT_TICKS)
                     : tInt <= 0 ? String.format("nonpos(%.1f)", tInt)
                     : String.format("%.0f", tInt);
             double deltaBlocks = Math.hypot(leadX - tx, leadZ - tz);
-            com.mcpirates.MCPirates.LOGGER.info(
-                    "ramship goal: ship=({}) target=({},{}) Vdelta=({},{}) Vsable=({},{}) | direct=({},{}) lookahead=({},{}) t={} Δ={} → using={}",
+            MCPirates.LOGGER.debug(
+                    "ramship goal: ship=({}) target=({},{}) Vdelta=({},{}) | direct=({},{}) lookahead=({},{}) t={} Δ={} → using={}",
                     String.format("%.1f,%.1f", shipPos.x, shipPos.z),
                     String.format("%.1f", tx), String.format("%.1f", tz),
                     String.format("%.3f", vx), String.format("%.3f", vz),
-                    String.format("%.3f", sableVx), String.format("%.3f", sableVz),
                     String.format("%.1f", tx), String.format("%.1f", tz),
                     String.format("%.1f", leadX), String.format("%.1f", leadZ),
                     tStr,

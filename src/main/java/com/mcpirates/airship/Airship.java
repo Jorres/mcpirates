@@ -1,5 +1,6 @@
 package com.mcpirates.airship;
 
+import com.mcpirates.MCPirates;
 import com.mcpirates.airship.anchor.MCPShipAnchorBlock;
 import com.mcpirates.airship.hardware.HotAirBurners;
 import com.mcpirates.airship.interfaces.AirshipKind;
@@ -112,11 +113,6 @@ public final class Airship {
      *  lever pos and may sit below the keel). Re-captured after chunk reload. */
     public double liftoffStartY = Double.NaN;
 
-    public long lastAimLogBucket = -1;
-    public long lastThrottleLogBucket = -1;
-    public boolean hasAimedOnce = false;
-    public boolean hasFiredOnce = false;
-
     /** Free-form per-ship state for combat strategy (broadside: next-cannon index). */
     public int combatCursor = -1;
 
@@ -201,11 +197,10 @@ public final class Airship {
      *   <li>State machine: {@code state, stateEnteredTick, navDestination}.</li>
      *   <li>Crew: {@code anchors, cannoneers}.</li>
      * </ul>
-     * Everything else on {@code Airship} (timers, telemetry, log dedup, combat cursor,
-     * orbit state, balloon cache, LIFTOFF rise samples) is soft-restart-tolerant —
-     * defaults regenerate on the next brain decision and no behaviour-correctness
-     * property depends on the prior value. See {@code docs/tech-debt.md} ("Log-dedup
-     * state on Airship may not be earning its keep") for the audit.
+     * Everything else on {@code Airship} (timers, telemetry, combat cursor, orbit
+     * state, balloon cache, LIFTOFF rise samples) is soft-restart-tolerant — defaults
+     * regenerate on the next brain decision and no behaviour-correctness property
+     * depends on the prior value.
      */
     public CompoundTag writeNbt() {
         CompoundTag tag = new CompoundTag();
@@ -239,8 +234,8 @@ public final class Airship {
 
     /** Returns null if the tag is unparseable (unknown kind, etc.); caller logs.
      *  The returned Airship has its {@code controls}/{@code lift} actuators already rebuilt;
-     *  soft-restart-tolerant fields (timers / telemetry / log dedup / combat / orbit /
-     *  balloon cache) take their default values. */
+     *  soft-restart-tolerant fields (timers / telemetry / combat / orbit / balloon
+     *  cache) take their default values. */
     public static Airship readNbt(ServerLevel parentLevel, ServerSubLevel subLevel, CompoundTag tag) {
         String kindName = tag.getString("kind");
         AirshipKind kind = AirshipKinds.byName(kindName);
@@ -288,7 +283,7 @@ public final class Airship {
                 plotBox.minX(), plotBox.minY(), plotBox.minZ(),
                 plotBox.maxX(), plotBox.maxY(), plotBox.maxZ());
         if (slBurnerPositions.isEmpty()) {
-            com.mcpirates.MCPirates.LOGGER.warn(
+            MCPirates.LOGGER.warn(
                     "({}) no Hot Air Burners found in SubLevel plot; lift control disabled",
                     a.kind.name());
         }

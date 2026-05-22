@@ -262,7 +262,7 @@ public final class AirshipLiftoffTrigger {
                         ? lc.getFullStatus() : null;
         if ("HIDDEN".equals(visibilityStr)) {
             glue.discard();
-            MCPirates.LOGGER.info(
+            MCPirates.LOGGER.debug(
                     "deferred honey glue spawn for {} {} (chunk=({}, {}) at status {}, section HIDDEN) — retry next pass",
                     kind.name(), anchorPos,
                     glue.chunkPosition().x, glue.chunkPosition().z, chunkStatus);
@@ -346,8 +346,8 @@ public final class AirshipLiftoffTrigger {
         } catch (ReflectiveOperationException e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             MCPirates.LOGGER.error(
-                    "CannonMountBlockEntity.assemble() failed at {}: {}",
-                    expectedMountPos, cause.toString());
+                    "CannonMountBlockEntity.assemble() failed at {}",
+                    expectedMountPos, cause);
             return null;
         }
     }

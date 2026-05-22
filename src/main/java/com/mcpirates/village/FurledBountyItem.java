@@ -98,13 +98,6 @@ public final class FurledBountyItem extends Item {
         if (!player.getAbilities().instabuild) {
             held.shrink(1);
         }
-        if (held.isEmpty()) {
-            player.setItemInHand(hand, map);
-        } else {
-            if (!player.getInventory().add(map)) {
-                player.drop(map, /*includeThrowerName=*/false);
-            }
-        }
 
         level.playSound(null, player.getX(), player.getY(), player.getZ(),
                 SoundEvents.BOOK_PAGE_TURN, SoundSource.PLAYERS, 1.0F, 1.0F);
@@ -115,6 +108,15 @@ public final class FurledBountyItem extends Item {
                 isGalleon ? "BOSS galleon" : "regular outpost",
                 found, airships.defeatedCount());
 
+        // Returning the map (different reference) lets vanilla's setItemInHand place it
+        // in the slot. Returning `held` here would let vanilla's "if empty, clear slot"
+        // branch clobber any manual setItemInHand we did above.
+        if (held.isEmpty()) {
+            return InteractionResultHolder.consume(map);
+        }
+        if (!player.getInventory().add(map)) {
+            player.drop(map, /*includeThrowerName=*/false);
+        }
         return InteractionResultHolder.consume(held);
     }
 

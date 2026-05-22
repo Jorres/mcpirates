@@ -78,7 +78,9 @@ public final class MCPCommands {
                                 .executes(MCPCommands::debugPhysics))
                         .then(Commands.literal("getblock")
                                 .then(Commands.argument("pos", net.minecraft.commands.arguments.coordinates.BlockPosArgument.blockPos())
-                                        .executes(MCPCommands::debugGetBlock))));
+                                        .executes(MCPCommands::debugGetBlock)))
+                        .then(Commands.literal("sublevels")
+                                .executes(MCPCommands::debugSubLevels)));
 
         event.getDispatcher().register(root);
     }
@@ -268,6 +270,84 @@ public final class MCPCommands {
                 }
             }
         }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    // ────────────────────────────── /mcpirates debug sublevels ──────────────────────────────
+
+    /**
+     * One-line-per-SubLevel census: pose, mass, plot AABB, and a block-type histogram
+     * (top by count). Useful for identifying "what is this SubLevel" when a swivel
+     * bearing or torsion spring spawns more than expected.
+     */
+    private static int debugSubLevels(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        var container = dev.ryanhcode.sable.api.sublevel.SubLevelContainer.getContainer(level);
+        if (container == null) {
+            ctx.getSource().sendFailure(Component.literal("No SubLevelContainer in this level"));
+            return 0;
+        }
+
+        int total = 0;
+        for (var sl : container.getAllSubLevels()) {
+            if (sl.isRemoved()) continue;
+            total++;
+            var pos = sl.logicalPose().position();
+            var mt = sl.getMassTracker();
+            var pb = sl.getPlot().getBoundingBox();
+
+            // Census all non-air blocks. Also collect block-entity ids — these usually
+            // identify the SubLevel's purpose better than raw block names (e.g. a
+            // SwivelBearingLinkBlock vs a TorsionSpring vs random structural blocks).
+            java.util.Map<String, Integer> blockCounts = new java.util.HashMap<>();
+            java.util.Map<String, Integer> beCounts = new java.util.HashMap<>();
+            int nonAir = 0;
+            for (BlockPos bp : BlockPos.betweenClosed(
+                    pb.minX(), pb.minY(), pb.minZ(),
+                    pb.maxX(), pb.maxY(), pb.maxZ())) {
+                BlockState s = sl.getLevel().getBlockState(bp);
+                if (s.isAir()) continue;
+                nonAir++;
+                String id = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(s.getBlock()).toString();
+                blockCounts.merge(id, 1, Integer::sum);
+                var be = sl.getLevel().getBlockEntity(bp);
+                if (be != null) {
+                    String beId = net.minecraft.core.registries.BuiltInRegistries.BLOCK_ENTITY_TYPE
+                            .getKey(be.getType()).toString();
+                    beCounts.merge(beId, 1, Integer::sum);
+                }
+            }
+
+            String topBlocks = blockCounts.entrySet().stream()
+                    .sorted(java.util.Map.Entry.<String, Integer>comparingByValue().reversed())
+                    .limit(5)
+                    .map(e -> e.getKey() + "×" + e.getValue())
+                    .reduce((a, b) -> a + ", " + b).orElse("(empty)");
+            String beList = beCounts.entrySet().stream()
+                    .sorted(java.util.Map.Entry.<String, Integer>comparingByValue().reversed())
+                    .map(e -> e.getKey() + "×" + e.getValue())
+                    .reduce((a, b) -> a + ", " + b).orElse("(none)");
+
+            final String header = String.format(
+                    "[sublevel %s] pos=(%.2f,%.2f,%.2f) mass=%skg plot=[%d..%d, %d..%d, %d..%d] nonAir=%d",
+                    sl.getUniqueId().toString().substring(0, 8),
+                    pos.x, pos.y, pos.z,
+                    mt == null ? "?" : String.format("%.2f", mt.getMass()),
+                    pb.minX(), pb.maxX(), pb.minY(), pb.maxY(), pb.minZ(), pb.maxZ(),
+                    nonAir);
+            final String blockLine = "  blocks: " + topBlocks;
+            final String beLine    = "  BEs:    " + beList;
+            MCPirates.LOGGER.info(header);
+            MCPirates.LOGGER.info(blockLine);
+            MCPirates.LOGGER.info(beLine);
+            ctx.getSource().sendSuccess(() -> Component.literal(header),    false);
+            ctx.getSource().sendSuccess(() -> Component.literal(blockLine), false);
+            ctx.getSource().sendSuccess(() -> Component.literal(beLine),    false);
+        }
+
+        final int totalF = total;
+        ctx.getSource().sendSuccess(
+                () -> Component.literal("[sublevels] total=" + totalF), true);
         return Command.SINGLE_SUCCESS;
     }
 

@@ -20,6 +20,8 @@ import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.slf4j.event.Level.INFO;
+
 /**
  * Catches assembly glue / NBT drift: if glueMin/glueMax misses hull cells, they
  * stay in the parent world and block SubLevel rise (lift > gravity, no motion).
@@ -283,7 +285,7 @@ public final class AirshipPhysicsTests {
 
     private static void sample(ServerLevel parentLevel, Airship a, String phase) {
         if (a == null) return;
-        com.mcpirates.airship.ShipTelemetry.snapshot(a, "physics-test " + phase);
+        com.mcpirates.airship.ShipTelemetry.snapshot(a, "physics-test " + phase, INFO);
     }
 
 }

@@ -135,22 +135,16 @@ public final class CannonOps {
 
     private static void logAim(Airship ship, BlockPos slMountPos,
                                CannonMountBlockEntity mount, float yaw, float pitch) {
-        long bucket = System.currentTimeMillis() / 2000;
-        boolean firstAim = !ship.hasAimedOnce;
-        ship.hasAimedOnce = true;
-        if (firstAim || bucket != ship.lastAimLogBucket) {
-            ship.lastAimLogBucket = bucket;
-            float storedYaw = readCannonYaw(mount);
-            float storedPitch = readCannonPitch(mount);
-            MCPirates.LOGGER.info(
-                    "ship {} ({}) {} aim mount={}: setYaw={} setPitch={} storedYaw={} storedPitch={}",
-                    ship.subLevel.getUniqueId(), ship.kind.name(),
-                    firstAim ? "first" : "tick", slMountPos,
-                    String.format("%.1f", yaw),
-                    String.format("%.1f", pitch),
-                    String.format("%.1f", storedYaw),
-                    String.format("%.1f", storedPitch));
-        }
+        if (!MCPirates.LOGGER.isDebugEnabled()) return;
+        float storedYaw = readCannonYaw(mount);
+        float storedPitch = readCannonPitch(mount);
+        MCPirates.LOGGER.debug(
+                "ship {} ({}) aim mount={}: setYaw={} setPitch={} storedYaw={} storedPitch={}",
+                ship.subLevel.getUniqueId(), ship.kind.name(), slMountPos,
+                String.format("%.1f", yaw),
+                String.format("%.1f", pitch),
+                String.format("%.1f", storedYaw),
+                String.format("%.1f", storedPitch));
     }
 
     /** Load (if empty) and fire the cannon at {@code slMountPos}. Returns true if a shot
@@ -159,9 +153,8 @@ public final class CannonOps {
         Level subLevelLevel = ship.subLevel.getLevel();
         if (!(subLevelLevel instanceof ServerLevel ssub)) return false;
         boolean fired = fireRawAt(ssub, ship.parentLevel, slMountPos, MUZZLE_CHARGE_COUNT);
-        if (fired && !ship.hasFiredOnce) {
-            ship.hasFiredOnce = true;
-            MCPirates.LOGGER.info("ship {} ({}) first fire at mount {}",
+        if (fired) {
+            MCPirates.LOGGER.debug("ship {} ({}) fire at mount {}",
                     ship.subLevel.getUniqueId(), ship.kind.name(), slMountPos);
         }
         return fired;
@@ -185,7 +178,7 @@ public final class CannonOps {
             cannon.fireShot(projectileLevel, entity);
             return true;
         } catch (Throwable th) {
-            MCPirates.LOGGER.error("fireShot threw at {}: {}", mountPos, th.toString());
+            MCPirates.LOGGER.error("fireShot threw at {}", mountPos, th);
             return false;
         }
     }

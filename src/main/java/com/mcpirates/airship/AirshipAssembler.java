@@ -36,7 +36,7 @@ public final class AirshipAssembler {
             MCPirates.LOGGER.info("airship assembled (seed={}, offset={})", seed, result.offset());
             return result;
         } catch (AssemblyException e) {
-            MCPirates.LOGGER.error("airship assembly threw at {}: {}", seed, e.getMessage());
+            MCPirates.LOGGER.error("airship assembly threw at {}", seed, e);
             return null;
         }
     }

@@ -10,6 +10,7 @@ import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import org.joml.Vector3d;
+import org.slf4j.event.Level;
 
 import java.util.Locale;
 
@@ -92,9 +93,22 @@ public final class ShipTelemetry {
 
     // ─── Unified snapshot ─────────────────────────────────────────────────
 
-    /** INFO snapshot of physical state; per-event detail goes in {@code event}. */
-    public static void snapshot(Airship a, String event,
-                                LiftSetting lift, Double targetY) {
+    /** Physical-state snapshot at the caller's chosen {@code level}; per-event detail
+     *  goes in {@code event}. Use {@link #snapshotWithLift} when the caller has a
+     *  committed throttle setting + target Y to include. */
+    public static void snapshot(Airship a, String event, Level level) {
+        emit(a, event, null, null, level);
+    }
+
+    /** Snapshot variant for lift-control callers: appends the committed throttle
+     *  {@code lift} and {@code targetY}/dy fields. */
+    public static void snapshotWithLift(Airship a, String event,
+                                        LiftSetting lift, Double targetY, Level level) {
+        emit(a, event, lift, targetY, level);
+    }
+
+    private static void emit(Airship a, String event,
+                             LiftSetting lift, Double targetY, Level level) {
         Vector3d pos = a.subLevel.logicalPose().position();
         Vector3d vel = velocity(a);
         double hSpeed = Math.hypot(vel.x, vel.z);
@@ -128,23 +142,18 @@ public final class ShipTelemetry {
 
         String diag = a.controls == null ? "" : a.controls.diagnostics(a);
         // Two lines: identity/pose, then physics/lift/diag — line 1 alone locates the ship.
-        MCPirates.LOGGER.info(
+        MCPirates.LOGGER.atLevel(level).log(
                 "ship {} ({}) {}: state={} pos=({}) yaw={}° yawRate={}°/tick",
                 a.subLevel.getUniqueId(), a.kind.name(), event, a.state,
                 fmt3(pos, 1),
                 String.format(Locale.ROOT, "%.1f", yawDeg),
                 String.format(Locale.ROOT, "%.3f", yawRateDegPerTick));
-        MCPirates.LOGGER.info(
+        MCPirates.LOGGER.atLevel(level).log(
                 "  └ v=({}) hSpeed={}b/tick mass={} balloonVol={} {} lift={} {} {} {} {}",
                 fmt3(vel, 3),
                 String.format(Locale.ROOT, "%.3f", hSpeed),
                 mass(massKg), balloonVol(a.balloonCapacity), plateau,
-                liftStr, targetStr, biasedStr, pickedStr,
-                diag);
-    }
-
-    public static void snapshot(Airship a, String event) {
-        snapshot(a, event, null, null);
+                liftStr, targetStr, biasedStr, pickedStr, diag);
     }
 
     private static double readMass(Airship a) {

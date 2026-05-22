@@ -344,9 +344,10 @@ public final class AirshipGameTests {
                             "waiting for crashArmed; state="
                                     + (a == null ? "—" : a.state.name()));
                 })
-                // Punch a few random holes in the envelope — mimics what a couple of cannon
-                // hits would do in actual combat. Balloon becomes invalid (open shape) →
-                // lift drops → ship descends. Deterministic seed so the test isn't flaky.
+                // Strip the topmost envelope blocks — opens the balloon's enclosed shape to
+                // sky, which Aeronautics' flood-fill treats as a leak that propagates the
+                // whole upper column away. Random holes don't work: partial deflation can
+                // still sustain lift at lower altitudes (see fail mode on lg+red split nbt).
                 .thenExecute(() -> {
                     Airship a = shipRef.get();
                     net.minecraft.world.level.Level slLevel = a.subLevel.getLevel();
@@ -372,7 +373,10 @@ public final class AirshipGameTests {
                         helper.fail("no envelope blocks found in SubLevel plot — crash trigger absent");
                         return;
                     }
-                    java.util.Collections.shuffle(envelopeBlocks, new java.util.Random(42));
+                    envelopeBlocks.sort(java.util.Comparator
+                            .comparingInt((BlockPos p) -> -p.getY())
+                            .thenComparingInt(BlockPos::getX)
+                            .thenComparingInt(BlockPos::getZ));
                     int toRemove = Math.min(3, envelopeBlocks.size());
                     for (int i = 0; i < toRemove; i++) {
                         slLevel.setBlock(envelopeBlocks.get(i),
@@ -381,7 +385,7 @@ public final class AirshipGameTests {
                     }
                     envelopeBlocksStripped[0] = toRemove;
                     MCPirates.LOGGER.info(
-                            "[crash-test] punched {} hole(s) in envelope (of {} total blocks) at {}",
+                            "[crash-test] stripped top {} envelope block(s) (of {} total) at {}",
                             toRemove, envelopeBlocks.size(),
                             envelopeBlocks.subList(0, toRemove));
                 })

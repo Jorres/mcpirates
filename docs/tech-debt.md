@@ -5,10 +5,6 @@ wrong, why it bites, and the rough shape of a fix. Append as we find more.
 
 ---
 
-## fireOnce
-
-we dont really need this I guess, it was for logging purposes very early on
-
 ## Ships are identified by the world position of their primary lever
 
 **Why it's wrong.** The world lever position is an *incidental* property of a
@@ -160,43 +156,6 @@ was meant to be.
 
 ---
 
-## Log-dedup state on `Airship` may not be earning its keep
-
-**Where it lives.** Four fields on `Airship`:
-`lastAimLogBucket`, `lastThrottleLogBucket`, `hasAimedOnce`, `hasFiredOnce`.
-The `bucket` longs throttle "every-N-ticks" log lines so repeated brain
-decisions don't spam; the `hasX` booleans gate the "first aim" / "first shot"
-one-shot info logs. All four are persisted on every `Airship.persist()` (state
-transition / `installCrew` / `ServerStopping`) and read back by
-`Airship.readNbt`.
-
-**Why it might be wrong.** These exist purely for log cleanliness. If we drop
-persistence, a restart causes at most: one extra "first aim" line, one extra
-"first shot" line, and a fresh bucket boundary that lets a brain decision
-double-log within ~10 ticks. None of those affect behaviour or telemetry
-correctness — they're cosmetic noise that auto-resolves within a second.
-
-In exchange the persistence path carries four field round-trips per ship per
-write, and `Airship`'s NBT codec lists them by hand. They're four of the ~20
-fields that, by the same argument, only exist as soft-restart-tolerant runtime
-caches (timers, telemetry, combat cursor) and could probably leave the
-persisted set entirely.
-
-**Shape of a fix.** Audit whether the log-dedup behaviour is worth *any*
-persistence cost. If not, drop the four fields from `writeNbt`/`readNbt` (let
-them re-default on each rehydrate). Then look at the rest of the
-soft-restart-tolerant set (`lastSteeringTick`, `lastLiftTick`, `lastFireTick`,
-`lastGoalX/Y/Z`, `combatCursor`, `combatNextFireTick`, `orbitDir`,
-`orbitStuckDecisions`, etc.) with the same lens — most are recomputed within
-one brain decision and don't need to survive restart either. Net effect:
-`Airship.writeNbt`/`readNbt` shrinks from ~30 fields to ~12 essentials
-(identity, state machine, crew, liftoff progress, balloon capacity), which
-fits a `record AirshipPersistentState` + Mojang `Codec` cleanly if we want
-schema-from-types later.
-
-
----
-
 ## `RamControls` duplicates `TankSteerControls` instead of composing it
 
 **Why it's wrong.** Both controllers now consume `TurnPolicy.decide()` and translate
@@ -240,8 +199,8 @@ non-zero velocity).
 We worked around it by tracking position deltas ourselves: `LAST_TARGET_SAMPLE`
 map in `RamMovement` keyed by ramship SubLevel UUID, stores
 `(targetId, tx, tz, tick)`, computes `vx = (tx - prev.tx) / dt`. This is the
-input the intercept solver actually uses; Sable's reading is kept only in the
-diagnostic log (`Vsable=...`) for comparison — every line shows it stuck at 0.
+input the intercept solver actually uses. (The Sable comparison column used to
+ride along in the goal log as `Vsable=...` but was always zero — removed.)
 
 **Why it bites.** Two parallel velocity sources for SubLevels in our codebase.
 The official one (Sable's API) silently returns wrong data; our fallback works
