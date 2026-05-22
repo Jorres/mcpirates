@@ -80,6 +80,9 @@ public final class FurledBountyItem extends Item {
                     /*skipExistingChunks=*/true);
             if (found == null) {
                 // Biome whitelist may have excluded everything in range — refund.
+                MCPirates.LOGGER.info(
+                        "galleon bounty unfurl by {} found no target within {}-chunk radius — refunding",
+                        player.getName().getString(), GALLEON_SEARCH_RADIUS_CHUNKS);
                 player.displayClientMessage(
                         Component.translatable("item.mcpirates.furled_bounty.no_target"), true);
                 return InteractionResultHolder.fail(held);
@@ -131,11 +134,16 @@ public final class FurledBountyItem extends Item {
             BlockPos candidate = level.findNearestMapStructure(
                     MCPStructureTags.PIRATE_OUTPOSTS, searchOrigin,
                     SEARCH_RADIUS_CHUNKS, /*skipExistingChunks=*/true);
+            boolean wasDefeated = candidate != null && defeated.isDefeated(candidate);
+            MCPirates.LOGGER.debug(
+                    "bounty search attempt {}/{}: origin={} candidate={} defeated={}",
+                    attempt + 1, MAX_RETRIES + 1, searchOrigin,
+                    candidate, candidate == null ? "—" : Boolean.toString(wasDefeated));
             if (candidate == null) {
                 continue; // try again with a different origin
             }
             best = candidate;
-            if (!defeated.isDefeated(candidate)) {
+            if (!wasDefeated) {
                 return candidate;
             }
             // Walk around the ring with a random angle/distance per attempt.
@@ -145,6 +153,15 @@ public final class FurledBountyItem extends Item {
             int dx = (int) Math.round(Math.cos(angle) * dist);
             int dz = (int) Math.round(Math.sin(angle) * dist);
             searchOrigin = player.blockPosition().offset(dx, 0, dz);
+        }
+        if (best == null) {
+            MCPirates.LOGGER.info(
+                    "bounty search for {}: no outpost within {}-chunk radius after {} attempts — refunding",
+                    player.getName().getString(), SEARCH_RADIUS_CHUNKS, MAX_RETRIES + 1);
+        } else {
+            MCPirates.LOGGER.info(
+                    "bounty search for {}: all {} attempts hit defeated outposts; falling back to {} (player gets cleared-site map)",
+                    player.getName().getString(), MAX_RETRIES + 1, best);
         }
         return best;
     }

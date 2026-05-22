@@ -35,7 +35,13 @@ public final class DefeatedAirships extends SavedData {
 
     public boolean markDefeated(BlockPos anchor) {
         boolean added = this.anchors.add(anchor.immutable());
-        if (added) this.setDirty();
+        if (added) {
+            this.setDirty();
+        } else {
+            MCPirates.LOGGER.warn(
+                    "DefeatedAirships.markDefeated: anchor {} already in defeated set — duplicate marking should not happen",
+                    anchor);
+        }
         return added;
     }
 

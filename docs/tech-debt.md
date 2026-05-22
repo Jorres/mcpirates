@@ -306,3 +306,28 @@ API just doesn't look at it.
 
 (1) is the right answer; (2) is the holding pattern until we have appetite
 to send a PR.
+
+---
+
+## `DefeatedAirships.markDefeated` duplicate path probably unreachable
+
+The `added == false` branch fires only if the same anchor is marked twice. A
+captain dies once and anchor positions are unique per ship, so under current
+invariants this can't happen — the branch logs a WARN today specifically to
+flag invariant breakage. Worth replacing with an assertion once we've burnt in
+enough play hours to be sure GameTests and save corruption can't reach it.
+Related: "Ships are identified by the world position of their primary lever".
+
+---
+
+## `CaptainDeath` if-condition — strange, probably based on ground combat, may be outdated
+
+`CaptainDeath.onLivingDeath` splits its log into two INFO templates around
+`if (data.contains(CAPTAIN_ANCHOR_NBT_KEY) && level instanceof ServerLevel sl)`.
+The `ServerLevel` half is dead (we already returned on `isClientSide`), and
+the anchor-key half is a "pre-Phase-2 captain" hedge that no current spawn
+path can trigger — likely a holdover from when captains could die on the
+ground before ever being crewed onto an airship. Worth collapsing to a single
+INFO and replacing the guard with an assert or a fail-loud WARN. Don't just
+drop the check unconditionally: a missing key reads as `0L` and would poison
+`DefeatedAirships` with anchor `(0,0,0)`.
