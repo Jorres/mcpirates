@@ -31,3 +31,7 @@
 - contraption that shoots fire charges from dispensers - will naturally lit ships on fire
 - small doubledecker with two cannons that will rotate and act for both left and right  
   - should require self-intersection though because pirate sihp shooting itself wont be fun 
+
+## misc
+
+add map distance fix as a recommentation to readme

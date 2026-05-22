@@ -11,7 +11,6 @@
   "template_pools": [
     "ctov:village/beach/house",
     "ctov:village/christmas/house",
-    "ctov:village/dark_forest/house",
     "ctov:village/desert/house",
     "ctov:village/desert_oasis/house",
     "ctov:village/jungle/house",
@@ -25,7 +24,6 @@
     "ctov:village/plains_fortified/house",
     "ctov:village/savanna/house",
     "ctov:village/savanna_na/house",
-    "ctov:village/snowy/house",
     "ctov:village/swamp/house",
     "ctov:village/swamp_fortified/house",
     "ctov:village/taiga/house",
