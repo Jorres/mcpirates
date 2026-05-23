@@ -145,6 +145,29 @@ neoForge {
                 jvmArgument "-Dmcpirates.gametest.only=${project.property('only')}"
             }
         }
+
+        // `./gradlew runIntegrationServer` — dedicated server with FULL worldgen on alt
+        // ports (server 25666, RCON 25685). Paired with tools/integration/test_unfurl.py
+        // to e2e the bounty unfurl flow against real chunk generation; GameTestServer is
+        // locked to superflat so it can't exercise vanilla structure_set placement /
+        // biome whitelist filtering. doFirst below stamps server.properties + eula.txt
+        // and wipes the world for a deterministic run.
+        integrationServer {
+            server()
+            gameDirectory = project.file('runs/integration')
+            programArgument '--nogui'
+        }
+
+        // `./gradlew runIntegrationClient` — GUI client that auto-joins the integration
+        // server (localhost:25666). Use for the manual sanity-check flow against the
+        // headless harness: open the client, /mcpirates testunfurl give, right-click the
+        // scroll, /mcpirates testunfurl verify. Shares runs/client with the regular
+        // runClient — same Dev profile, world data lives on the server side anyway.
+        integrationClient {
+            client()
+            gameDirectory = project.file('runs/client')
+            programArguments.addAll '--quickPlayMultiplayer', 'localhost:25666'
+        }
     }
 
     mods {
@@ -319,5 +342,60 @@ jar {
 tasks.named('runGameTestServer').configure {
     doFirst {
         delete project.file('runs/gametest/world')
+    }
+}
+
+// ./gradlew runIntegrationTest — single-command CI entrypoint. Spawns
+// runIntegrationServer in a subprocess, polls RCON until ready, runs each
+// scenario in src/integrationTest/python/test_unfurl.py against the live
+// server, sends /stop, and exits nonzero if any scenario failed. The Python
+// orchestrator handles all lifecycle; this task is just the shell.
+tasks.register('runIntegrationTest', Exec) {
+    group = 'verification'
+    description = 'Boot integration server (full worldgen) + run all e2e scenarios.'
+    dependsOn 'compileJava'
+    workingDir = project.projectDir
+    commandLine 'python', 'src/integrationTest/python/run.py'
+}
+
+// Stamp a fresh runs/integration on every run: deterministic server.properties
+// (full overworld worldgen, alt ports, survival), accept the EULA, drop the
+// previous world. Anything written by the test harness lives under runs/integration
+// and is wiped here next time.
+tasks.named('runIntegrationServer').configure {
+    doFirst {
+        def runDir = project.file('runs/integration')
+        runDir.mkdirs()
+        delete project.file('runs/integration/world')
+        new File(runDir, 'eula.txt').text = 'eula=true\n'
+        // Dev's offline-UUID is deterministic (derived from "OfflinePlayer:Dev") so we
+        // can stamp ops.json without waiting for them to join first. Keeps cheats usable
+        // in survival, which is what the manual /mcpirates testunfurl verify flow needs.
+        new File(runDir, 'ops.json').text = '''\
+[
+  {
+    "uuid": "380df991-f603-344c-a090-369bad2a924a",
+    "name": "Dev",
+    "level": 4,
+    "bypassesPlayerLimit": false
+  }
+]
+'''
+        new File(runDir, 'server.properties').text = '''\
+enable-rcon=true
+rcon.password=dev
+rcon.port=25685
+server-port=25666
+level-type=minecraft\\:normal
+gamemode=survival
+force-gamemode=true
+op-permission-level=4
+spawn-protection=0
+allow-flight=true
+broadcast-rcon-to-ops=false
+online-mode=false
+generate-structures=true
+motd=mcpirates integration
+'''
     }
 }

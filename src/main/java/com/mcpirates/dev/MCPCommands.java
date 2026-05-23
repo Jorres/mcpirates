@@ -3,8 +3,13 @@ package com.mcpirates.dev;
 import com.mcpirates.MCPirates;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
+import com.mcpirates.airship.anchor.MCPShipAnchorBlockEntity;
 import com.mcpirates.airship.ships.galleon.GalleonSpawner;
+import com.mcpirates.registry.MCPDataComponents;
+import com.mcpirates.registry.MCPItems;
+import com.mcpirates.registry.MCPStructureTags;
 import com.mcpirates.util.FunnyNames;
+import com.mojang.authlib.GameProfile;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
@@ -13,22 +18,35 @@ import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderSet;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.Unit;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.MapItem;
+import net.minecraft.world.item.component.MapDecorations;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.structure.Structure;
+import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.common.util.FakePlayer;
+import net.neoforged.neoforge.common.util.FakePlayerFactory;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 /** Dev/debug chat commands under {@code /mcpirates}. Op level 2 required. */
 @EventBusSubscriber(modid = MCPirates.MOD_ID)
@@ -69,6 +87,21 @@ public final class MCPCommands {
 
                 .then(Commands.literal("galleon")
                         .then(Commands.literal("spawn").executes(MCPCommands::spawnGalleon)))
+
+                .then(Commands.literal("testunfurl")
+                        .executes(ctx -> testUnfurl(ctx, false))
+                        .then(Commands.literal("galleon")
+                                .executes(ctx -> testUnfurl(ctx, true)))
+                        .then(Commands.literal("give")
+                                .executes(ctx -> testUnfurlGive(ctx, false))
+                                .then(Commands.literal("galleon")
+                                        .executes(ctx -> testUnfurlGive(ctx, true))))
+                        .then(Commands.literal("verify")
+                                .executes(ctx -> testUnfurlVerify(ctx, false))
+                                .then(Commands.literal("galleon")
+                                        .executes(ctx -> testUnfurlVerify(ctx, true))))
+                        .then(Commands.literal("tp")
+                                .executes(MCPCommands::testUnfurlTp)))
 
                 .then(Commands.literal("debug")
                         .then(Commands.literal("activate")
@@ -374,6 +407,220 @@ public final class MCPCommands {
         return Command.SINGLE_SUCCESS;
     }
 
+    // ────────────────────────────── /mcpirates testunfurl ──────────────────────────────
+
+    // Stable identity for the integration-test FakePlayer; FakePlayerFactory caches by
+    // (level, profile) so repeated calls reuse one instance — we clear its inventory on
+    // each invocation instead.
+    private static final GameProfile TEST_UNFURL_PROFILE = new GameProfile(
+            UUID.fromString("00000000-0000-0000-c1a5-000000000001"),
+            "TestUnfurlBot");
+
+    // Integration-test entrypoint. Spawns/reuses a FakePlayer at the source position,
+    // mints a furled scroll into its main hand, routes through ServerPlayerGameMode.useItem
+    // (same path as a real right-click), then echoes the resulting map's id + target world
+    // coords. No connected client required — RCON-callable directly.
+    //
+    // Output line (RCON-parseable):
+    //   "testunfurl OK map_id=<int> target=<x>,<z>"
+    // Failure modes echoed verbatim so the test harness can grep them.
+    private static int testUnfurl(CommandContext<CommandSourceStack> ctx, boolean galleon) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        Vec3 pos = src.getPosition();
+
+        FakePlayer player = FakePlayerFactory.get(level, TEST_UNFURL_PROFILE);
+        player.getInventory().clearContent();
+        player.setPos(pos.x, pos.y, pos.z);
+
+        ItemStack scroll = new ItemStack(MCPItems.FURLED_BOUNTY.get(), 1);
+        if (galleon) {
+            scroll.set(MCPDataComponents.IS_GALLEON_BOUNTY.get(), Unit.INSTANCE);
+        }
+        InteractionHand hand = InteractionHand.MAIN_HAND;
+        player.setItemInHand(hand, scroll);
+        player.gameMode.useItem(player, level, scroll, hand);
+
+        ItemStack now = player.getItemInHand(hand);
+        if (!(now.getItem() instanceof MapItem)) {
+            src.sendFailure(Component.literal(
+                    "testunfurl FAIL: hand has "
+                            + BuiltInRegistries.ITEM.getKey(now.getItem()) + " x" + now.getCount()));
+            return 0;
+        }
+        MapId mapId = now.get(DataComponents.MAP_ID);
+        MapDecorations decos = now.getOrDefault(DataComponents.MAP_DECORATIONS, MapDecorations.EMPTY);
+        if (mapId == null || decos.decorations().isEmpty()) {
+            src.sendFailure(Component.literal(
+                    "testunfurl FAIL: map missing id or decorations"));
+            return 0;
+        }
+        MapDecorations.Entry target = decos.decorations().values().iterator().next();
+        int tx = (int) target.x();
+        int tz = (int) target.z();
+        int id = mapId.id();
+
+        // Worldgen can spit out a shipless outpost (pool fallback to empty, jigsaw clipping).
+        // Force-loading 3 chunks around the structure target catches the ship anchor wherever
+        // jigsaw rotation/offset put it inside the base_plate_with_<ship> NBT.
+        MCPShipAnchorBlockEntity anchor = findShipAnchorNear(
+                level, new BlockPos(tx, level.getMinBuildHeight(), tz), /*chunkRadius=*/3);
+        if (anchor == null) {
+            src.sendFailure(Component.literal(
+                    "testunfurl FAIL: map points at (" + tx + "," + tz
+                            + ") but no ship_anchor within 3 chunks "
+                            + "— map_id=" + id + " (shipless outpost? pool-fallback hit?)"));
+            return 0;
+        }
+        BlockPos aPos = anchor.getBlockPos();
+        String kind = anchor.getKindName();
+        src.sendSuccess(() -> Component.literal(
+                "testunfurl OK map_id=" + id + " target=" + tx + "," + tz
+                        + " ship=" + (kind.isEmpty() ? "<unknown>" : kind)
+                        + " anchor=" + aPos.getX() + "," + aPos.getY() + "," + aPos.getZ()), true);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    // ────────────────────────────── /mcpirates testunfurl give ──────────────────────────────
+
+    // Manual GUI flow, stage 1: drop a furled scroll into the executor's inventory so they
+    // can right-click it themselves and observe the real client-side unfurl behaviour.
+    // Pairs with `verify` below to catch false negatives where the FakePlayer-based
+    // headless test passes but a real client would see a different outcome (e.g. the
+    // setItemInHand-clobber bug that motivated this whole test).
+    private static int testUnfurlGive(CommandContext<CommandSourceStack> ctx, boolean galleon) {
+        CommandSourceStack src = ctx.getSource();
+        ServerPlayer player;
+        try {
+            player = src.getPlayerOrException();
+        } catch (Exception e) {
+            src.sendFailure(Component.literal("testunfurl give FAIL: requires a player executor"));
+            return 0;
+        }
+        ItemStack scroll = new ItemStack(MCPItems.FURLED_BOUNTY.get(), 1);
+        if (galleon) {
+            scroll.set(MCPDataComponents.IS_GALLEON_BOUNTY.get(), Unit.INSTANCE);
+        }
+        if (!player.getInventory().add(scroll)) {
+            player.drop(scroll, false);
+        }
+        src.sendSuccess(() -> Component.literal(
+                "gave " + (galleon ? "galleon " : "") + "furled bounty to "
+                        + player.getName().getString()), true);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    // ────────────────────────────── /mcpirates testunfurl verify ──────────────────────────────
+
+    // Manual GUI flow, stage 2: after the executor has right-clicked the scroll and is
+    // holding the resulting map, verify its target decoration points at a real structure.
+    // Same correctness check the headless harness does, but invoked from chat so the
+    // player can sanity-check what they see on the client.
+    private static int testUnfurlVerify(CommandContext<CommandSourceStack> ctx, boolean galleon) {
+        CommandSourceStack src = ctx.getSource();
+        ServerPlayer player;
+        try {
+            player = src.getPlayerOrException();
+        } catch (Exception e) {
+            src.sendFailure(Component.literal("testunfurl verify FAIL: requires a player executor"));
+            return 0;
+        }
+        ItemStack held = player.getItemInHand(InteractionHand.MAIN_HAND);
+        if (!(held.getItem() instanceof MapItem)) {
+            src.sendFailure(Component.literal(
+                    "testunfurl verify FAIL: main hand has "
+                            + BuiltInRegistries.ITEM.getKey(held.getItem())
+                            + " (expected a filled map — right-click your scroll first)"));
+            return 0;
+        }
+        MapDecorations decos = held.getOrDefault(DataComponents.MAP_DECORATIONS, MapDecorations.EMPTY);
+        if (decos.decorations().isEmpty()) {
+            src.sendFailure(Component.literal(
+                    "testunfurl verify FAIL: map has no target decoration"));
+            return 0;
+        }
+        MapDecorations.Entry entry = decos.decorations().values().iterator().next();
+        int tx = (int) entry.x();
+        int tz = (int) entry.z();
+
+        ServerLevel level = src.getLevel();
+        var tag = galleon ? MCPStructureTags.PIRATE_GALLEONS : MCPStructureTags.PIRATE_OUTPOSTS;
+        BlockPos found = level.findNearestMapStructure(
+                tag, new BlockPos(tx, level.getMinBuildHeight(), tz),
+                /*radiusChunks=*/2, /*skipExistingChunks=*/false);
+
+        if (found == null) {
+            src.sendFailure(Component.literal(
+                    "testunfurl verify FAIL: no " + tag.location()
+                            + " near map target (" + tx + "," + tz + ")"));
+            return 0;
+        }
+        int dx = found.getX() - tx;
+        int dz = found.getZ() - tz;
+        double dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist > 16) {
+            src.sendFailure(Component.literal(String.format(
+                    "testunfurl verify FAIL: nearest %s is %.1f blocks from map target (>16)",
+                    tag.location(), dist)));
+            return 0;
+        }
+        MCPShipAnchorBlockEntity anchor = findShipAnchorNear(level, found, /*chunkRadius=*/3);
+        if (anchor == null) {
+            src.sendFailure(Component.literal(String.format(
+                    "testunfurl verify FAIL: structure at (%d,%d) has no ship_anchor "
+                            + "within 3 chunks (shipless outpost — pool-fallback?)",
+                    found.getX(), found.getZ())));
+            return 0;
+        }
+        BlockPos aPos = anchor.getBlockPos();
+        String kind = anchor.getKindName().isEmpty() ? "<unknown>" : anchor.getKindName();
+        src.sendSuccess(() -> Component.literal(String.format(
+                "testunfurl verify OK: map (%d,%d) ↔ structure (%d,%d), %.1fb; "
+                        + "ship=%s anchor=(%d,%d,%d)",
+                tx, tz, found.getX(), found.getZ(), dist,
+                kind, aPos.getX(), aPos.getY(), aPos.getZ())), true);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    // ────────────────────────────── /mcpirates testunfurl tp ──────────────────────────────
+
+    // Reads the executor's main-hand map target decoration and teleports them to a safe
+    // surface position there. Reuses findSafeTeleportPos so we land on solid ground with
+    // sky access, not inside a tree or buried in a hill.
+    private static int testUnfurlTp(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerPlayer player;
+        try {
+            player = src.getPlayerOrException();
+        } catch (Exception e) {
+            src.sendFailure(Component.literal("testunfurl tp FAIL: requires a player executor"));
+            return 0;
+        }
+        ItemStack held = player.getItemInHand(InteractionHand.MAIN_HAND);
+        if (!(held.getItem() instanceof MapItem)) {
+            src.sendFailure(Component.literal(
+                    "testunfurl tp FAIL: main hand has "
+                            + BuiltInRegistries.ITEM.getKey(held.getItem())
+                            + " (expected a filled map)"));
+            return 0;
+        }
+        MapDecorations decos = held.getOrDefault(DataComponents.MAP_DECORATIONS, MapDecorations.EMPTY);
+        if (decos.decorations().isEmpty()) {
+            src.sendFailure(Component.literal("testunfurl tp FAIL: map has no target decoration"));
+            return 0;
+        }
+        MapDecorations.Entry entry = decos.decorations().values().iterator().next();
+        BlockPos target = new BlockPos((int) entry.x(), 0, (int) entry.z());
+
+        ServerLevel level = src.getLevel();
+        Vec3 safe = findSafeTeleportPos(level, target);
+        player.teleportTo(level, safe.x, safe.y, safe.z, Set.of(),
+                player.getYRot(), player.getXRot());
+        src.sendSuccess(() -> Component.literal(
+                "teleported to map target " + BlockPos.containing(safe).toShortString()), true);
+        return Command.SINGLE_SUCCESS;
+    }
+
     // ────────────────────────────── helpers ──────────────────────────────
 
     private static BlockPos findNearestOutpost(ServerLevel level, BlockPos origin) {
@@ -397,6 +644,27 @@ public final class MCPCommands {
                         /*skipExistingChunks=*/false);
 
         return result != null ? result.getFirst() : null;
+    }
+
+    /** Force-load chunks in a (2r+1)² square around {@code center} and return the first
+     *  ship anchor BE found. Forces the load because outpost chunks generated by
+     *  findNearestMapStructure may have been unloaded again by the time we check —
+     *  AirshipLiftoffTrigger's getChunkNow pattern returns null in that case. */
+    private static MCPShipAnchorBlockEntity findShipAnchorNear(
+            ServerLevel level, BlockPos center, int chunkRadius) {
+        int cx = center.getX() >> 4;
+        int cz = center.getZ() >> 4;
+        for (int dx = -chunkRadius; dx <= chunkRadius; dx++) {
+            for (int dz = -chunkRadius; dz <= chunkRadius; dz++) {
+                LevelChunk chunk = level.getChunk(cx + dx, cz + dz);
+                for (BlockEntity be : chunk.getBlockEntities().values()) {
+                    if (be instanceof MCPShipAnchorBlockEntity anchor) {
+                        return anchor;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     /** Spiral outward (≤48) for ground + 2-tall clearance + open sky. */
