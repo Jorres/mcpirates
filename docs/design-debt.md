@@ -25,6 +25,8 @@
 ## variability
 
 - envelope painted several different colors, from handcrafted to handcrafted patterns + vary colors to generated patterns
+- some actual LOOT (if possible with integrations) into the barrels of stations and ship pads
+
 
 ## ship ideas
 
