@@ -4,25 +4,21 @@ import com.mcpirates.MCPirates;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
 import com.mcpirates.airship.anchor.MCPShipAnchorBlockEntity;
-import com.mcpirates.airship.ships.galleon.GalleonSpawner;
 import com.mcpirates.registry.MCPDataComponents;
 import com.mcpirates.registry.MCPItems;
-import com.mcpirates.registry.MCPStructureTags;
 import com.mcpirates.util.FunnyNames;
-import com.mojang.authlib.GameProfile;
+import com.mcpirates.village.FurledBountyItem;
+import com.mcpirates.worldgen.OutpostPermits;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Holder;
-import net.minecraft.core.HolderSet;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -31,30 +27,21 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.MapItem;
 import net.minecraft.world.item.component.MapDecorations;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.levelgen.Heightmap;
-import net.minecraft.world.level.levelgen.structure.Structure;
-import net.minecraft.world.level.saveddata.maps.MapId;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.common.util.FakePlayer;
-import net.neoforged.neoforge.common.util.FakePlayerFactory;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 
-import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 
 /** Dev/debug chat commands under {@code /mcpirates}. Op level 2 required. */
 @EventBusSubscriber(modid = MCPirates.MOD_ID)
 public final class MCPCommands {
-
-    private static final ResourceKey<Structure> PILLAGER_OUTPOST_KEY =
-            ResourceKey.create(Registries.STRUCTURE,
-                    ResourceLocation.withDefaultNamespace("pillager_outpost"));
 
     private MCPCommands() {}
 
@@ -71,37 +58,40 @@ public final class MCPCommands {
                         .then(Commands.literal("on").executes(ctx -> setLift(ctx.getSource(), true)))
                         .then(Commands.literal("off").executes(ctx -> setLift(ctx.getSource(), false))))
 
-                .then(Commands.literal("outpost")
-                        .then(Commands.literal("tp").executes(MCPCommands::tpNearestOutpost))
-                        .then(Commands.literal("spawn")
-                                .executes(ctx -> spawnOutpost(ctx, null))
-                                .then(Commands.literal("airship_small")
-                                        .executes(ctx -> spawnOutpost(ctx, "airship_small")))
-                                .then(Commands.literal("crossbow_board")
-                                        .executes(ctx -> spawnOutpost(ctx, "crossbow_board")))
-                                .then(Commands.literal("ramship")
-                                        .executes(ctx -> spawnOutpost(ctx, "ramship")))))
+                .then(Commands.literal("spawn")
+                        .then(Commands.literal("airship_small")
+                                .executes(ctx -> spawnShipOutpost(ctx, "airship_small")))
+                        .then(Commands.literal("crossbow_board")
+                                .executes(ctx -> spawnShipOutpost(ctx, "crossbow_board")))
+                        .then(Commands.literal("ramship")
+                                .executes(ctx -> spawnShipOutpost(ctx, "ramship")))
+                        .then(Commands.literal("galleon")
+                                .executes(ctx -> spawnShipOutpost(ctx, "galleon"))))
 
                 .then(Commands.literal("sheriff")
                         .then(Commands.literal("spawn").executes(MCPCommands::spawnSheriff)))
 
-                .then(Commands.literal("galleon")
-                        .then(Commands.literal("spawn").executes(MCPCommands::spawnGalleon)))
-
-                .then(Commands.literal("testunfurl")
-                        .executes(ctx -> testUnfurl(ctx, false))
-                        .then(Commands.literal("galleon")
-                                .executes(ctx -> testUnfurl(ctx, true)))
-                        .then(Commands.literal("give")
-                                .executes(ctx -> testUnfurlGive(ctx, false))
+                .then(Commands.literal("test")
+                        .then(Commands.literal("unfurl")
+                                .executes(ctx -> testUnfurl(ctx, false))
                                 .then(Commands.literal("galleon")
-                                        .executes(ctx -> testUnfurlGive(ctx, true))))
-                        .then(Commands.literal("verify")
-                                .executes(ctx -> testUnfurlVerify(ctx, false))
-                                .then(Commands.literal("galleon")
-                                        .executes(ctx -> testUnfurlVerify(ctx, true))))
-                        .then(Commands.literal("tp")
-                                .executes(MCPCommands::testUnfurlTp)))
+                                        .executes(ctx -> testUnfurl(ctx, true)))
+                                .then(Commands.literal("give")
+                                        .executes(ctx -> testUnfurlGive(ctx, false))
+                                        .then(Commands.literal("galleon")
+                                                .executes(ctx -> testUnfurlGive(ctx, true))))
+                                .then(Commands.literal("verify")
+                                        .executes(MCPCommands::testUnfurlVerify))
+                                .then(Commands.literal("tp")
+                                        .executes(MCPCommands::testUnfurlTp))
+                                .then(Commands.literal("preview")
+                                        .executes(ctx -> testUnfurlPreview(ctx, false))
+                                        .then(Commands.literal("galleon")
+                                                .executes(ctx -> testUnfurlPreview(ctx, true)))))
+                        .then(Commands.literal("scan_candidates")
+                                .then(Commands.argument("halfRadius",
+                                                com.mojang.brigadier.arguments.IntegerArgumentType.integer(0, 10))
+                                        .executes(MCPCommands::testPermitsScanCandidates))))
 
                 .then(Commands.literal("debug")
                         .then(Commands.literal("activate")
@@ -138,68 +128,33 @@ public final class MCPCommands {
         return Command.SINGLE_SUCCESS;
     }
 
-    // ────────────────────────────── /mcpirates outpost tp ──────────────────────────────
+    // ────────────────────────────── /mcpirates spawn <kind> ──────────────────────────────
 
-    private static int tpNearestOutpost(CommandContext<CommandSourceStack> ctx) {
+    /** Stamps a permit at a chunk east of the executor and runs {@code /place structure
+     *  mcpirates:<kind>_outpost} on it — same pipeline as a real bounty scroll unfurl. */
+    private static int spawnShipOutpost(CommandContext<CommandSourceStack> ctx, String kind) {
         CommandSourceStack src = ctx.getSource();
         ServerLevel level = src.getLevel();
         BlockPos origin = BlockPos.containing(src.getPosition());
 
-        src.sendSystemMessage(Component.literal("Locating nearest pillager outpost..."));
-
-        BlockPos found = findNearestOutpost(level, origin);
-        if (found == null) {
-            src.sendFailure(Component.literal("No pillager outpost found within search radius."));
-            return 0;
-        }
-
-        try {
-            ServerPlayer player = src.getPlayerOrException();
-            Vec3 safePos = findSafeTeleportPos(level, found);
-            player.teleportTo(level,
-                    safePos.x, safePos.y, safePos.z,
-                    Set.of(),
-                    player.getYRot(), player.getXRot());
-            BlockPos finalFound = found;
-            src.sendSuccess(() -> Component.literal(
-                    "Teleported to pillager outpost at " + finalFound.toShortString()), true);
-        } catch (Exception e) {
-            src.sendFailure(Component.literal("Command requires a player executor."));
-            return 0;
-        }
-        return 1;
-    }
-
-    // ────────────────────────────── /mcpirates outpost spawn ──────────────────────────────
-
-    /** {@code ship == null} → vanilla outpost with random ship; otherwise our
-     *  {@code outpost_with_<ship>} variant pinning the ship choice. */
-    private static int spawnOutpost(CommandContext<CommandSourceStack> ctx, String ship) {
-        CommandSourceStack src = ctx.getSource();
-        ServerLevel level = src.getLevel();
-        BlockPos origin = BlockPos.containing(src.getPosition());
-
-        // Place 48 blocks east of the player.
-        int tx = origin.getX() + 48;
+        // Place 80 blocks east — clears the player's view even for the larger galleon hull.
+        int tx = origin.getX() + 80;
         int tz = origin.getZ();
         int ty = level.getHeight(Heightmap.Types.WORLD_SURFACE_WG, tx, tz);
 
-        String structureId = (ship == null)
-                ? "minecraft:pillager_outpost"
-                : "mcpirates:outpost_with_" + ship;
-        String cmd = String.format("place structure %s %d %d %d", structureId, tx, ty, tz);
+        ResourceLocation key = MCPirates.id(kind + "_outpost");
+        OutpostPermits.get(level).permit(key, new ChunkPos(new BlockPos(tx, ty, tz)));
+        String cmd = String.format("place structure mcpirates:%s_outpost %d %d %d", kind, tx, ty, tz);
         try {
             level.getServer().getCommands().performPrefixedCommand(src.withPermission(4), cmd);
-            String label = (ship == null) ? "pillager outpost (random ship)"
-                                          : "pillager outpost with " + ship;
             src.sendSuccess(() -> Component.literal(
-                    "Placed " + label + " at " + new BlockPos(tx, ty, tz).toShortString()), true);
+                    "Placed " + kind + "_outpost at " + new BlockPos(tx, ty, tz).toShortString()), true);
         } catch (Exception e) {
-            MCPirates.LOGGER.error("[outpost spawn] failed", e);
-            src.sendFailure(Component.literal("Failed to place outpost: " + e.getMessage()));
+            MCPirates.LOGGER.error("[spawn {}] failed", kind, e);
+            src.sendFailure(Component.literal("Failed to place " + kind + "_outpost: " + e.getMessage()));
             return 0;
         }
-        return 1;
+        return Command.SINGLE_SUCCESS;
     }
 
     // ────────────────────────────── /mcpirates sheriff spawn ──────────────────────────────
@@ -384,99 +339,53 @@ public final class MCPCommands {
         return Command.SINGLE_SUCCESS;
     }
 
-    // ────────────────────────────── /mcpirates galleon spawn ──────────────────────────────
+    // ────────────────────────────── /mcpirates test unfurl ──────────────────────────────
 
-    private static int spawnGalleon(CommandContext<CommandSourceStack> ctx) {
-        CommandSourceStack src = ctx.getSource();
-        ServerLevel level = src.getLevel();
-        BlockPos origin = BlockPos.containing(src.getPosition());
-
-        // 80 east — clears the player's chunk but stays a short flight away.
-        int centerX = origin.getX() + 80;
-        int centerZ = origin.getZ();
-
-        BlockPos anchor = GalleonSpawner.spawnGalleonAt(level, centerX, centerZ);
-        if (anchor == null) {
-            src.sendFailure(Component.literal(
-                    "galleon placement failed (check log) — NBT missing or template error"));
-            return 0;
-        }
-        src.sendSuccess(() -> Component.literal(
-                "Placed galleon at " + anchor.toShortString()
-                        + " (fly close to trigger liftoff)"), true);
-        return Command.SINGLE_SUCCESS;
-    }
-
-    // ────────────────────────────── /mcpirates testunfurl ──────────────────────────────
-
-    // Stable identity for the integration-test FakePlayer; FakePlayerFactory caches by
-    // (level, profile) so repeated calls reuse one instance — we clear its inventory on
-    // each invocation instead.
-    private static final GameProfile TEST_UNFURL_PROFILE = new GameProfile(
-            UUID.fromString("00000000-0000-0000-c1a5-000000000001"),
-            "TestUnfurlBot");
-
-    // Integration-test entrypoint. Spawns/reuses a FakePlayer at the source position,
-    // mints a furled scroll into its main hand, routes through ServerPlayerGameMode.useItem
-    // (same path as a real right-click), then echoes the resulting map's id + target world
-    // coords. No connected client required — RCON-callable directly.
+    // Integration-test entrypoint. Deterministic by design: non-galleon always picks
+    // NORMAL_BOUNTY_KINDS[0], galleon always picks GALLEON_KIND. Bypasses use()/FakePlayer
+    // and goes straight to the permit-and-scan loop — the use() path's random kind roll
+    // is non-deterministic across server restarts (world RNG state drifts with background
+    // activity) and would make two-phase same-cell assertions impossible. The use() path
+    // is exercised by the manual GUI flow (testunfurl give → right-click → verify).
     //
-    // Output line (RCON-parseable):
-    //   "testunfurl OK map_id=<int> target=<x>,<z>"
-    // Failure modes echoed verbatim so the test harness can grep them.
+    // Output (RCON-parseable):
+    //   "testunfurl OK kind=<rl> cell=<cx>,<cz> ship=<kind> anchor=<x>,<y>,<z>"
     private static int testUnfurl(CommandContext<CommandSourceStack> ctx, boolean galleon) {
         CommandSourceStack src = ctx.getSource();
         ServerLevel level = src.getLevel();
-        Vec3 pos = src.getPosition();
+        ChunkPos origin = new ChunkPos(BlockPos.containing(src.getPosition()));
 
-        FakePlayer player = FakePlayerFactory.get(level, TEST_UNFURL_PROFILE);
-        player.getInventory().clearContent();
-        player.setPos(pos.x, pos.y, pos.z);
+        ResourceLocation kind = galleon ? FurledBountyItem.GALLEON_KIND
+                                        : FurledBountyItem.NORMAL_BOUNTY_KINDS.get(0);
+        int searchRadius = galleon ? 400 : 200;
 
-        ItemStack scroll = new ItemStack(MCPItems.FURLED_BOUNTY.get(), 1);
-        if (galleon) {
-            scroll.set(MCPDataComponents.IS_GALLEON_BOUNTY.get(), Unit.INSTANCE);
-        }
-        InteractionHand hand = InteractionHand.MAIN_HAND;
-        player.setItemInHand(hand, scroll);
-        player.gameMode.useItem(player, level, scroll, hand);
-
-        ItemStack now = player.getItemInHand(hand);
-        if (!(now.getItem() instanceof MapItem)) {
+        ChunkPos cell = OutpostPermits.findUnclaimedCandidate(level, kind, origin, searchRadius);
+        if (cell == null) {
             src.sendFailure(Component.literal(
-                    "testunfurl FAIL: hand has "
-                            + BuiltInRegistries.ITEM.getKey(now.getItem()) + " x" + now.getCount()));
+                    "testunfurl FAIL: no virgin " + kind + " cell within "
+                            + searchRadius + " chunks of " + origin));
             return 0;
         }
-        MapId mapId = now.get(DataComponents.MAP_ID);
-        MapDecorations decos = now.getOrDefault(DataComponents.MAP_DECORATIONS, MapDecorations.EMPTY);
-        if (mapId == null || decos.decorations().isEmpty()) {
-            src.sendFailure(Component.literal(
-                    "testunfurl FAIL: map missing id or decorations"));
-            return 0;
-        }
-        MapDecorations.Entry target = decos.decorations().values().iterator().next();
-        int tx = (int) target.x();
-        int tz = (int) target.z();
-        int id = mapId.id();
+        OutpostPermits.get(level).permit(kind, cell);
 
-        // Worldgen can spit out a shipless outpost (pool fallback to empty, jigsaw clipping).
-        // Force-loading 3 chunks around the structure target catches the ship anchor wherever
-        // jigsaw rotation/offset put it inside the base_plate_with_<ship> NBT.
-        MCPShipAnchorBlockEntity anchor = findShipAnchorNear(
-                level, new BlockPos(tx, level.getMinBuildHeight(), tz), /*chunkRadius=*/3);
+        // Force-load the permitted chunk's neighbourhood so worldgen runs and the ship
+        // anchor BE gets created. Radius 1 is enough — the anchor is always within the
+        // pad's own chunk (pad origin at chunk's min-corner, anchor at small offset).
+        BlockPos targetCenter = new BlockPos(cell.getMiddleBlockX(),
+                level.getMinBuildHeight(), cell.getMiddleBlockZ());
+        MCPShipAnchorBlockEntity anchor = findShipAnchorNear(level, targetCenter, /*chunkRadius=*/1);
         if (anchor == null) {
             src.sendFailure(Component.literal(
-                    "testunfurl FAIL: map points at (" + tx + "," + tz
-                            + ") but no ship_anchor within 3 chunks "
-                            + "— map_id=" + id + " (shipless outpost? pool-fallback hit?)"));
+                    "testunfurl FAIL: permitted " + kind + " at " + cell
+                            + " but no ship_anchor placed (worldgen rejected?)"));
             return 0;
         }
         BlockPos aPos = anchor.getBlockPos();
-        String kind = anchor.getKindName();
+        String shipKind = anchor.getKindName();
+        ChunkPos cellCopy = cell;
         src.sendSuccess(() -> Component.literal(
-                "testunfurl OK map_id=" + id + " target=" + tx + "," + tz
-                        + " ship=" + (kind.isEmpty() ? "<unknown>" : kind)
+                "testunfurl OK kind=" + kind + " cell=" + cellCopy.x + "," + cellCopy.z
+                        + " ship=" + (shipKind.isEmpty() ? "<unknown>" : shipKind)
                         + " anchor=" + aPos.getX() + "," + aPos.getY() + "," + aPos.getZ()), true);
         return Command.SINGLE_SUCCESS;
     }
@@ -512,11 +421,11 @@ public final class MCPCommands {
 
     // ────────────────────────────── /mcpirates testunfurl verify ──────────────────────────────
 
-    // Manual GUI flow, stage 2: after the executor has right-clicked the scroll and is
-    // holding the resulting map, verify its target decoration points at a real structure.
-    // Same correctness check the headless harness does, but invoked from chat so the
-    // player can sanity-check what they see on the client.
-    private static int testUnfurlVerify(CommandContext<CommandSourceStack> ctx, boolean galleon) {
+    // Manual GUI flow, stage 2: confirm the scroll's map points at a real generated
+    // structure. Reads the map decoration, scans the chunks around the target for a
+    // ship_anchor block entity, reports the anchor's kind. End-to-end check — kind comes
+    // from the anchor itself, no tag lookup needed.
+    private static int testUnfurlVerify(CommandContext<CommandSourceStack> ctx) {
         CommandSourceStack src = ctx.getSource();
         ServerPlayer player;
         try {
@@ -544,41 +453,20 @@ public final class MCPCommands {
         int tz = (int) entry.z();
 
         ServerLevel level = src.getLevel();
-        var tag = galleon ? MCPStructureTags.PIRATE_GALLEONS : MCPStructureTags.PIRATE_OUTPOSTS;
-        BlockPos found = level.findNearestMapStructure(
-                tag, new BlockPos(tx, level.getMinBuildHeight(), tz),
-                /*radiusChunks=*/2, /*skipExistingChunks=*/false);
-
-        if (found == null) {
-            src.sendFailure(Component.literal(
-                    "testunfurl verify FAIL: no " + tag.location()
-                            + " near map target (" + tx + "," + tz + ")"));
-            return 0;
-        }
-        int dx = found.getX() - tx;
-        int dz = found.getZ() - tz;
-        double dist = Math.sqrt(dx * dx + dz * dz);
-        if (dist > 16) {
-            src.sendFailure(Component.literal(String.format(
-                    "testunfurl verify FAIL: nearest %s is %.1f blocks from map target (>16)",
-                    tag.location(), dist)));
-            return 0;
-        }
-        MCPShipAnchorBlockEntity anchor = findShipAnchorNear(level, found, /*chunkRadius=*/3);
+        BlockPos targetCenter = new BlockPos(tx, level.getMinBuildHeight(), tz);
+        MCPShipAnchorBlockEntity anchor = findShipAnchorNear(level, targetCenter, /*chunkRadius=*/1);
         if (anchor == null) {
             src.sendFailure(Component.literal(String.format(
-                    "testunfurl verify FAIL: structure at (%d,%d) has no ship_anchor "
-                            + "within 3 chunks (shipless outpost — pool-fallback?)",
-                    found.getX(), found.getZ())));
+                    "testunfurl verify FAIL: no ship_anchor within 1 chunk of map target (%d,%d) "
+                            + "— structure not yet placed? try walking closer to load chunks",
+                    tx, tz)));
             return 0;
         }
         BlockPos aPos = anchor.getBlockPos();
         String kind = anchor.getKindName().isEmpty() ? "<unknown>" : anchor.getKindName();
         src.sendSuccess(() -> Component.literal(String.format(
-                "testunfurl verify OK: map (%d,%d) ↔ structure (%d,%d), %.1fb; "
-                        + "ship=%s anchor=(%d,%d,%d)",
-                tx, tz, found.getX(), found.getZ(), dist,
-                kind, aPos.getX(), aPos.getY(), aPos.getZ())), true);
+                "testunfurl verify OK: map (%d,%d); ship=%s anchor=(%d,%d,%d)",
+                tx, tz, kind, aPos.getX(), aPos.getY(), aPos.getZ())), true);
         return Command.SINGLE_SUCCESS;
     }
 
@@ -621,35 +509,126 @@ public final class MCPCommands {
         return Command.SINGLE_SUCCESS;
     }
 
-    // ────────────────────────────── helpers ──────────────────────────────
+    // ────────────────────────────── /mcpirates testunfurl preview ──────────────────────────────
 
-    private static BlockPos findNearestOutpost(ServerLevel level, BlockPos origin) {
-        Optional<Holder.Reference<Structure>> structure =
-                level.registryAccess()
-                        .registryOrThrow(Registries.STRUCTURE)
-                        .getHolder(PILLAGER_OUTPOST_KEY);
+    // Dry-run: calls OutpostPermits.findUnclaimedCandidate without stamping a permit, so
+    // the integration test can learn the chunk a real unfurl would target and assert it's
+    // empty before then re-running with an actual unfurl. Galleon flag picks GALLEON_KIND;
+    // non-galleon uses NORMAL_BOUNTY_KINDS[0] (deterministic so tests don't depend on the
+    // random roll). Output (RCON-parseable):
+    //   "preview OK kind=<rl> cell=<cx>,<cz>"
+    private static int testUnfurlPreview(CommandContext<CommandSourceStack> ctx, boolean galleon) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        Vec3 pos = src.getPosition();
+        ChunkPos origin = new ChunkPos(BlockPos.containing(pos));
 
-        if (structure.isEmpty()) {
-            MCPirates.LOGGER.warn("[outpost] pillager_outpost not found in Structure registry");
-            return null;
+        ResourceLocation kind;
+        int searchRadius;
+        if (galleon) {
+            kind = FurledBountyItem.GALLEON_KIND;
+            searchRadius = 400;
+        } else {
+            kind = FurledBountyItem.NORMAL_BOUNTY_KINDS.get(0);
+            searchRadius = 200;
+        }
+        ChunkPos cell = OutpostPermits.findUnclaimedCandidate(level, kind, origin, searchRadius);
+        if (cell == null) {
+            src.sendFailure(Component.literal(
+                    "preview FAIL: no virgin " + kind + " cell within " + searchRadius + " chunks"));
+            return 0;
+        }
+        ChunkPos c = cell;
+        src.sendSuccess(() -> Component.literal(
+                "preview OK kind=" + kind + " cell=" + c.x + "," + c.z), true);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    // ────────────────────────────── /mcpirates testpermits scan_candidates ──────────────────────────────
+
+    // Invariant probe: for every registered PermittedShipOutpostStructure, force-load every
+    // placement-formula candidate in (-halfRadius..halfRadius)² regions around the source
+    // position, and count ship_anchor BlockEntities. Used by the orchestrator's
+    // no_natural_spawn scenario to prove no ships spawn on a fresh world without a scroll
+    // unfurl. Scope: the source's dimension only — nether/end coverage was a one-time
+    // empirical check, now folded into the biome-whitelist design (overworld-only biomes,
+    // see decisions.md and the airship_small_outpost.json biome tag). Output:
+    //   "scan_candidates OK kinds=<n> regions_per_kind=<n> chunks=<n> anchors=0"
+    // On any anchor hit: FAIL with sample positions.
+    private static int testPermitsScanCandidates(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        int halfRadius = com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(ctx, "halfRadius");
+        ChunkPos origin = new ChunkPos(BlockPos.containing(src.getPosition()));
+
+        var structureRegistry = level.registryAccess()
+                .registryOrThrow(net.minecraft.core.registries.Registries.STRUCTURE);
+        var setRegistry = level.registryAccess()
+                .registryOrThrow(net.minecraft.core.registries.Registries.STRUCTURE_SET);
+
+        int kinds = 0;
+        int chunksScanned = 0;
+        int regionsPerKind = (2 * halfRadius + 1) * (2 * halfRadius + 1);
+        java.util.List<String> hits = new java.util.ArrayList<>();
+        long seed = level.getSeed();
+
+        for (var entry : structureRegistry.entrySet()) {
+            if (!(entry.getValue() instanceof com.mcpirates.worldgen.PermittedShipOutpostStructure)) {
+                continue;
+            }
+            ResourceLocation key = entry.getKey().location();
+            var setOpt = setRegistry.getOptional(
+                    net.minecraft.resources.ResourceKey.create(
+                            net.minecraft.core.registries.Registries.STRUCTURE_SET, key));
+            if (setOpt.isEmpty()) continue;
+            var placement = setOpt.get().placement();
+            if (!(placement instanceof net.minecraft.world.level.levelgen.structure.placement
+                    .RandomSpreadStructurePlacement spread)) {
+                continue;
+            }
+            kinds++;
+            int spacing = spread.spacing();
+            int originRegionX = Math.floorDiv(origin.x, spacing);
+            int originRegionZ = Math.floorDiv(origin.z, spacing);
+
+            for (int dx = -halfRadius; dx <= halfRadius; dx++) {
+                for (int dz = -halfRadius; dz <= halfRadius; dz++) {
+                    ChunkPos candidate = spread.getPotentialStructureChunk(
+                            seed, originRegionX + dx, originRegionZ + dz);
+                    LevelChunk chunk = level.getChunk(candidate.x, candidate.z);
+                    chunksScanned++;
+                    for (BlockEntity be : chunk.getBlockEntities().values()) {
+                        if (be instanceof MCPShipAnchorBlockEntity anchor) {
+                            BlockPos pos = anchor.getBlockPos();
+                            if (hits.size() < 5) {
+                                hits.add(key + "@" + pos.toShortString());
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        var result = level.getChunkSource()
-                .getGenerator()
-                .findNearestMapStructure(
-                        level,
-                        HolderSet.direct(structure.get()),
-                        origin,
-                        /*radiusInChunks=*/100,
-                        /*skipExistingChunks=*/false);
-
-        return result != null ? result.getFirst() : null;
+        if (!hits.isEmpty()) {
+            src.sendFailure(Component.literal(String.format(
+                    "scan_candidates FAIL anchors>=%d (first %d): %s",
+                    hits.size(), hits.size(), String.join(", ", hits))));
+            return 0;
+        }
+        final int kindsF = kinds;
+        final int chunksF = chunksScanned;
+        src.sendSuccess(() -> Component.literal(String.format(
+                "scan_candidates OK kinds=%d regions_per_kind=%d chunks=%d anchors=0",
+                kindsF, regionsPerKind, chunksF)), true);
+        return Command.SINGLE_SUCCESS;
     }
+
+    // ────────────────────────────── helpers ──────────────────────────────
 
     /** Force-load chunks in a (2r+1)² square around {@code center} and return the first
      *  ship anchor BE found. Forces the load because outpost chunks generated by
-     *  findNearestMapStructure may have been unloaded again by the time we check —
-     *  AirshipLiftoffTrigger's getChunkNow pattern returns null in that case. */
+     *  PermittedShipOutpostStructure-generated chunks may have been unloaded again by
+     *  the time we check; force-load so chunk.getBlockEntities() includes the anchor BE. */
     private static MCPShipAnchorBlockEntity findShipAnchorNear(
             ServerLevel level, BlockPos center, int chunkRadius) {
         int cx = center.getX() >> 4;

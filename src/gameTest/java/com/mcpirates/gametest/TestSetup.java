@@ -56,6 +56,7 @@ public final class TestSetup {
         logArena(helper);
         AirshipBrain.unregisterAll(level);
         AirshipBrain.targetOverride = null;
+        AirshipBrain.CANNON_FIRE_ENABLED = false;
         MinecraftServer server = level.getServer();
         if (server != null) {
             server.getPlayerList().setSimulationDistance(0);

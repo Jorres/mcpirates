@@ -1,6 +1,7 @@
 {
-  "type": "mcpirates:pirate_galleon",
-  "biomes": "#mcpirates:has_structure/pirate_galleon",
+  "type": "mcpirates:permitted_ship_outpost",
+  "permit_key": "mcpirates:galleon_outpost",
+  "biomes": "#mcpirates:has_structure/galleon_outpost",
   "start_pool": "mcpirates:galleon_pad",
   "size": 2,
   "start_height": {

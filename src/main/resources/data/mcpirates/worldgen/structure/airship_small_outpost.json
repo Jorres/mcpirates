@@ -1,0 +1,15 @@
+{
+  "type": "mcpirates:permitted_ship_outpost",
+  "permit_key": "mcpirates:airship_small_outpost",
+  "biomes": "#mcpirates:has_structure/airship_small_outpost",
+  "start_pool": "mcpirates:airship_small_pad",
+  "size": 2,
+  "start_height": {
+    "absolute": 0
+  },
+  "project_start_to_heightmap": "WORLD_SURFACE_WG",
+  "use_expansion_hack": false,
+  "step": "surface_structures",
+  "terrain_adaptation": "beard_thin",
+  "spawn_overrides": {}
+}

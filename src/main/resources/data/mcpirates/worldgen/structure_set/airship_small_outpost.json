@@ -1,0 +1,14 @@
+{
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 7341901,
+    "spacing": 32,
+    "separation": 8
+  },
+  "structures": [
+    {
+      "structure": "mcpirates:airship_small_outpost",
+      "weight": 1
+    }
+  ]
+}

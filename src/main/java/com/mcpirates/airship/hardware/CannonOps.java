@@ -7,6 +7,7 @@ import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
 import com.simibubi.create.foundation.blockEntity.behaviour.BehaviourType;
 import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.LivingEntity;
@@ -23,6 +24,8 @@ import rbasamoyai.createbigcannons.cannon_control.cannon_mount.CannonMountBlockE
 import rbasamoyai.createbigcannons.cannon_control.contraption.AbstractMountedCannonContraption;
 import rbasamoyai.createbigcannons.cannon_control.contraption.PitchOrientedContraptionEntity;
 import rbasamoyai.createbigcannons.cannons.big_cannons.BigCannonBehavior;
+import rbasamoyai.createbigcannons.munitions.AbstractCannonProjectile;
+import net.minecraft.world.phys.AABB;
 
 import java.lang.reflect.Field;
 
@@ -40,10 +43,18 @@ public final class CannonOps {
     private static final ResourceLocation SOLID_SHOT_ID =
             ResourceLocation.fromNamespaceAndPath("createbigcannons", "solid_shot");
 
-    /** Powder charges loaded per shot. Sets the muzzle velocity at 1.0 b/tick per charge
-     *  (CBC's propellant arithmetic). When per-kind variation actually has a use case,
-     *  promote this to an {@code AirshipKind} method — until then it's a global constant. */
-    private static final int MUZZLE_CHARGE_COUNT = 2;
+    /** Powder charges loaded per shot. Cannon barrels are 2 slots (1 powder + 1 shot)
+     *  so this stays at 1; any higher leaves no room for the projectile. */
+    private static final int MUZZLE_CHARGE_COUNT = 1;
+
+    /** Power contribution per {@code createbigcannons:powder_charge} block, mirroring
+     *  CBC's {@code data/createbigcannons/munition_properties/block_propellant/powder_charge.json}
+     *  {@code strength} field. {@code chargesUsed = COUNT × STRENGTH}, and CBC then uses
+     *  {@code chargesUsed} as the projectile's muzzle velocity (b/tick). If CBC bumps the
+     *  default {@code strength}, retune here so the ballistic solver and the actual shot
+     *  agree on v0 — a mismatch makes the solver refuse fire (canFire=false) while CBC
+     *  could happily reach the target. */
+    private static final double POWDER_STRENGTH = 2.0;
 
     private static Field cachedMountedContraptionField;
     private static Field cachedCannonYawField;
@@ -73,18 +84,22 @@ public final class CannonOps {
     /** Compute the (yaw, pitch) a cannon at {@code slMountPos} needs to land a solid shot
      *  on {@code target}, in ship-local degrees. World-frame ballistic solve (gravity is
      *  world-down) → rotated into ship-local because the mount BE re-applies the SubLevel
-     *  pose at render time. Pure math, no side effects. */
+     *  pose at render time. Pure math, no side effects.
+     *
+     *  <p>Muzzle is queried from the cannon contraption's current pose (entity.toGlobalVector
+     *  of the spawn-cell centre, matching CBC's {@code MountedBigCannonContraption.fireShot}).
+     *  Since the spawn depends on the cannon's yaw/pitch and we're solving for those, the
+     *  estimate is one tick stale — but aim() runs every {@code AIM_INTERVAL} ticks so it
+     *  self-corrects within the first volley. Falls back to mount-as-muzzle when the
+     *  contraption hasn't loaded yet. */
     public static Aim computeAim(Airship ship, BlockPos slMountPos, LivingEntity target) {
-        Vec3 muzzle = ship.subLevel.logicalPose().transformPosition(
-                new Vec3(slMountPos.getX() + 0.5,
-                        slMountPos.getY() + 0.5,
-                        slMountPos.getZ() + 0.5));
+        Vec3 muzzle = resolveMuzzleWorld(ship, slMountPos);
         double dx = target.getX()    - muzzle.x;
         double dy = target.getEyeY() - muzzle.y;
         double dz = target.getZ()    - muzzle.z;
         double horiz = Math.sqrt(dx * dx + dz * dz);
 
-        double v0 = MUZZLE_CHARGE_COUNT;
+        double v0 = MUZZLE_CHARGE_COUNT * POWDER_STRENGTH;
         double worldPitch = Ballistics.solvePitch(horiz, dy, v0);
         boolean outOfRange = Double.isNaN(worldPitch);
         if (outOfRange) worldPitch = Math.PI / 4;
@@ -102,6 +117,56 @@ public final class CannonOps {
         float yaw   = (float) Math.toDegrees(Math.atan2(-localDir.x, localDir.z));
         float pitch = (float) Math.toDegrees(Math.atan2(localDir.y, localHoriz));
         return new Aim(yaw, pitch, outOfRange, false);
+    }
+
+    /** World-rendered pos of the cell where CBC will spawn the projectile this tick.
+     *  Mirrors {@code MountedBigCannonContraption.fireShot}: {@code spawnPos =
+     *  entity.toGlobalVector(centerOf(startPos + (N+1)*step), 0) - 2*forward}, which
+     *  reduces to {@code centerOf(startPos + (N-1)*step)} once the {@code -2*forward}
+     *  cancels two of the cells.
+     *
+     *  <p>{@code entity.toGlobalVector} returns plot-space (Sable parks the SubLevel's
+     *  contents in a far-off plot region); we run it through {@link SubLevel#logicalPose()}
+     *  to get the world-rendered position so the solver's dx/dy/dz to the world-frame
+     *  target are correct. */
+    private static Vec3 resolveMuzzleWorld(Airship ship, BlockPos slMountPos) {
+        Level subLevelLevel = ship.subLevel.getLevel();
+        if (subLevelLevel != null
+                && subLevelLevel.getBlockEntity(slMountPos) instanceof CannonMountBlockEntity mount) {
+            PitchOrientedContraptionEntity entity = getMountedContraption(mount);
+            if (entity != null
+                    && entity.getContraption() instanceof AbstractMountedCannonContraption cannon) {
+                BlockPos startPos = cannonStartPos(cannon);
+                if (startPos != null) {
+                    Direction dir = cannon.initialOrientation();
+                    int barrelLength = countBarrelCells(cannon, startPos, dir);
+                    int offsetCells = Math.max(0, barrelLength - 1);
+                    Vec3 spawnLocal = new Vec3(
+                            startPos.getX() + 0.5 + dir.getStepX() * offsetCells,
+                            startPos.getY() + 0.5 + dir.getStepY() * offsetCells,
+                            startPos.getZ() + 0.5 + dir.getStepZ() * offsetCells);
+                    Vec3 spawnPlot = entity.toGlobalVector(spawnLocal, 0);
+                    return ship.subLevel.logicalPose().transformPosition(spawnPlot);
+                }
+            }
+        }
+        // Pre-assembly fallback: treat the mount itself as the muzzle. First-aim shot
+        // will be off; the next aim cycle picks up the contraption and corrects.
+        return ship.subLevel.logicalPose().transformPosition(
+                new Vec3(slMountPos.getX() + 0.5,
+                        slMountPos.getY() + 0.5,
+                        slMountPos.getZ() + 0.5));
+    }
+
+    private static int countBarrelCells(AbstractMountedCannonContraption cannon,
+                                        BlockPos startPos, Direction dir) {
+        int n = 0;
+        BlockPos p = startPos;
+        while (cannon.presentBlockEntities.get(p) != null && n < 16) {
+            n++;
+            p = p.relative(dir);
+        }
+        return n;
     }
 
     /** Write yaw/pitch onto the cannon mount BE. Idempotent at the BE level (CBC won't
@@ -147,11 +212,24 @@ public final class CannonOps {
                 String.format("%.1f", storedPitch));
     }
 
-    /** Load (if empty) and fire the cannon at {@code slMountPos}. Returns true if a shot
-     *  was actually issued. */
+    /** Max degrees of random yaw/pitch perturbation applied at fire time on top of CBC's
+     *  own spread. Pirate volleys feel too sniper-accurate otherwise — gives players a
+     *  realistic chance to dodge by closing or opening the range. */
+    private static final float FIRE_JITTER_DEG = 10.0f;
+
+    /** Load (if empty) and fire the cannon at {@code slMountPos}. Jitters the cannon's
+     *  yaw/pitch by ±{@link #FIRE_JITTER_DEG} before firing so consecutive shots aren't
+     *  identical; the next aim() cycle will overwrite the jitter with the fresh target
+     *  solution. Returns true if a shot was actually issued. */
     public static boolean fireOnce(Airship ship, BlockPos slMountPos) {
         Level subLevelLevel = ship.subLevel.getLevel();
         if (!(subLevelLevel instanceof ServerLevel ssub)) return false;
+        if (ssub.getBlockEntity(slMountPos) instanceof CannonMountBlockEntity mount) {
+            float yawJitter   = (ssub.getRandom().nextFloat() - 0.5f) * 2f * FIRE_JITTER_DEG;
+            float pitchJitter = (ssub.getRandom().nextFloat() - 0.5f) * 2f * FIRE_JITTER_DEG;
+            mount.setYaw(readCannonYaw(mount) + yawJitter);
+            mount.setPitch(readCannonPitch(mount) + pitchJitter);
+        }
         boolean fired = fireRawAt(ssub, ship.parentLevel, slMountPos, MUZZLE_CHARGE_COUNT);
         if (fired) {
             MCPirates.LOGGER.debug("ship {} ({}) fire at mount {}",
@@ -166,45 +244,100 @@ public final class CannonOps {
     public static boolean fireRawAt(ServerLevel mountLevel, ServerLevel projectileLevel,
                                      BlockPos mountPos, int powderCount) {
         if (!(mountLevel.getBlockEntity(mountPos) instanceof CannonMountBlockEntity mount)) {
+            MCPirates.LOGGER.warn("[fireRaw] no CannonMountBE at {}", mountPos);
             return false;
         }
         PitchOrientedContraptionEntity entity = getMountedContraption(mount);
         if (entity == null
                 || !(entity.getContraption() instanceof AbstractMountedCannonContraption cannon)) {
+            MCPirates.LOGGER.warn("[fireRaw] no POCE/cannon contraption at {}", mountPos);
             return false;
         }
+        MCPirates.LOGGER.info(
+                "[fireRaw] mount={} mountLvl={} projLvl={} entityPos={} entityLvl={} cannon={}",
+                mountPos,
+                mountLevel.dimension().location(),
+                projectileLevel.dimension().location(),
+                entity.position(),
+                entity.level().dimension().location(),
+                cannon.getClass().getSimpleName());
         loadIfNeeded(cannon, powderCount);
+
+        Vec3 ePos = entity.position();
+        int preMount = countProjectilesNear(mountLevel, ePos, 80);
+        int preProj = (projectileLevel == mountLevel) ? preMount : countProjectilesNear(projectileLevel, ePos, 80);
         try {
             cannon.fireShot(projectileLevel, entity);
-            return true;
         } catch (Throwable th) {
             MCPirates.LOGGER.error("fireShot threw at {}", mountPos, th);
             return false;
         }
+        int postMount = countProjectilesNear(mountLevel, ePos, 80);
+        int postProj = (projectileLevel == mountLevel) ? postMount : countProjectilesNear(projectileLevel, ePos, 80);
+        MCPirates.LOGGER.info(
+                "[fireRaw] post-fire projectile counts near entity: mountLvl {} -> {}, projLvl {} -> {}",
+                preMount, postMount, preProj, postProj);
+        return true;
     }
 
-    /** Stuff {@code powderCount} powder charges then one solid shot into the first empty
-     *  cannon blocks of {@code cannon}. CBC barrels stay loaded between shots; this only
-     *  fires on the first activation per cannon, after which the barrel holds the loaded
-     *  state. If the cannon doesn't have {@code powderCount + 1} free slots the shot won't
-     *  fit — fireShot then becomes a recoil-only blank, which is fine as a soft cap. */
+    private static int countProjectilesNear(ServerLevel level, Vec3 centre, double r) {
+        AABB box = AABB.ofSize(centre, r * 2, r * 2, r * 2);
+        return level.getEntitiesOfClass(AbstractCannonProjectile.class, box).size();
+    }
+
+    /** Stuff {@code powderCount} powder charges then one solid shot, walking the cannon
+     *  from breech to muzzle in CBC's canonical {@code initialOrientation} order. CBC's
+     *  {@code fireShot} walks the same sequence and fails fast if propellant doesn't sit
+     *  before the projectile — iterating {@code presentBlockEntities.values()} (HashMap
+     *  order) happens to work for short standalone test cannons but breaks for ship
+     *  cannons whose iteration order doesn't match the physical layout. */
     private static void loadIfNeeded(AbstractMountedCannonContraption cannon, int powderCount) {
         BlockState powder = blockState(POWDER_CHARGE_ID);
         BlockState shot = blockState(SOLID_SHOT_ID);
         if (powder == null || shot == null) return;
 
+        BlockPos pos = cannonStartPos(cannon);
+        if (pos == null) return;
+        Direction dir = cannon.initialOrientation();
         int loaded = 0;
         int total = powderCount + 1;
-        for (BlockEntity be : cannon.presentBlockEntities.values()) {
-            if (!(be instanceof SmartBlockEntity sbe)) continue;
+        int positionsVisited = 0;
+        StringBuilder trace = new StringBuilder();
+        while (loaded < total) {
+            BlockEntity be = cannon.presentBlockEntities.get(pos);
+            trace.append(' ').append(pos).append('=');
+            if (!(be instanceof SmartBlockEntity sbe)) { trace.append("noSBE"); break; }
             BigCannonBehavior beh = bigCannonBehavior(sbe);
-            if (beh == null) continue;
+            if (beh == null) { trace.append("noBeh"); break; }
             StructureBlockInfo current = beh.block();
-            if (current != null && !current.state().isAir()) continue;
+            if (current == null || current.state().isAir()) {
+                BlockState toLoad = (loaded < powderCount) ? powder : shot;
+                beh.loadBlock(new StructureBlockInfo(BlockPos.ZERO, toLoad, null));
+                trace.append(loaded < powderCount ? "+P" : "+S");
+                loaded++;
+            } else {
+                trace.append("hasBlock(").append(current.state().getBlock()).append(')');
+            }
+            pos = pos.relative(dir);
+            positionsVisited++;
+            if (positionsVisited > 16) { trace.append(" overflow"); break; }
+        }
+        MCPirates.LOGGER.info("loadIfNeeded startPos={} dir={} loaded={}/{} trace=[{}]",
+                cannonStartPos(cannon), dir, loaded, total, trace);
+    }
 
-            BlockState toLoad = (loaded < powderCount) ? powder : shot;
-            beh.loadBlock(new StructureBlockInfo(BlockPos.ZERO, toLoad, null));
-            if (++loaded >= total) return;
+    private static Field cachedStartPosField;
+
+    private static BlockPos cannonStartPos(AbstractMountedCannonContraption cannon) {
+        try {
+            if (cachedStartPosField == null) {
+                cachedStartPosField = AbstractMountedCannonContraption.class.getDeclaredField("startPos");
+                cachedStartPosField.setAccessible(true);
+            }
+            return (BlockPos) cachedStartPosField.get(cannon);
+        } catch (ReflectiveOperationException e) {
+            MCPirates.LOGGER.error("CannonOps: failed to read startPos via reflection", e);
+            return null;
         }
     }
 

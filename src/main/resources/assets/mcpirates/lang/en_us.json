@@ -6,7 +6,7 @@
   "item.mcpirates.captain_seal": "Captain's Seal",
   "item.mcpirates.furled_bounty": "Furled Bounty",
   "item.mcpirates.furled_bounty.galleon": "Galleon Bounty",
-  "item.mcpirates.furled_bounty.no_target": "No live pirate outposts nearby.",
+  "item.mcpirates.furled_bounty.no_target": "Your sources find no untouched pirate lair. Sail far into uncharted waters and try again.",
 
   "entity.minecraft.villager.mcpirates.sheriff": "Sheriff",
 

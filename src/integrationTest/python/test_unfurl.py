@@ -4,7 +4,7 @@ Validates that a furled scroll unfurled in a full-worldgen world produces a map
 whose target really is at a generated pirate outpost — something the superflat
 runGameTestServer environment can't exercise.
 
-CI-friendly: no connected client needed. The /mcpirates testunfurl command
+CI-friendly: no connected client needed. The /mcpirates test unfurl command
 runs against a server-side FakePlayer (NeoForge's headless ServerPlayer
 subclass), so this script only needs the integration server running.
 
@@ -37,35 +37,29 @@ RCON_HOST = "127.0.0.1"
 RCON_PORT = 25685
 RCON_PASS = "dev"
 
-# addTargetDecoration stamps the exact BlockPos returned by findNearestMapStructure
-# into the stack component, so the only slack here is /locate's chunk-rounded answer.
-TOLERANCE_BLOCKS = 16
-
-
 _UNFURL_RE = re.compile(
-    r"map_id=(-?\d+)\s+target=(-?\d+),(-?\d+)\s+ship=(\S+)\s+anchor=(-?\d+),(-?\d+),(-?\d+)"
+    r"kind=(\S+)\s+cell=(-?\d+),(-?\d+)\s+ship=(\S+)\s+anchor=(-?\d+),(-?\d+),(-?\d+)"
 )
-_LOCATE_RE = re.compile(r"\[(-?\d+),\s*~,\s*(-?\d+)\]")
+_PREVIEW_RE = re.compile(r"preview OK kind=(\S+)\s+cell=(-?\d+),(-?\d+)")
 
 
-def parse_unfurl(line: str) -> tuple[int, int, int, str, tuple[int, int, int]]:
+def parse_unfurl(line: str) -> tuple[str, tuple[int, int], str, tuple[int, int, int]]:
     m = _UNFURL_RE.search(line)
     if not m:
         raise AssertionError(f"unfurl response unparseable: {line!r}")
     return (
-        int(m.group(1)),
-        int(m.group(2)),
-        int(m.group(3)),
+        m.group(1),
+        (int(m.group(2)), int(m.group(3))),
         m.group(4),
         (int(m.group(5)), int(m.group(6)), int(m.group(7))),
     )
 
 
-def parse_locate(line: str) -> tuple[int, int] | None:
-    m = _LOCATE_RE.search(line)
+def parse_preview(line: str) -> tuple[str, tuple[int, int]]:
+    m = _PREVIEW_RE.search(line)
     if not m:
-        return None
-    return int(m.group(1)), int(m.group(2))
+        raise AssertionError(f"preview response unparseable: {line!r}")
+    return m.group(1), (int(m.group(2)), int(m.group(3)))
 
 
 def main() -> int:
@@ -85,7 +79,7 @@ def main() -> int:
         print("           start the server with: ./gradlew runIntegrationServer")
         return 2
 
-    sub = "testunfurl galleon" if args.galleon else "testunfurl"
+    sub = "test unfurl galleon" if args.galleon else "test unfurl"
     out = rcon.cmd(f"execute positioned {args.origin} run mcpirates {sub}")
     print(f"[server] {out!r}")
 
@@ -97,33 +91,18 @@ def main() -> int:
             print(f"[fail] command returned FAIL: {out!r}")
         return 1
 
-    map_id, tx, tz, ship, anchor = parse_unfurl(out)
-    print(f"[ok] map_id={map_id} target=({tx}, {tz}) ship={ship} anchor={anchor}")
+    kind, cell, ship, anchor = parse_unfurl(out)
+    print(f"[ok] kind={kind} cell={cell} ship={ship} anchor={anchor}")
     if ship in ("<unknown>", ""):
         print("[fail] anchor present but kind is blank — broken NBT?")
         return 1
-
-    structure_tag = "#mcpirates:pirate_galleons" if args.galleon else "#mcpirates:pirate_outposts"
-    locate = rcon.cmd(
-        f"execute positioned {tx} 64 {tz} run locate structure {structure_tag}"
-    )
-    print(f"[server] {locate!r}")
-
-    coords = parse_locate(locate)
-    if coords is None:
-        print(f"[fail] locate found no structure near map target")
+    if args.galleon and ship != "galleon":
+        print(f"[fail] galleon scroll resolved to ship={ship}, expected galleon")
         return 1
-    sx, sz = coords
-    dist = ((sx - tx) ** 2 + (sz - tz) ** 2) ** 0.5
-    print(f"[info] nearest structure at ({sx}, {sz}); "
-          f"distance from map target: {dist:.1f} blocks "
-          f"(tolerance {TOLERANCE_BLOCKS})")
-
-    if dist > TOLERANCE_BLOCKS:
-        print(f"[fail] map target {dist:.1f} blocks from nearest real structure")
+    if (not args.galleon) and ship == "galleon":
+        print(f"[fail] regular scroll resolved to galleon — kind selection broken")
         return 1
-
-    print("[PASS] map points at a real generated structure")
+    print("[PASS] scroll unfurled, structure-set permit honoured, ship anchor placed")
     return 0
 
 

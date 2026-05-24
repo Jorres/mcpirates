@@ -16,11 +16,12 @@ scroll resolves it to a treasure map pointing at the nearest still-undefeated ai
 
 ```
 Worldgen
-├─ data/minecraft/worldgen/template_pool/pillager_outpost/base_plates.json
-│    overridden by mcpirates to always use base_plate_with_airship → 100 %
-│    of outposts carry a parked airship on a stone-brick pad.
-├─ data/mcpirates/structure/airship_small.nbt
-│    the parked ship (envelope, helm, cannon mount, propellers, beds).
+├─ data/mcpirates/worldgen/structure/<kind>_outpost.json
+│    one mcpirates:permitted_ship_outpost per ship kind. Vanilla pillager outposts
+│    stay vanilla (ship-less); ship outposts spawn only at chunks permitted by
+│    OutpostPermits when a bounty scroll unfurls (see runtime block below).
+├─ data/mcpirates/structure/<ship>.nbt / <ship>_pad.nbt
+│    the parked ship + its pad piece (jigsaw-attached at structure-gen time).
 └─ data/mcpirates/lithostitched/worldgen_modifier/sheriff_station_{vanilla,ctov,kaisyn}.json
      inject mcpirates:sheriff_station into the village house pools of vanilla
      biomes, CTOV's house pools, and T&T's kaisyn house pools respectively.

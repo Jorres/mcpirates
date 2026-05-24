@@ -62,12 +62,6 @@ class DevSaveSyncTest {
     }
 
     private static void checkOne(Path devSave, String name) throws IOException {
-        if (name.startsWith("base_plate_with_")) {
-            fail("'" + name + "' was saved under runs/ but base_plate_with_* NBTs are built "
-                    + "from the vanilla pillager_outpost base_plate by tools/build_ships.py. "
-                    + "Authoring one in-game can't roundtrip — delete the dev save.");
-        }
-
         Path expected = RESOURCE_STRUCT.resolve(name + ".nbt");
         String label = "src/main/resources/data/mcpirates/structure/" + name + ".nbt";
 

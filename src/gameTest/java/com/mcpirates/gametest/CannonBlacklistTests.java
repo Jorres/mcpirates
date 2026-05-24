@@ -168,7 +168,9 @@ public final class CannonBlacklistTests {
         }
         // Simulate assembly redstone pulse. firePower=0 so we don't auto-fire here.
         mount.onRedstoneUpdate(true, false, false, false, 0);
-        boolean fired = CannonOps.fireRawAt(level, level, worldMountPos, 2);
+        // 1 powder + 1 shot = 2 cells, matching the test cannon's chamber count. Loading
+        // 2 powders would consume both chambers and leave no slot for the projectile.
+        boolean fired = CannonOps.fireRawAt(level, level, worldMountPos, 1);
         helper.assertTrue(fired, "fireRawAt returned false at " + worldMountPos);
     }
 

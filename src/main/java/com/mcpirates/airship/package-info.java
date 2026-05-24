@@ -5,8 +5,10 @@
  *
  * <p>The parked-ship structure NBT itself lives under
  * {@code resources/data/mcpirates/structure/airship_small.nbt} and is wired into
- * worldgen via the {@code base_plate_with_airship} pool override (see the {@code
- * data/minecraft/worldgen/template_pool/pillager_outpost/base_plates.json}
- * datapack-side override). All of this is documented in {@code docs/decisions.md}.
+ * worldgen via the {@code mcpirates:permitted_ship_outpost} structure type
+ * (see {@link com.mcpirates.worldgen.PermittedShipOutpostStructure} +
+ * {@link com.mcpirates.worldgen.OutpostPermits}). Generation is permit-gated:
+ * structures only spawn at chunks stamped by {@code FurledBountyItem} when a
+ * bounty scroll unfurls.
  */
 package com.mcpirates.airship;

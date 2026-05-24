@@ -37,8 +37,6 @@ public final class SingleFrontCannonCombat implements CombatBehavior {
         if (ship.slCannonMounts.isEmpty()) return false;
         BlockPos mount = ship.slCannonMounts.get(0);
         if (!ship.isMountManned(mount)) return false;
-        // aim() runs at a higher cadence than fire() so the cache is normally populated
-        // by the time we get here; the miss path covers first-tick startup.
         CannonOps.Aim aim = ship.lastAimByMount.get(mount);
         if (aim == null) aim = CannonOps.computeAim(ship, mount, target);
         if (!aim.canFire()) return false;

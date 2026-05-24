@@ -1,0 +1,14 @@
+{
+  "placement": {
+    "type": "minecraft:random_spread",
+    "salt": 7341902,
+    "spacing": 32,
+    "separation": 8
+  },
+  "structures": [
+    {
+      "structure": "mcpirates:crossbow_board_outpost",
+      "weight": 1
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 package com.mcpirates;
 
-import com.mcpirates.airship.ships.galleon.GalleonUnlockState;
+import com.mcpirates.worldgen.OutpostPermits;
 import com.mcpirates.registry.MCPBlockEntityTypes;
 import com.mcpirates.registry.MCPBlocks;
 import com.mcpirates.registry.MCPCreativeTabs;
@@ -50,10 +50,9 @@ public class MCPirates {
         // the class itself dependency-free of NeoForge annotations.
         NeoForge.EVENT_BUS.addListener(SheriffNameAssigner::onEntityJoinLevel);
 
-        // On server start, mirror the persisted galleon-unlock flag from the overworld's
-        // SavedData into the worker-readable static field — see GalleonUnlockState for
-        // why we can't read SavedData from worldgen threads. Must run *after* the level
-        // is loaded; ServerStartedEvent fires after the overworld is up.
+        // On server start, hydrate worker-readable static mirrors from SavedData. See
+        // OutpostPermits for why mirrors are needed (worldgen workers can't safely call
+        // ServerLevel.getDataStorage from off-thread).
         NeoForge.EVENT_BUS.addListener(MCPirates::onServerStarted);
     }
 
@@ -61,10 +60,10 @@ public class MCPirates {
         var overworld = event.getServer().getLevel(Level.OVERWORLD);
         if (overworld == null) {
             LOGGER.warn("[{}] ServerStartedEvent fired but OVERWORLD is null; "
-                    + "galleon-unlock mirror left at default (false)", MOD_ID);
+                    + "SavedData mirrors left at defaults", MOD_ID);
             return;
         }
-        GalleonUnlockState.get(overworld).hydrateGlobal();
+        OutpostPermits.get(overworld).hydrateGlobal();
     }
 
     public static ResourceLocation id(String path) {

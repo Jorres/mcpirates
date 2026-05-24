@@ -414,3 +414,57 @@ server is headless; verified manually under `runClientQuick`. JUnit-style menu t
 under `src/test/java` were rejected: `AbstractContainerMenu` reaches into `MenuType`
 static fields and ServerPlayer machinery that JUnit can't bootstrap without a real
 `MinecraftServer`.
+
+---
+
+## 2026-05-24 — Replace galleon-unlock boolean + vanilla pool override with permit-gated ship outpost structures
+
+**Decision.** Pirate-ship outposts no longer hitchhike on vanilla `minecraft:pillager_outpost`.
+Each ship kind (`airship_small`, `crossbow_board`, `ramship`, `galleon`) is its own
+top-level structure of type `mcpirates:permitted_ship_outpost`. The `base_plates` pool
+override and `base_plate_with_<ship>` NBTs are gone; vanilla pillager outposts are back
+to vanilla (no ship). The `GalleonUnlockState` global boolean gate is gone.
+
+**Generation is permit-gated.** `findGenerationPoint` returns empty unless a `ChunkPos`
+entry exists in `OutpostPermits` for that structure's `permit_key`. Permits are stamped
+by `FurledBountyItem.use` when a bounty scroll unfurls: the scroll picks a ship kind
+(galleon if the `IS_GALLEON_BOUNTY` component is present, else random from the
+non-galleon set), iterates outward via the structure_set's
+`RandomSpreadStructurePlacement.getPotentialStructureChunk`, validates each candidate
+against vanilla's full `isStructureChunk` (frequency dice + exclusion zones) and the
+structure's `validBiome` tag, skips cells whose chunks are already loaded/on-disk/
+evaluated-by-our-own-findGenerationPoint, and stamps the first that survives. The map's
+decoration points at that cell's center.
+
+**One scroll = one structure.** A permit is consumed by one specific cell; permits never
+expire. Other structure-set candidate cells stay un-permitted and therefore unspawned.
+
+**Future-flexibility hook.** `OutpostPermits` also carries an `openGates: Set<RL>` that
+short-circuits `isAllowed` to true for every chunk. Nothing calls `openGate(key)` today;
+when gameplay design wants "the scroll opens a kind globally instead", `openGate` is the
+one-line transition. Structure-side code is unchanged.
+
+**Why a custom Structure type (`PermittedShipOutpostStructure`) rather than mixin/override.**
+Vanilla `JigsawStructure` is `final`. The natural extension point is registering our own
+`StructureType` whose `findGenerationPoint` knows about permits. One Java class drives
+all kinds — the `permit_key` field in the JSON identifies which permit set each
+structure consults, so adding a new ship is a data-only change.
+
+**Why the chunk-existence + own-evaluation probe.** Vanilla's `StructureCheck` caches
+findGenerationPoint results. A neighbouring chunk hitting STRUCTURE_STARTS triggers
+findGenerationPoint for all structures whose region the chunk falls in — including ours,
+returning empty for lack of permit, and the cache poisons that cell. Permitting it later
+is a no-op. We skip any candidate (a) loaded in memory, (b) saved to disk, or (c) where
+our own structure has already had its findGenerationPoint fire (tracked in a
+`ConcurrentHashMap<RL, Set<ChunkPos>>` populated by the structure subclass).
+
+**Tradeoffs.** Vanilla pillager outposts coexist alongside ours but are ship-less.
+Tooling that detects "outposts in worldgen" by tag `#mcpirates:pirate_outposts` no longer
+works — the tag is gone. The `outpost_anchor` jigsaw block was permanently removed from
+each pad NBT; `tools/strip_outpost_anchor_jigsaws.py` documents the surgery. Pad `size_y`
+was bumped to encompass the ship's vertical extent (`tools/bump_pad_sizes_for_standalone.py`)
+because each pad is now the structure's start piece and vanilla's bbox-extension hack
+only applies to child pieces.
+
+Supersedes the 2026-05-10 entry "Airship integration: override base_plates pool, airship
+as outpost jigsaw piece".

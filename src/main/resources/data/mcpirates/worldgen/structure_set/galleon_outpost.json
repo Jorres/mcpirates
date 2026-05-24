@@ -3,13 +3,11 @@
     "type": "minecraft:random_spread",
     "salt": 7341812,
     "spacing": 64,
-    "separation": 32,
-    "frequency": 0.4,
-    "frequency_reduction_method": "default"
+    "separation": 32
   },
   "structures": [
     {
-      "structure": "mcpirates:pirate_galleon",
+      "structure": "mcpirates:galleon_outpost",
       "weight": 1
     }
   ]

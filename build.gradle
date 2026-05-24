@@ -146,23 +146,39 @@ neoForge {
             }
         }
 
-        // `./gradlew runIntegrationServer` — dedicated server with FULL worldgen on alt
-        // ports (server 25666, RCON 25685). Paired with tools/integration/test_unfurl.py
-        // to e2e the bounty unfurl flow against real chunk generation; GameTestServer is
-        // locked to superflat so it can't exercise vanilla structure_set placement /
-        // biome whitelist filtering. doFirst below stamps server.properties + eula.txt
-        // and wipes the world for a deterministic run.
-        integrationServer {
+        // `./gradlew runIntegrationServer<N>` (N=1..4) — dedicated server slots with FULL
+        // worldgen. Ports per slot: server 25665+N, RCON 25684+N (slot 1 = 25666/25685).
+        // Per-slot doFirst (below) stamps server.properties + eula.txt + ops.json and
+        // wipes that slot's world for a deterministic run. Seed comes from
+        // -Pslot{N}Seed=<seed> (default 999). Paired with src/integrationTest/python/run.py
+        // which allocates slots to (seed, scenario) tasks for parallel testing — typical
+        // dev box handles 2-3 slots concurrently (~3.5 GB RAM each).
+        integrationServer1 {
             server()
-            gameDirectory = project.file('runs/integration')
+            gameDirectory = project.file('runs/integration_1')
+            programArgument '--nogui'
+        }
+        integrationServer2 {
+            server()
+            gameDirectory = project.file('runs/integration_2')
+            programArgument '--nogui'
+        }
+        integrationServer3 {
+            server()
+            gameDirectory = project.file('runs/integration_3')
+            programArgument '--nogui'
+        }
+        integrationServer4 {
+            server()
+            gameDirectory = project.file('runs/integration_4')
             programArgument '--nogui'
         }
 
-        // `./gradlew runIntegrationClient` — GUI client that auto-joins the integration
-        // server (localhost:25666). Use for the manual sanity-check flow against the
-        // headless harness: open the client, /mcpirates testunfurl give, right-click the
-        // scroll, /mcpirates testunfurl verify. Shares runs/client with the regular
-        // runClient — same Dev profile, world data lives on the server side anyway.
+        // `./gradlew runIntegrationClient` — GUI client that auto-joins integration slot 1
+        // (localhost:25666). Use for the manual sanity-check flow against the headless
+        // harness: open the client, /mcpirates test unfurl give, right-click the scroll,
+        // /mcpirates test unfurl verify. Shares runs/client with the regular runClient —
+        // same Dev profile, world data lives on the server side anyway.
         integrationClient {
             client()
             gameDirectory = project.file('runs/client')
@@ -358,20 +374,20 @@ tasks.register('runIntegrationTest', Exec) {
     commandLine 'python', 'src/integrationTest/python/run.py'
 }
 
-// Stamp a fresh runs/integration on every run: deterministic server.properties
-// (full overworld worldgen, alt ports, survival), accept the EULA, drop the
-// previous world. Anything written by the test harness lives under runs/integration
-// and is wiped here next time.
-tasks.named('runIntegrationServer').configure {
-    doFirst {
-        def runDir = project.file('runs/integration')
-        runDir.mkdirs()
-        delete project.file('runs/integration/world')
-        new File(runDir, 'eula.txt').text = 'eula=true\n'
-        // Dev's offline-UUID is deterministic (derived from "OfflinePlayer:Dev") so we
-        // can stamp ops.json without waiting for them to join first. Keeps cheats usable
-        // in survival, which is what the manual /mcpirates testunfurl verify flow needs.
-        new File(runDir, 'ops.json').text = '''\
+// Stamp a fresh runs/integration_<N> on every per-slot run. Per-slot port allocation
+// and seed read from -Pslot<N>Seed (default 999). Anything written by the test harness
+// lives under runs/integration_<N> and is wiped here next time.
+(1..4).each { slot ->
+    tasks.named("runIntegrationServer${slot}").configure {
+        doFirst {
+            def runDir = project.file("runs/integration_${slot}")
+            runDir.mkdirs()
+            delete project.file("runs/integration_${slot}/world")
+            int serverPort = 25665 + slot
+            int rconPort = 25684 + slot
+            String seed = (project.findProperty("slot${slot}Seed") ?: '999').toString()
+            new File(runDir, 'eula.txt').text = 'eula=true\n'
+            new File(runDir, 'ops.json').text = '''\
 [
   {
     "uuid": "380df991-f603-344c-a090-369bad2a924a",
@@ -381,12 +397,13 @@ tasks.named('runIntegrationServer').configure {
   }
 ]
 '''
-        new File(runDir, 'server.properties').text = '''\
+            new File(runDir, 'server.properties').text = """\
 enable-rcon=true
 rcon.password=dev
-rcon.port=25685
-server-port=25666
+rcon.port=${rconPort}
+server-port=${serverPort}
 level-type=minecraft\\:normal
+level-seed=${seed}
 gamemode=survival
 force-gamemode=true
 op-permission-level=4
@@ -395,7 +412,8 @@ allow-flight=true
 broadcast-rcon-to-ops=false
 online-mode=false
 generate-structures=true
-motd=mcpirates integration
-'''
+motd=mcpirates integration slot ${slot}
+"""
+        }
     }
 }
