@@ -36,5 +36,8 @@ public final class SheriffInteract {
                 (id, inv, player) -> new SheriffMenu(id, inv, villager),
                 title);
         sp.openMenu(provider, buf -> buf.writeVarInt(villager.getId()));
+
+        MCPirates.LOGGER.info("sheriff {} ({}): menu opened by {}",
+                villager.getUUID(), villager.getName().getString(), sp.getName().getString());
     }
 }

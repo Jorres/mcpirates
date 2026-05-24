@@ -223,6 +223,15 @@ public final class SheriffMenu extends AbstractContainerMenu {
                 board.setItem(SEAL_ROW_OFFSET + activeSeal, here.isEmpty() ? ItemStack.EMPTY : here);
                 setSealsReturned(sealsReturned() + 1);
                 playSealAcceptedFeedback();
+                int afterSeals = sealsReturned();
+                MCPirates.LOGGER.info(
+                        "sheriff {} ({}): seal returned at slot {} → seals={}/{} (maps={}, rewards={})",
+                        sheriff.getUUID(), sheriff.getName().getString(),
+                        activeSeal, afterSeals, cycleLength, mapsClaimed(), rewardsClaimed());
+                if (afterSeals >= cycleLength) {
+                    MCPirates.LOGGER.info("sheriff {} ({}): retired (cycle complete: {} seals returned)",
+                            sheriff.getUUID(), sheriff.getName().getString(), afterSeals);
+                }
             }
         }
         refreshBoard();
@@ -291,6 +300,12 @@ public final class SheriffMenu extends AbstractContainerMenu {
         public void onTake(Player p, ItemStack taken) {
             if (rowIndex() == activeMapIndex()) {
                 setMapsClaimed(mapsClaimed() + 1);
+                boolean galleon = taken.has(MCPDataComponents.IS_GALLEON_BOUNTY.get());
+                MCPirates.LOGGER.info(
+                        "sheriff {} ({}): map #{} ({}) taken by {} → maps={}/{}",
+                        sheriff.getUUID(), sheriff.getName().getString(),
+                        rowIndex(), galleon ? "GALLEON" : "regular",
+                        p.getName().getString(), mapsClaimed(), cycleLength);
             }
             super.onTake(p, taken);
             refreshBoard();
@@ -320,6 +335,11 @@ public final class SheriffMenu extends AbstractContainerMenu {
         public void onTake(Player p, ItemStack taken) {
             if (rowIndex() == activeRewardIndex()) {
                 setRewardsClaimed(rewardsClaimed() + 1);
+                MCPirates.LOGGER.info(
+                        "sheriff {} ({}): reward #{} claimed by {} → rewards={}/{}",
+                        sheriff.getUUID(), sheriff.getName().getString(),
+                        rowIndex(), p.getName().getString(),
+                        rewardsClaimed(), cycleLength);
             }
             super.onTake(p, taken);
             refreshBoard();

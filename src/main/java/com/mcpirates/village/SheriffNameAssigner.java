@@ -1,5 +1,6 @@
 package com.mcpirates.village;
 
+import com.mcpirates.MCPirates;
 import com.mcpirates.util.FunnyNames;
 import com.mcpirates.registry.MCPVillagerProfessions;
 import net.minecraft.network.chat.Component;
@@ -23,8 +24,10 @@ public final class SheriffNameAssigner {
             return;
         }
 
-        villager.setCustomName(Component.literal(FunnyNames.nextSheriffName(villager.getRandom())));
+        String name = FunnyNames.nextSheriffName(villager.getRandom());
+        villager.setCustomName(Component.literal(name));
         villager.setCustomNameVisible(true);
+        MCPirates.LOGGER.info("named sheriff villager {} → '{}'", villager.getUUID(), name);
     }
 }
 
