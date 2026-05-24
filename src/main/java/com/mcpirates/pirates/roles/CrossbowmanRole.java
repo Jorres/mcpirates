@@ -3,7 +3,9 @@ package com.mcpirates.pirates.roles;
 import com.mcpirates.MCPirates;
 import com.mcpirates.airship.Airship;
 import com.mcpirates.airship.AirshipBrain;
+import com.mcpirates.airship.physics.SegmentAABB;
 import com.mcpirates.pirates.CaptainSpawner.AnchoredEntity;
+import dev.ryanhcode.sable.companion.math.BoundingBox3dc;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.sounds.SoundEvents;
@@ -14,6 +16,9 @@ import net.minecraft.world.entity.projectile.AbstractArrow;
 import net.minecraft.world.entity.projectile.Arrow;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -43,6 +48,14 @@ public final class CrossbowmanRole implements PirateRole {
     private static final double FRIENDLY_FIRE_CLEARANCE = 1.2;
     private static final double FRIENDLY_FIRE_CLEARANCE_SQ =
             FRIENDLY_FIRE_CLEARANCE * FRIENDLY_FIRE_CLEARANCE;
+
+    /** Skip the raycast for blocks within this distance of the muzzle — the shooter's own
+     *  seat block, cannon barrel directly in front, etc. would otherwise count as a hit. */
+    private static final double SELF_BLOCK_CLEARANCE = 0.5;
+
+    /** {@code /mcpirates crew hullcheck on|off}. ON is correct behaviour; OFF reverts to
+     *  the legacy "fire regardless of own-ship hits" path so we can A/B compare in-game. */
+    public static volatile boolean HULL_CHECK_ENABLED = true;
 
     private static final double ARROW_GRAVITY = 0.05;
 
@@ -84,6 +97,13 @@ public final class CrossbowmanRole implements PirateRole {
 
         if (!hasClearShotAcrossCrew(parentLevel, ship, self, muzzlePos, targetPos)) {
             // Avoid retrying every tick when a teammate permanently blocks the line.
+            nextFireTick = now + 10;
+            return;
+        }
+
+        if (HULL_CHECK_ENABLED && wouldHitOwnShip(ship, pillager, muzzlePos, targetPos)) {
+            // Shooter is on the wrong side / line passes through hull or envelope.
+            // Re-check soon; ship rotation may open a clear angle.
             nextFireTick = now + 10;
             return;
         }
@@ -182,4 +202,38 @@ public final class CrossbowmanRole implements PirateRole {
                     shooter.getUUID(), muzzlePos, targetCenter, dirX, dirY, dirZ, added);
         }
     }
+
+    /** True if the muzzle→target line clips a solid block of the shooter's own ship.
+     *  Catches port/starboard wrong-side shooters AND below-deck/below-envelope angles. */
+    private static boolean wouldHitOwnShip(Airship ship, Pillager shooter,
+                                           Vec3 muzzleWorld, Vec3 targetWorld) {
+        BoundingBox3dc bb = ship.subLevel.boundingBox();
+        if (bb == null) return false;
+
+        Vec3 d = targetWorld.subtract(muzzleWorld);
+        double len = d.length();
+        if (len < 0.01) return false;
+        Vec3 dirUnit = d.scale(1.0 / len);
+        // Step off the muzzle so the shooter's own seat / cannon barrel doesn't self-trigger.
+        Vec3 start = muzzleWorld.add(dirUnit.scale(SELF_BLOCK_CLEARANCE));
+
+        // AABB pre-reject: if the segment doesn't cross the ship's world bbox, no hit possible.
+        if (!SegmentAABB.intersects(
+                start.x, start.y, start.z,
+                targetWorld.x, targetWorld.y, targetWorld.z,
+                bb.minX(), bb.minY(), bb.minZ(),
+                bb.maxX(), bb.maxY(), bb.maxZ())) {
+            return false;
+        }
+
+        // Transform endpoints into plot frame; the SubLevel's Level holds blocks at plot coords.
+        Vec3 plotStart = ship.subLevel.logicalPose().transformPositionInverse(start);
+        Vec3 plotEnd = ship.subLevel.logicalPose().transformPositionInverse(targetWorld);
+        BlockHitResult hit = ship.subLevel.getLevel().clip(new ClipContext(
+                plotStart, plotEnd,
+                ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE,
+                shooter));
+        return hit.getType() != HitResult.Type.MISS;
+    }
+
 }

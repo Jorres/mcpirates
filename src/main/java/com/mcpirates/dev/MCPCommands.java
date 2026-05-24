@@ -4,6 +4,7 @@ import com.mcpirates.MCPirates;
 import com.mcpirates.airship.AirshipBrain;
 import com.mcpirates.airship.AirshipLiftoffTrigger;
 import com.mcpirates.airship.anchor.MCPShipAnchorBlockEntity;
+import com.mcpirates.pirates.roles.CrossbowmanRole;
 import com.mcpirates.registry.MCPDataComponents;
 import com.mcpirates.registry.MCPItems;
 import com.mcpirates.util.FunnyNames;
@@ -63,6 +64,11 @@ public final class MCPCommands {
                 .then(Commands.literal("fire")
                         .then(Commands.literal("on").executes(ctx -> setFire(ctx.getSource(), true)))
                         .then(Commands.literal("off").executes(ctx -> setFire(ctx.getSource(), false))))
+
+                .then(Commands.literal("crew")
+                        .then(Commands.literal("hullcheck")
+                                .then(Commands.literal("on").executes(ctx -> setHullCheck(ctx.getSource(), true)))
+                                .then(Commands.literal("off").executes(ctx -> setHullCheck(ctx.getSource(), false)))))
 
                 .then(Commands.literal("lift")
                         .then(Commands.literal("on").executes(ctx -> setLift(ctx.getSource(), true)))
@@ -130,6 +136,14 @@ public final class MCPCommands {
         AirshipBrain.setFireEnabled(enabled);
         Component msg = Component.literal(
                 "mcpirates cannon fire is now " + (enabled ? "ON" : "OFF"));
+        source.sendSuccess(() -> msg, /*broadcastToAdmins=*/true);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int setHullCheck(CommandSourceStack source, boolean enabled) {
+        CrossbowmanRole.HULL_CHECK_ENABLED = enabled;
+        Component msg = Component.literal(
+                "crossbowman own-ship hull check is now " + (enabled ? "ON" : "OFF"));
         source.sendSuccess(() -> msg, /*broadcastToAdmins=*/true);
         return Command.SINGLE_SUCCESS;
     }
