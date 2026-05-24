@@ -1,0 +1,14 @@
+{
+  "processors": [
+    {
+      "processor_type": "mcpirates:variant_swap",
+      "families": {
+        "envelope": [
+          { "weight": 1, "variants": ["light_gray", "white"] },
+          { "weight": 1, "variants": ["light_gray", "gray"]  },
+          { "weight": 1, "variants": ["white",      "red"]   }
+        ]
+      }
+    }
+  ]
+}

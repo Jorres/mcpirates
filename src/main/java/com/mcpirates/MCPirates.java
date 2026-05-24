@@ -8,6 +8,7 @@ import com.mcpirates.registry.MCPDataComponents;
 import com.mcpirates.registry.MCPItems;
 import com.mcpirates.registry.MCPMenuTypes;
 import com.mcpirates.registry.MCPPoiTypes;
+import com.mcpirates.registry.MCPStructureProcessorTypes;
 import com.mcpirates.registry.MCPStructureTypes;
 import com.mcpirates.registry.MCPVillagerProfessions;
 import com.mcpirates.village.SheriffNameAssigner;
@@ -43,6 +44,7 @@ public class MCPirates {
         MCPMenuTypes.register(modBus);
         MCPCreativeTabs.register(modBus);
         MCPStructureTypes.register(modBus);
+        MCPStructureProcessorTypes.register(modBus);
 
         // SheriffNameAssigner uses a plain listener instead of @EventBusSubscriber
         // because it doesn't have a register-event entry point of its own — the

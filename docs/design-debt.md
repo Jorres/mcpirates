@@ -21,7 +21,6 @@
   the dismount fires.
 - when the player is onboard the pirate ship, pirates take arms and attack the player via vanilla AI
 - cannon rotation actually supplied by create rotation from last position -> looks smoother, no snapping
-- cannoneers should NOT be holding a crossbow — they man the cannon, the crossbow is dead weight
 
 ## variability
 

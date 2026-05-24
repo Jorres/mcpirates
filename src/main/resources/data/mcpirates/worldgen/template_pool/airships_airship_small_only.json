@@ -7,9 +7,7 @@
       "element": {
         "element_type": "minecraft:single_pool_element",
         "location": "mcpirates:airship_small",
-        "processors": {
-          "processors": []
-        },
+        "processors": "mcpirates:airship_small_variants",
         "projection": "rigid"
       }
     }

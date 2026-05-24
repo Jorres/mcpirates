@@ -1,4 +1,4 @@
-"""Discover mcpirates structures + appendage graph, classify, compute 4-row grid layout,
+"""Discover mcpirates structures + appendage graph, classify, compute 5-row grid layout,
 and emit Minecraft commands (one per line) to place the layout via /place template + SAVE blocks.
 
 Run from the mcpirates project root:
@@ -7,16 +7,27 @@ Run from the mcpirates project root:
 Reads:
   src/main/resources/data/mcpirates/structure/**.nbt
   src/main/resources/data/mcpirates/worldgen/template_pool/*.json
+  src/main/resources/data/mcpirates/worldgen/processor_list/*.json  (row 5 only)
 
 Emits commands to stdout. Caller pipes lines into RCON.
+
+Rows:
+  1 - pads + non-ship appendages
+  2 - ships alone
+  3 - pad + appendages + ship (full assembly)
+  4 - sheriff_station + appendages
+  5 - per-ship variants for any pool element whose `processors` is a string ref
+      to a processor_list containing a mcpirates:variant_swap processor. Uses
+      `/mcpirates place_variant <kind> <index>` to force a specific palette.
 """
 import argparse, gzip, json, struct, sys
 from io import BytesIO
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-STRUCT_DIR = ROOT / "src/main/resources/data/mcpirates/structure"
-POOL_DIR   = ROOT / "src/main/resources/data/mcpirates/worldgen/template_pool"
+STRUCT_DIR    = ROOT / "src/main/resources/data/mcpirates/structure"
+POOL_DIR      = ROOT / "src/main/resources/data/mcpirates/worldgen/template_pool"
+PROC_LIST_DIR = ROOT / "src/main/resources/data/mcpirates/worldgen/processor_list"
 
 NS = "mcpirates"
 FLOOR_Y = -58       # superflat grass at y=-61; leave 2-block air gap under each piece
@@ -99,18 +110,40 @@ def rel_id(path):
     return f"{NS}:" + rel[:-len(".nbt")]
 
 # ---------- Pool index ----------
+def _unwrap_element(el):
+    """Peel off lithostitched:guaranteed (or any other) delegate wrappers until we
+    reach a minecraft:single_pool_element with a location. Returns the inner element
+    or None if it isn't a single-pool-element at the bottom."""
+    while isinstance(el, dict) and el.get("element_type", "").startswith("lithostitched:") and "delegate" in el:
+        el = el["delegate"]
+    if isinstance(el, dict) and el.get("element_type") == "minecraft:single_pool_element":
+        return el
+    return None
+
 def load_pools():
+    """Return ({pool_id: [child_id, ...]}, {(pool_id, child_id): processors_ref_or_None}).
+
+    `processors_ref` is the string id (e.g. `mcpirates:ship_variants`) when the
+    element references an external processor list; None for inline empty lists.
+    Used by row 5 to discover which ships have variant pools."""
     pools = {}
+    proc_refs = {}
     for p in POOL_DIR.glob("*.json"):
         obj = json.loads(p.read_text(encoding="utf-8"))
         pool_id = f"{NS}:{p.stem}"
         elements = []
         for e in obj.get("elements", []):
-            el = e.get("element", {})
-            if el.get("element_type") == "minecraft:single_pool_element" and "location" in el:
-                elements.append(el["location"])
+            inner = _unwrap_element(e.get("element"))
+            if inner is None or "location" not in inner:
+                continue
+            loc = inner["location"]
+            elements.append(loc)
+            procs = inner.get("processors")
+            # External ref looks like a bare string; inline list looks like {"processors": [...]}.
+            if isinstance(procs, str):
+                proc_refs[(pool_id, loc)] = procs
         pools[pool_id] = elements
-    return pools
+    return pools, proc_refs
 
 # ---------- Load all ----------
 def load_all():
@@ -118,8 +151,8 @@ def load_all():
     for p in STRUCT_DIR.rglob("*.nbt"):
         s = parse_structure(p)
         structures[s.id] = s
-    pools = load_pools()
-    return structures, pools
+    pools, proc_refs = load_pools()
+    return structures, pools, proc_refs
 
 # ---------- Classification ----------
 PAD_JIGSAW_NAME = f"{NS}:landing_pad_top"
@@ -243,6 +276,62 @@ def place_group(commands, root_id, structures, root_origin, edges):
     xs2 = max(b[3] for b in bboxes); ys2 = max(b[4] for b in bboxes); zs2 = max(b[5] for b in bboxes)
     return (xs1, ys1, zs1, xs2, ys2, zs2)
 
+# ---------- Variant row (row 5) ----------
+def load_variant_palettes(proc_list_ref):
+    """Read a processor_list JSON, find the first mcpirates:variant_swap processor,
+    and return (first_family_name, [palette, ...]) — palette is the raw JSON dict
+    with `weight` and `variants`. Returns None if no variant_swap is present."""
+    if not proc_list_ref or not proc_list_ref.startswith(f"{NS}:"):
+        return None
+    fp = PROC_LIST_DIR / (proc_list_ref[len(NS) + 1:] + ".json")
+    if not fp.exists():
+        return None
+    obj = json.loads(fp.read_text(encoding="utf-8"))
+    for proc in obj.get("processors", []):
+        if proc.get("processor_type") != f"{NS}:variant_swap":
+            continue
+        families = proc.get("families", {})
+        if not families:
+            continue
+        first_key = next(iter(families))
+        return first_key, families[first_key]
+    return None
+
+def place_variant_piece(commands, ship_id, idx, structures, x, y, z, label):
+    """Emit /mcpirates place_variant + SAVE block for one variant placement.
+    Same x/y/z + bbox convention as place_piece, label is the SAVE bbox name."""
+    s = structures[ship_id]
+    w, h, d = s.size
+    # ship_id is `mcpirates:airship_small`; the command takes the bare kind name.
+    kind = ship_id.split(":", 1)[1] if ":" in ship_id else ship_id
+    commands.append(f"mcpirates place_variant {kind} {idx} {x} {y} {z}")
+    save_x, save_y, save_z = x, y, z - 1
+    commands.append(f'setblock {save_x} {save_y} {save_z} air')
+    commands.append(
+        f'setblock {save_x} {save_y} {save_z} '
+        f'minecraft:structure_block[mode=save]'
+        f'{{mode:"SAVE",name:"{label}",'
+        f'posX:0,posY:0,posZ:1,'
+        f'sizeX:{w},sizeY:{h},sizeZ:{d},'
+        f'showboundingbox:1b,ignoreEntities:1b}}'
+    )
+    return (x, y, z, x + w - 1, y + h - 1, z + d - 1)
+
+def build_variant_row(commands, row_label, ship_variant_specs, z_top, structures):
+    """Lay variant ships left-to-right. ship_variant_specs is a list of
+    (ship_id, palette_idx, label). Returns row depth."""
+    cursor_x = 0
+    max_depth_z = z_top
+    for ship_id, idx, label in ship_variant_specs:
+        s = structures[ship_id]
+        w, h, d = s.size
+        x, y, z = cursor_x, FLOOR_Y, z_top
+        commands.append(f"# --- {row_label}: {label} @ ({x},{y},{z})")
+        bb = place_variant_piece(commands, ship_id, idx, structures, x, y, z, label)
+        cursor_x = bb[3] + 1 + PIECE_GUTTER
+        max_depth_z = max(max_depth_z, bb[5])
+    return max_depth_z - z_top + 1
+
 # ---------- Build row ----------
 def build_row(commands, row_label, groups, z_top, structures):
     """Lay groups left-to-right starting at x=0, z=z_top. Returns row depth (z extent)."""
@@ -286,11 +375,14 @@ def main():
                         help="Emit only the ships-alone row (skip pads, assemblies, sheriff).")
     args = parser.parse_args()
 
-    structures, pools = load_all()
+    structures, pools, proc_refs = load_all()
     pads, ships, sheriff_root, ship_pool_ids = classify(structures, pools)
     commands = []
     commands.append("# === pre-layout: forceload ===")
-    commands.append("forceload add -16 -16 128 192")
+    # Generous box covering the worst-case 5-row layout (row 5 with all 5 ships ×
+    # 3 variants stretches +X out past 200). If you add more variants per ship or
+    # more ships, bump the X bound.
+    commands.append("forceload add -16 -16 256 256")
     z_cursor = 0
 
     if not args.ships_only:
@@ -343,6 +435,27 @@ def main():
             commands.append(f"# === ROW 4: sheriff, z={z_cursor} ===")
             depth4 = build_row(commands, "row4-sheriff", row4_groups, z_cursor, structures)
             z_cursor += depth4 + ROW_GUTTER
+
+        # Row 5: variants — for every ship pool element with a string `processors`
+        # ref, load its processor_list, find the first variant_swap family, and
+        # place one ship per palette index using `mcpirates place_variant`.
+        variant_specs = []  # (ship_id, idx, label)
+        for pool_id in sorted(ship_pool_ids):
+            for ship_id in pools.get(pool_id, []):
+                if ship_id not in structures: continue
+                ref = proc_refs.get((pool_id, ship_id))
+                if not ref: continue
+                loaded = load_variant_palettes(ref)
+                if loaded is None: continue
+                family_name, palettes = loaded
+                kind = ship_id.split(":", 1)[1] if ":" in ship_id else ship_id
+                for i, pal in enumerate(palettes):
+                    colors = "_".join(pal.get("variants", []))
+                    variant_specs.append((ship_id, i, f"{kind}_var{i}_{colors}"))
+        if variant_specs:
+            commands.append(f"# === ROW 5: ship variants, z={z_cursor} ===")
+            depth5 = build_variant_row(commands, "row5-variants", variant_specs, z_cursor, structures)
+            z_cursor += depth5 + ROW_GUTTER
 
     commands.append(f"# === post-layout: spawn + tp ===")
     centre_z = z_cursor // 2

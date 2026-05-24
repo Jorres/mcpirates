@@ -9,12 +9,17 @@ import com.mcpirates.registry.MCPItems;
 import com.mcpirates.util.FunnyNames;
 import com.mcpirates.village.FurledBountyItem;
 import com.mcpirates.worldgen.OutpostPermits;
+import com.mcpirates.worldgen.processors.VariantSwapProcessor;
 import com.mojang.brigadier.Command;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Registry;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
@@ -30,13 +35,18 @@ import net.minecraft.world.item.component.MapDecorations;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
+import net.minecraft.world.level.levelgen.structure.templatesystem.StructureProcessorList;
+import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 
+import java.util.Optional;
 import java.util.Set;
 
 /** Dev/debug chat commands under {@code /mcpirates}. Op level 2 required. */
@@ -92,6 +102,12 @@ public final class MCPCommands {
                                 .then(Commands.argument("halfRadius",
                                                 com.mojang.brigadier.arguments.IntegerArgumentType.integer(0, 10))
                                         .executes(MCPCommands::testPermitsScanCandidates))))
+
+                .then(Commands.literal("place_variant")
+                        .then(Commands.argument("kind", StringArgumentType.word())
+                                .then(Commands.argument("index", IntegerArgumentType.integer(0))
+                                        .then(Commands.argument("pos", BlockPosArgument.blockPos())
+                                                .executes(MCPCommands::placeVariant)))))
 
                 .then(Commands.literal("debug")
                         .then(Commands.literal("activate")
@@ -154,6 +170,76 @@ public final class MCPCommands {
             src.sendFailure(Component.literal("Failed to place " + kind + "_outpost: " + e.getMessage()));
             return 0;
         }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    // ────────────────────────────── /mcpirates place_variant ──────────────────────────────
+
+    /** Place a ship NBT at {@code pos} with one specific palette pick forced for every
+     *  family in {@code mcpirates:ship_variants}. {@code index} indexes the FIRST family's
+     *  palette list; other families default to palette 0. Used by the place-structures
+     *  skill to lay every variant out side-by-side. */
+    private static int placeVariant(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        String kind = StringArgumentType.getString(ctx, "kind");
+        int idx = IntegerArgumentType.getInteger(ctx, "index");
+        BlockPos pos = BlockPosArgument.getBlockPos(ctx, "pos");
+
+        ResourceLocation templateId = MCPirates.id(kind);
+        Optional<StructureTemplate> tplOpt = level.getStructureManager().get(templateId);
+        if (tplOpt.isEmpty()) {
+            src.sendFailure(Component.literal("Unknown ship NBT: " + templateId));
+            return 0;
+        }
+
+        // Convention: each ship's variant pool lives at `mcpirates:<kind>_variants`.
+        // Mirrors how the ship pools wire `processors: "mcpirates:<kind>_variants"`.
+        ResourceLocation listId = MCPirates.id(kind + "_variants");
+        Registry<StructureProcessorList> registry = level.registryAccess()
+                .registryOrThrow(Registries.PROCESSOR_LIST);
+        StructureProcessorList procList = registry.get(listId);
+        if (procList == null) {
+            src.sendFailure(Component.literal("Processor list not found: " + listId));
+            return 0;
+        }
+
+        VariantSwapProcessor source = procList.list().stream()
+                .filter(VariantSwapProcessor.class::isInstance)
+                .map(VariantSwapProcessor.class::cast)
+                .findFirst().orElse(null);
+        if (source == null) {
+            src.sendFailure(Component.literal("No variant_swap processor in " + listId));
+            return 0;
+        }
+
+        int families = source.familyPools().size();
+        int[] picks = new int[families];
+        picks[0] = idx;  // first family varies; others stay at 0
+
+        VariantSwapProcessor forced;
+        try {
+            forced = source.withForcedPicks(picks);
+        } catch (IllegalArgumentException e) {
+            src.sendFailure(Component.literal("Bad index: " + e.getMessage()));
+            return 0;
+        }
+
+        StructurePlaceSettings settings = new StructurePlaceSettings()
+                .setIgnoreEntities(false)
+                .addProcessor(forced);
+
+        boolean ok = tplOpt.get().placeInWorld(level, pos, pos, settings, level.getRandom(), Block.UPDATE_ALL);
+        if (!ok) {
+            src.sendFailure(Component.literal("placeInWorld returned false"));
+            return 0;
+        }
+
+        String label = forced.familyPools().stream()
+                .map(fp -> fp.family().key() + "=" + String.join("+", fp.palettes().get(0).variants()))
+                .reduce((a, b) -> a + ", " + b).orElse("(no families)");
+        src.sendSuccess(() -> Component.literal(String.format(
+                "Placed %s [%s] at %s", kind, label, pos.toShortString())), true);
         return Command.SINGLE_SUCCESS;
     }
 

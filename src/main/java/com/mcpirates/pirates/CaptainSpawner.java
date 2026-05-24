@@ -188,9 +188,10 @@ public final class CaptainSpawner {
         pillager.setPersistenceRequired();
         if (tag != null) pillager.addTag(tag);
         ItemStack mainHand = role.mainHandItem();
-        if (!mainHand.isEmpty()) {
-            pillager.setItemSlot(EquipmentSlot.MAINHAND, mainHand);
-        }
+        // Always write the slot, including EMPTY. Some spawn paths (Mob ctor / equipment
+        // init triggered by addFreshEntity) can leave a default crossbow on Pillagers;
+        // an explicit clear is the only reliable way to keep cannoneers unarmed.
+        pillager.setItemSlot(EquipmentSlot.MAINHAND, mainHand);
         pillager.setCustomName(customName);
         pillager.setCustomNameVisible(true);
         // Aggressive→CROSSBOW_HOLD pose with arms raised. Skip for unarmed cannoneers.

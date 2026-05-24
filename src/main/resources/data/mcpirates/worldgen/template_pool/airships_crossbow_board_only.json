@@ -7,9 +7,7 @@
       "element": {
         "element_type": "minecraft:single_pool_element",
         "location": "mcpirates:crossbow_board",
-        "processors": {
-          "processors": []
-        },
+        "processors": "mcpirates:crossbow_board_variants",
         "projection": "rigid"
       }
     }

@@ -8,7 +8,7 @@
       "element": {
         "element_type": "minecraft:single_pool_element",
         "location": "mcpirates:galleon",
-        "processors": { "processors": [] },
+        "processors": "mcpirates:galleon_variants",
         "projection": "rigid"
       }
     }
